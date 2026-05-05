@@ -1,6 +1,48 @@
-node_modules/
-dist/
+# ============================================
+# NUNCA commitear archivos con secretos
+# ============================================
+# (comentarios van en su propia linea — git NO soporta inline comments en patterns)
+
+# Variables de entorno
 .env
+.env.*
+!.env.example
+
+# Artefactos generados con secretos incluidos
+# META_SETUP.md contiene RELOAD_TOKEN y URL interna
+META_SETUP.md
+
+# Scripts de deploy one-shot (usan credenciales de github/coolify)
+execution/
+
+# Credenciales comunes
+credentials.json
+token.json
+*.pem
+*.key
+id_rsa*
+
+# Patrones amplios por si algun archivo futuro nombra algo "*_secret*" o "*_SECRET*"
+*secret*
+*_SECRET*
+
+# MCP local
+.mcp.json
+.mcp.local.json
+.codex/config.toml
+!.codex/config.example.toml
+
+# Directorios de runtime / build
+*.pyc
+__pycache__/
+.tmp/
+.venv/
+venv/
+*.log
 .DS_Store
-npm-debug.log*
-coverage/
+
+# Archivos fuente de conocimiento en formato binario (el bot solo lee .md/.txt)
+# Mantener aqui el original por referencia local pero NO enviar al contenedor.
+prompts/knowledge/*.docx
+prompts/knowledge/*.pdf
+prompts/knowledge/*.xlsx

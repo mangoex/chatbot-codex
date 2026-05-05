@@ -1,21 +1,18 @@
-FROM node:22-alpine AS build
-WORKDIR /app
-ENV npm_config_fund=false
-ENV npm_config_audit=false
-COPY package*.json ./
-RUN npm install
-COPY tsconfig.json ./
-COPY src ./src
-COPY migrations ./migrations
-RUN npm run build
-RUN npm prune --omit=dev
+FROM python:3.11-slim
 
-FROM node:22-alpine AS runner
 WORKDIR /app
-ENV NODE_ENV=production
-COPY package*.json ./
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/dist ./dist
-COPY --from=build /app/migrations ./migrations
-EXPOSE 3000
-CMD ["node", "dist/src/server.js"]
+
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD sh -c "curl -f http://localhost:${PORT:-8000}/health || exit 1"
+
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

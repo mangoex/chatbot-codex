@@ -1,63 +1,130 @@
-# Asistto WhatsApp Agent
+# WhatsApp Bot Template
 
-API propia para un chatbot de WhatsApp con agentes, pensada para desplegarse en Easypanel. Usa Meta WhatsApp Cloud API como canal, OpenRouter como proveedor de modelo y Postgres para conversaciones, mensajes, tenants y citas.
+Plantilla para crear y desplegar un chatbot de WhatsApp sin n8n:
 
-## Endpoints
+- FastAPI
+- WhatsApp Cloud API de Meta
+- OpenAI
+- Postgres
+- Panel admin con login, conversaciones, CRM, dashboard y escalaciones
+- Dockerfile listo para Easypanel
+- Prompt editable por negocio
 
-- `GET /health`: estado del servicio para Easypanel.
-- `GET /webhooks/whatsapp`: verificacion de webhook de Meta.
-- `POST /webhooks/whatsapp`: recepcion de mensajes entrantes de WhatsApp.
+## 1. Configuracion local
 
-## Variables
+```bash
+cp .env.example .env
+```
 
-Copia `.env.example` como referencia y configura estas variables en Easypanel:
+Rellena `.env` con tus valores reales. No subas `.env` a GitHub.
 
-- `WHATSAPP_VERIFY_TOKEN`: token que tambien pondras en Meta al registrar el webhook.
+Variables principales:
+
+- `PUBLIC_BASE_URL`: dominio publico del bot, por ejemplo `https://bot.humanio.digital`.
 - `WHATSAPP_ACCESS_TOKEN`: token de Meta WhatsApp Cloud API.
-- `WHATSAPP_PHONE_NUMBER_ID`: id del numero de WhatsApp del primer cliente.
-- `OPENROUTER_API_KEY`: llave de OpenRouter.
-- `OPENROUTER_MODEL`: modelo que usara el agente.
-- `DATABASE_URL`: conexion al Postgres del proyecto en Easypanel.
+- `WHATSAPP_PHONE_NUMBER_ID`: Phone Number ID de tu numero de WhatsApp.
+- `WHATSAPP_VERIFY_TOKEN`: texto secreto inventado por ti para validar el webhook en Meta.
+- `META_APP_SECRET`: App Secret de Meta para validar firmas. Recomendado en produccion.
+- `OPENAI_API_KEY`: API key de OpenAI.
+- `DATABASE_URL`: conexion interna al Postgres de Easypanel.
+- `ADMIN_USER`, `ADMIN_PASSWORD`, `SESSION_SECRET`: acceso al panel `/admin`.
+- `QUALIFIED_CTA_URL`: link opcional para leads calificados.
 
-## Despliegue En Easypanel
+Tambien se soportan los aliases anteriores:
 
-1. Crea el proyecto `asistto-whatsapp-agent`.
-2. Crea un servicio Postgres.
-3. Crea un servicio App usando este repositorio o el Dockerfile.
-4. Configura el dominio del servicio, por ejemplo `bot.tudominio.com`.
-5. Agrega las variables de entorno.
-6. En Meta Developers, registra el webhook:
+- `WHATSAPP_API_TOKEN` en lugar de `WHATSAPP_ACCESS_TOKEN`.
+- `VERIFY_TOKEN` en lugar de `WHATSAPP_VERIFY_TOKEN`.
+- `WEBHOOK_DOMAIN` en lugar de `PUBLIC_BASE_URL`.
+
+## 2. Personaliza el bot
+
+Edita [prompts/system.md](prompts/system.md). Reemplaza los placeholders con la identidad,
+tono, reglas y criterios del negocio.
+
+Si necesitas cargar FAQs, catalogo, politicas o respuestas frecuentes, crea archivos `.md` o
+`.txt` dentro de:
 
 ```text
-https://bot.tudominio.com/webhooks/whatsapp
+prompts/knowledge/
 ```
 
-7. Usa el mismo `WHATSAPP_VERIFY_TOKEN` en Meta y en Easypanel.
-8. Suscribe el webhook al campo `messages` de WhatsApp Business Account.
+## 3. Ejecutar localmente
 
-## Desarrollo Local
+Necesitas Postgres y las variables de `.env` listas.
 
 ```bash
-npm install
-npm run dev
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 ```
 
-Para compilar:
+Endpoints:
+
+- `GET /health`
+- `GET /webhook`
+- `POST /webhook`
+- `GET /webhooks/whatsapp`
+- `POST /webhooks/whatsapp`
+- `POST /reload`
+- `POST /maintenance/reset-contact`
+- `GET /admin`
+
+## 4. DNS para Easypanel
+
+Para `bot.humanio.digital`, crea en tu DNS:
+
+```text
+Tipo: A
+Host/Nombre: bot
+Valor: IP publica de tu VPS de Hostinger
+TTL: automatico o 300
+```
+
+El registro A apunta al servidor. Luego Easypanel decide que app responde a ese dominio.
+
+## 5. Deploy en Easypanel
+
+1. Crea un proyecto en Easypanel, por ejemplo `whatsapp-bot`.
+2. Crea un servicio Postgres.
+3. Crea un servicio App desde este repositorio de GitHub.
+4. Usa el Dockerfile del repo.
+5. Configura puerto interno `8000`.
+6. Agrega el dominio `bot.humanio.digital` al servicio App y activa HTTPS.
+7. Agrega las variables de entorno desde `.env.example`.
+8. Usa la URL interna de Postgres en `DATABASE_URL`.
+9. Deploy.
+10. Verifica:
+
+```text
+https://bot.humanio.digital/health
+```
+
+## 6. Conectar Meta
+
+Cuando el despliegue este listo, configura el webhook en Meta:
+
+- Callback URL: `https://bot.humanio.digital/webhooks/whatsapp`
+- Verify token: el valor de `WHATSAPP_VERIFY_TOKEN`
+- Webhook field: `messages`
+
+La app tambien acepta `https://bot.humanio.digital/webhook` por compatibilidad.
+
+## 7. Panel admin
+
+Abre:
+
+```text
+https://bot.humanio.digital/admin
+```
+
+Usa `ADMIN_USER` y `ADMIN_PASSWORD`.
+
+## Seguridad
+
+Antes de publicar este template:
 
 ```bash
-npm run build
+rg -n "sk-|ghp_|github_pat_|EAA|token_real|password_real|secret_real|api_key_real" .
 ```
 
-Para pruebas:
-
-```bash
-npm test
-```
-
-## Comportamiento
-
-- El webhook identifica el tenant por `phone_number_id`.
-- Cada mensaje entrante se guarda con `wa_message_id` unico para evitar respuestas duplicadas.
-- El agente responde en JSON estructurado.
-- Las herramientas actuales soportan listar servicios, crear solicitud de cita y cancelar la cita activa mas reciente.
-- La capa de citas ya esta aislada para conectar Google Calendar u otro calendario real despues.
+No deben existir secretos reales. Los archivos `.env`, `.mcp.json`, `META_SETUP.md` y
+`execution/` estan ignorados porque pueden contener credenciales.
