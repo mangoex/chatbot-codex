@@ -30,6 +30,7 @@ id_rsa*
 .mcp.json
 .mcp.local.json
 .codex/
+AGENTS.md
 
 # Assistant-local caches and generated skills
 .agents/

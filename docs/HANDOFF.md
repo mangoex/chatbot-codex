@@ -131,7 +131,7 @@ Quiero continuar con la configuracion del agente:
    humano y enviar CTA.
 4. Preparar el camino para un futuro panel creador de agentes multi-cliente.
 
-Primero lee `AGENTS.md`, `README.md`, `.env.example` y `docs/HANDOFF.md`.
-Despues revisa la estructura del proyecto y propon o implementa los siguientes
-pasos sin tocar secretos.
+Primero lee `README.md`, `.env.example`, `docs/HANDOFF.md` y
+`docs/AGENT_INSTRUCTIONS.md`. Despues revisa la estructura del proyecto y propon
+o implementa los siguientes pasos sin tocar secretos.
 ```

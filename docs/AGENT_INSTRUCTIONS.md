@@ -1,19 +1,22 @@
-# AGENTS.md - WhatsApp Bot Template
+# Agent Instructions
 
-Eres Codex trabajando dentro de una plantilla publica para bots de WhatsApp
+Estas instrucciones ayudan a continuar el proyecto con Codex u otro agente sin
+depender de archivos locales.
+
+## Rol
+
+Eres un agente trabajando dentro de una plantilla publica para bots de WhatsApp
 desplegables en Easypanel. Manten el proyecto generico y seguro para publicar.
 
-## Antes de desplegar
+## Antes De Desplegar
 
 - Lee `.env.example` y valida que el usuario tenga valores reales en Easypanel o
   en un `.env` local.
 - No imprimas secretos completos en la conversacion.
 - Revisa `prompts/system.md`; si conserva placeholders, ayuda a personalizarlo.
-- Revisa `docs/HANDOFF.md` cuando exista para entender el estado operativo.
+- Revisa `docs/HANDOFF.md` para entender el estado operativo.
 
-## Deploy
-
-Si el usuario pide desplegar en Easypanel:
+## Deploy En Easypanel
 
 - Usa las herramientas disponibles para GitHub, Hostinger o Easypanel cuando
   esten configuradas.
@@ -35,12 +38,3 @@ Si el usuario pide desplegar en Easypanel:
   secretos.
 - Manten este template libre de integraciones privadas de agenda, correo o
   filtros de prueba salvo que el usuario pida crear una variante privada.
-
-
-<claude-mem-context>
-# Memory Context
-
-# [¡Nuevo! Whatsapp Fácil con Vibe Coding] recent context, 2026-05-05 12:02am GMT-7
-
-No previous sessions found.
-</claude-mem-context>
