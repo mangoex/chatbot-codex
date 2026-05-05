@@ -9,7 +9,17 @@ _client: AsyncOpenAI | None = None
 def _get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
-        _client = AsyncOpenAI(api_key=config.OPENAI_API_KEY)
+        headers = {}
+        if config.OPENAI_BASE_URL:
+            headers = {
+                "HTTP-Referer": config.OPENROUTER_SITE_URL,
+                "X-OpenRouter-Title": config.OPENROUTER_APP_NAME,
+            }
+        _client = AsyncOpenAI(
+            api_key=config.OPENAI_API_KEY,
+            base_url=config.OPENAI_BASE_URL or None,
+            default_headers=headers or None,
+        )
     return _client
 
 
