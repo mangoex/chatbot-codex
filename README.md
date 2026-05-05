@@ -7,6 +7,7 @@ Plantilla para crear y desplegar un chatbot de WhatsApp sin n8n:
 - OpenAI u OpenRouter por API compatible
 - Postgres
 - Panel admin con login, conversaciones, CRM, dashboard y escalaciones
+- Google Calendar opcional para agendar citas
 - Dockerfile listo para Easypanel
 - Prompt editable por negocio
 
@@ -28,6 +29,7 @@ Variables principales:
 - `OPENAI_API_KEY`: API key de OpenAI o de OpenRouter.
 - `OPENAI_BASE_URL`: usa `https://openrouter.ai/api/v1` cuando trabajes con OpenRouter.
 - `OPENAI_MODEL`: modelo del agente. Para modelos gratis de OpenRouter puedes usar `openrouter/free`.
+- `OPENAI_MAX_TOKENS`: limite de salida para respuestas mas cortas y rapidas.
 - `DATABASE_URL`: conexion interna al Postgres de Easypanel.
 - `ADMIN_USER`, `ADMIN_PASSWORD`, `SESSION_SECRET`: acceso al panel `/admin`.
 - `QUALIFIED_CTA_URL`: link opcional para leads calificados.
@@ -67,7 +69,30 @@ Si necesitas cargar FAQs, catalogo, politicas o respuestas frecuentes, crea arch
 prompts/knowledge/
 ```
 
-## 3. Ejecutar localmente
+El sistema guarda el mensaje entrante en el admin antes de llamar al modelo. Si la IA tarda,
+la conversacion aparece de inmediato y la respuesta se agrega cuando esta lista.
+
+## 3. Agenda con Google Calendar
+
+La agenda es opcional. Para activarla configura en Easypanel:
+
+```text
+GOOGLE_CALENDAR_ENABLED=true
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=
+GOOGLE_CALENDAR_ID=primary
+GOOGLE_CALENDAR_TIMEZONE=America/Chihuahua
+GOOGLE_APPOINTMENT_DURATION_MINUTES=30
+GOOGLE_APPOINTMENT_BUFFER_MINUTES=0
+GOOGLE_APPOINTMENT_SUMMARY_PREFIX=Llamada Asistto
+```
+
+El `GOOGLE_REFRESH_TOKEN` debe venir de OAuth con permiso de Google Calendar. No lo guardes
+en GitHub. Cuando el modelo detecta nombre, objetivo y fecha/hora, el backend revisa
+`freeBusy` y crea el evento con Google Calendar API si el horario esta libre.
+
+## 4. Ejecutar localmente
 
 Necesitas Postgres y las variables de `.env` listas.
 
@@ -87,7 +112,7 @@ Endpoints:
 - `POST /maintenance/reset-contact`
 - `GET /admin`
 
-## 4. DNS para Easypanel
+## 5. DNS para Easypanel
 
 Para `bot.humanio.digital`, crea en tu DNS:
 
@@ -100,7 +125,7 @@ TTL: automatico o 300
 
 El registro A apunta al servidor. Luego Easypanel decide que app responde a ese dominio.
 
-## 5. Deploy en Easypanel
+## 6. Deploy en Easypanel
 
 1. Crea un proyecto en Easypanel, por ejemplo `whatsapp-bot`.
 2. Crea un servicio Postgres.
@@ -117,7 +142,7 @@ El registro A apunta al servidor. Luego Easypanel decide que app responde a ese 
 https://bot.humanio.digital/health
 ```
 
-## 6. Conectar Meta
+## 7. Conectar Meta
 
 Cuando el despliegue este listo, configura el webhook en Meta:
 
@@ -127,7 +152,7 @@ Cuando el despliegue este listo, configura el webhook en Meta:
 
 La app tambien acepta `https://bot.humanio.digital/webhook` por compatibilidad.
 
-## 7. Panel admin
+## 8. Panel admin
 
 Abre:
 
