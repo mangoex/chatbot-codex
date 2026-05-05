@@ -89,8 +89,8 @@ GOOGLE_APPOINTMENT_SUMMARY_PREFIX=Llamada Asistto
 ```
 
 El `GOOGLE_REFRESH_TOKEN` debe venir de OAuth con permiso de Google Calendar. No lo guardes
-en GitHub. Cuando el modelo detecta nombre, objetivo y fecha/hora, el backend revisa
-`freeBusy` y crea el evento con Google Calendar API si el horario esta libre.
+en GitHub. Cuando el modelo detecta nombre, objetivo y fecha/hora, el backend consulta los
+eventos existentes en esa ventana y crea el evento con Google Calendar API si el horario esta libre.
 
 ## 4. Ejecutar localmente
 
