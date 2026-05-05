@@ -1,4 +1,7 @@
 """Cliente OpenAI con control de tokens."""
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import tiktoken
 from openai import AsyncOpenAI
 from app import config
@@ -19,6 +22,7 @@ def _get_client() -> AsyncOpenAI:
             api_key=config.OPENAI_API_KEY,
             base_url=config.OPENAI_BASE_URL or None,
             default_headers=headers or None,
+            timeout=config.OPENAI_TIMEOUT_SECONDS,
         )
     return _client
 
@@ -30,6 +34,28 @@ def _encoder():
         return tiktoken.encoding_for_model(config.OPENAI_MODEL)
     except KeyError:
         return tiktoken.get_encoding("cl100k_base")
+
+
+def _runtime_context() -> str:
+    tz_name = config.GOOGLE_CALENDAR_TIMEZONE or "America/Chihuahua"
+    try:
+        now = datetime.now(ZoneInfo(tz_name))
+    except Exception:
+        tz_name = "America/Chihuahua"
+        now = datetime.now(ZoneInfo(tz_name))
+    calendar_state = "activo" if config.GOOGLE_CALENDAR_ENABLED else "inactivo"
+    return (
+        "Contexto operativo actual:\n"
+        f"- Fecha y hora actual: {now.isoformat(timespec='minutes')}\n"
+        f"- Zona horaria: {tz_name}\n"
+        f"- Google Calendar: {calendar_state}\n"
+        f"- Duracion por defecto de llamada: {config.GOOGLE_APPOINTMENT_DURATION_MINUTES} minutos\n"
+        "- Responde muy breve para WhatsApp."
+    )
+
+
+def _system_prompt() -> str:
+    return f"{config.SYSTEM_PROMPT}\n\n--- contexto_runtime ---\n{_runtime_context()}"
 
 
 def count_tokens(messages: list[dict]) -> int:
@@ -52,20 +78,32 @@ def fit_history(system: str, history: list[dict], user_msg: str,
         kept.pop(0)
 
 
+async def _chat(messages: list[dict]) -> str:
+    kwargs = {
+        "model": config.OPENAI_MODEL,
+        "messages": messages,
+    }
+    if config.OPENAI_MAX_TOKENS > 0:
+        kwargs["max_tokens"] = config.OPENAI_MAX_TOKENS
+    try:
+        resp = await _get_client().chat.completions.create(**kwargs)
+    except Exception as exc:
+        if "max_tokens" not in str(exc):
+            raise
+        kwargs.pop("max_tokens", None)
+        resp = await _get_client().chat.completions.create(**kwargs)
+    return resp.choices[0].message.content or ""
+
+
 async def complete(user_message: str, history: list[dict]) -> str:
-    fitted = fit_history(
-        config.SYSTEM_PROMPT, history, user_message, config.MAX_PROMPT_TOKENS
-    )
+    system = _system_prompt()
+    fitted = fit_history(system, history, user_message, config.MAX_PROMPT_TOKENS)
     messages = (
-        [{"role": "system", "content": config.SYSTEM_PROMPT}]
+        [{"role": "system", "content": system}]
         + fitted
         + [{"role": "user", "content": user_message}]
     )
-    resp = await _get_client().chat.completions.create(
-        model=config.OPENAI_MODEL,
-        messages=messages,
-    )
-    return resp.choices[0].message.content or ""
+    return await _chat(messages)
 
 
 async def summarize_conversation(history: list[dict], lead: dict | None = None) -> str:
@@ -95,8 +133,4 @@ async def summarize_conversation(history: list[dict], lead: dict | None = None) 
             ),
         },
     ]
-    resp = await _get_client().chat.completions.create(
-        model=config.OPENAI_MODEL,
-        messages=messages,
-    )
-    return resp.choices[0].message.content or "Sin resumen disponible."
+    return await _chat(messages)
