@@ -8,6 +8,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app import (
     admin,
+    admin_tools,
     agenda_guard,
     calendar_client,
     config,
@@ -64,6 +65,7 @@ app.add_middleware(
 )
 
 app.include_router(admin.router)
+app.include_router(admin_tools.router)
 
 
 @app.get("/health")
