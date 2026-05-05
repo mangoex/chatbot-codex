@@ -20,6 +20,7 @@ _NAME_ONLY_RE = re.compile(
     re.IGNORECASE,
 )
 _ASKED_NAME_RE = re.compile(r"\b(nombre completo|dime tu nombre|tu nombre)\b", re.IGNORECASE)
+_ASKED_DATETIME_RE = re.compile(r"\b(d[ií]a y hora|fecha y hora|qu[eé] d[ií]a|qu[eé] hora)\b", re.IGNORECASE)
 _TIME_RE = re.compile(
     r"(?:\ba\s+las\b|\ba\s+la\b|\balas\b)?\s*\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b",
     re.IGNORECASE,
@@ -70,7 +71,7 @@ def _now() -> datetime:
         return datetime.now(ZoneInfo("America/Chihuahua"))
 
 
-def _history_text(history: list[dict], limit: int = 8) -> str:
+def _history_text(history: list[dict], limit: int = 12) -> str:
     return "\n".join(item.get("content", "") for item in history[-limit:])
 
 
@@ -83,41 +84,60 @@ def _last_assistant_text(history: list[dict]) -> str:
 
 def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
     text = f"{_history_text(history)}\n{user_text}"
-    return bool(_SCHEDULE_RE.search(text))
+    return bool(_SCHEDULE_RE.search(text) or _ASKED_DATETIME_RE.search(_last_assistant_text(history)))
 
 
 def _clean_name(name: str) -> str | None:
     clean = name.strip(" .,;:¡!¿?")
-    stop = re.search(r"\b(doy|tengo|quiero|necesito|para|porque|con|y)\b", clean, re.IGNORECASE)
+    stop = re.search(r"\b(doy|tengo|quiero|necesito|para|porque|con|y|mañana|manana|lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo)\b", clean, re.IGNORECASE)
     if stop:
         clean = clean[: stop.start()].strip(" .,;:¡!¿?")
     if len(clean) < 2 or len(clean) > 60:
         return None
+    if any(ch.isdigit() for ch in clean):
+        return None
     return clean.title()
 
 
+def _direct_name(text: str) -> str | None:
+    direct = _NAME_ONLY_RE.search(text.strip())
+    if direct:
+        return _clean_name(direct.group(1))
+    return None
+
+
 def _extract_name(text: str, history: list[dict]) -> str | None:
-    joined = f"{_history_text(history)}\n{text}"
-    match = _NAME_RE.search(joined)
-    if match:
-        return _clean_name(match.group(1))
+    current = _NAME_RE.search(text)
+    if current:
+        return _clean_name(current.group(1))
 
-    last_assistant = _last_assistant_text(history)
-    if _ASKED_NAME_RE.search(last_assistant):
-        direct = _NAME_ONLY_RE.search(text.strip())
+    if _ASKED_NAME_RE.search(_last_assistant_text(history)):
+        direct = _direct_name(text)
         if direct:
-            return _clean_name(direct.group(1))
+            return direct
 
+    # Buscar primero expresiones explicitas en cualquier mensaje reciente.
     for item in reversed(history):
         if item.get("role") != "user":
             continue
         match = _NAME_RE.search(item.get("content", ""))
         if match:
-            return _clean_name(match.group(1))
-        if _ASKED_NAME_RE.search(_last_assistant_text(history)):
-            direct = _NAME_ONLY_RE.search(item.get("content", "").strip())
-            if direct:
-                return _clean_name(direct.group(1))
+            name = _clean_name(match.group(1))
+            if name:
+                return name
+
+    # Buscar pares: asistente pidio nombre -> siguiente mensaje de usuario fue el nombre.
+    previous_assistant = ""
+    for item in history:
+        role = item.get("role")
+        content = item.get("content", "")
+        if role == "assistant":
+            previous_assistant = content
+            continue
+        if role == "user" and _ASKED_NAME_RE.search(previous_assistant):
+            name = _direct_name(content)
+            if name:
+                return name
 
     return None
 
@@ -174,6 +194,8 @@ def _extract_time(text: str) -> tuple[int, int] | None:
         hour += 12
     if suffix == "am" and hour == 12:
         hour = 0
+    if not suffix and 1 <= hour <= 7:
+        hour += 12
     if hour > 23 or minute > 59:
         return None
     return hour, minute
