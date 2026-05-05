@@ -14,6 +14,12 @@ _NAME_RE = re.compile(
     r"\b(?:soy|me llamo|mi nombre es)\s+([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){0,3})",
     re.IGNORECASE,
 )
+_NAME_ONLY_RE = re.compile(
+    r"^(?:si\s+claro,?\s*|sí\s+claro,?\s*|claro,?\s*)?"
+    r"([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){1,3})\s*$",
+    re.IGNORECASE,
+)
+_ASKED_NAME_RE = re.compile(r"\b(nombre completo|dime tu nombre|tu nombre)\b", re.IGNORECASE)
 _TIME_RE = re.compile(
     r"(?:\ba\s+las\b|\ba\s+la\b|\balas\b)?\s*\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b",
     re.IGNORECASE,
@@ -64,8 +70,15 @@ def _now() -> datetime:
         return datetime.now(ZoneInfo("America/Chihuahua"))
 
 
-def _history_text(history: list[dict], limit: int = 6) -> str:
+def _history_text(history: list[dict], limit: int = 8) -> str:
     return "\n".join(item.get("content", "") for item in history[-limit:])
+
+
+def _last_assistant_text(history: list[dict]) -> str:
+    for item in reversed(history):
+        if item.get("role") == "assistant":
+            return item.get("content", "")
+    return ""
 
 
 def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
@@ -73,16 +86,40 @@ def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
     return bool(_SCHEDULE_RE.search(text))
 
 
+def _clean_name(name: str) -> str | None:
+    clean = name.strip(" .,;:¡!¿?")
+    stop = re.search(r"\b(doy|tengo|quiero|necesito|para|porque|con|y)\b", clean, re.IGNORECASE)
+    if stop:
+        clean = clean[: stop.start()].strip(" .,;:¡!¿?")
+    if len(clean) < 2 or len(clean) > 60:
+        return None
+    return clean.title()
+
+
 def _extract_name(text: str, history: list[dict]) -> str | None:
     joined = f"{_history_text(history)}\n{text}"
     match = _NAME_RE.search(joined)
-    if not match:
-        return None
-    name = match.group(1).strip()
-    stop = re.search(r"\b(doy|tengo|quiero|necesito|y|para)\b", name, re.IGNORECASE)
-    if stop:
-        name = name[: stop.start()].strip()
-    return name.title() if len(name) >= 2 else None
+    if match:
+        return _clean_name(match.group(1))
+
+    last_assistant = _last_assistant_text(history)
+    if _ASKED_NAME_RE.search(last_assistant):
+        direct = _NAME_ONLY_RE.search(text.strip())
+        if direct:
+            return _clean_name(direct.group(1))
+
+    for item in reversed(history):
+        if item.get("role") != "user":
+            continue
+        match = _NAME_RE.search(item.get("content", ""))
+        if match:
+            return _clean_name(match.group(1))
+        if _ASKED_NAME_RE.search(_last_assistant_text(history)):
+            direct = _NAME_ONLY_RE.search(item.get("content", "").strip())
+            if direct:
+                return _clean_name(direct.group(1))
+
+    return None
 
 
 def _extract_date(text: str) -> datetime | None:
