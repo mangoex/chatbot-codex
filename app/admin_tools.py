@@ -4,7 +4,7 @@ import html
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app import db
+from app import calendar_client, db
 
 router = APIRouter(prefix="/admin", tags=["admin-tools"])
 
@@ -23,17 +23,27 @@ def _page(title: str, body: str) -> str:
 <title>{html.escape(title)} - WhatsApp Bot</title>
 <style>
   body {{ margin: 0; background: #f4f5f2; color: #151716; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }}
-  main {{ max-width: 620px; margin: 48px auto; padding: 0 20px; }}
+  main {{ max-width: 720px; margin: 48px auto; padding: 0 20px; }}
   .panel {{ background: white; border: 1px solid #dde2dc; border-radius: 8px; padding: 22px; box-shadow: 0 18px 45px rgba(24,31,27,.08); }}
   h1 {{ margin: 0 0 10px; font-size: 26px; }}
   p {{ color: #68706c; line-height: 1.5; }}
   label {{ display: block; margin: 16px 0 6px; color: #68706c; font-size: 13px; }}
   input {{ width: 100%; border: 1px solid #c9d0c8; border-radius: 8px; padding: 10px 11px; font: inherit; }}
+  table {{ width: 100%; border-collapse: collapse; margin-top: 14px; }}
+  td {{ border-bottom: 1px solid #edf0ec; padding: 10px 0; vertical-align: top; }}
+  code {{ background: #f4f5f2; border: 1px solid #dde2dc; border-radius: 6px; padding: 2px 5px; }}
+  pre {{ white-space: pre-wrap; background: #f4f5f2; border: 1px solid #dde2dc; border-radius: 8px; padding: 12px; overflow: auto; }}
   .actions {{ display: flex; gap: 8px; margin-top: 18px; flex-wrap: wrap; }}
   .btn {{ border: 1px solid #151716; background: #151716; color: white; border-radius: 8px; padding: 9px 12px; cursor: pointer; font: inherit; text-decoration: none; }}
   .btn.secondary {{ background: white; color: #151716; }}
   .danger {{ color: #95322d; }}
+  .ok {{ color: #17643e; font-weight: 700; }}
+  .bad {{ color: #95322d; font-weight: 700; }}
 </style></head><body><main>{body}</main></body></html>"""
+
+
+def _yesno(value: object) -> str:
+    return '<span class="ok">OK</span>' if value else '<span class="bad">Falta</span>'
 
 
 @router.get("/reset-contact", response_class=HTMLResponse)
@@ -66,3 +76,33 @@ async def reset_contact_submit(request: Request, wa_id: str = Form(...)):
         raise HTTPException(400, "wa_id requerido")
     await db.clear_contact_data([clean_wa_id])
     return RedirectResponse("/admin/conversations", status_code=302)
+
+
+@router.get("/calendar-status", response_class=HTMLResponse)
+async def calendar_status_page(request: Request):
+    _require_login(request)
+    data = await calendar_client.diagnostics()
+    config = data.get("config", {})
+    rows = "".join(
+        f"<tr><td><code>{html.escape(str(key))}</code></td><td>{_yesno(value) if isinstance(value, bool) else html.escape(str(value))}</td></tr>"
+        for key, value in config.items()
+    )
+    token = _yesno(data.get("token_ok"))
+    calendar = _yesno(data.get("calendar_ok"))
+    error = data.get("error")
+    error_html = f"<p class='danger'>Error: {html.escape(str(error))}</p>" if error else ""
+    body = f"""
+    <section class="panel">
+      <h1>Estado de Google Calendar</h1>
+      <p>Esta pagina no muestra secretos. Solo valida si las variables existen y si Google acepta el token.</p>
+      <table>{rows}</table>
+      <p>Token OAuth: {token}</p>
+      <p>Acceso al calendario: {calendar}</p>
+      {error_html}
+      <div class="actions">
+        <a class="btn" href="/admin/calendar-status">Probar otra vez</a>
+        <a class="btn secondary" href="/admin/conversations">Volver</a>
+      </div>
+    </section>
+    """
+    return HTMLResponse(_page("Estado de Google Calendar", body))
