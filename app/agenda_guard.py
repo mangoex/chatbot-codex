@@ -10,6 +10,7 @@ _SCHEDULE_RE = re.compile(
     r"\b(agend|agenda|agendar|cita|llamada|demo|reunion|reunión)\b",
     re.IGNORECASE,
 )
+_GREETING_RE = re.compile(r"^(?:si,?\s*)?(?:hola|buenos dias|buenos días|buenas tardes|buenas noches|hey|hello)[!.\s]*$", re.IGNORECASE)
 _NAME_RE = re.compile(
     r"\b(?:soy|me llamo|mi nombre es)\s+([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){0,3})",
     re.IGNORECASE,
@@ -221,7 +222,13 @@ def _topic(user_text: str, history: list[dict]) -> str:
 
 
 async def maybe_handle(wa_id: str, user_text: str, history: list[dict]) -> tuple[str | None, bool]:
-    """Devuelve (respuesta, cita_creada) si se puede resolver agenda sin IA."""
+    """Devuelve (respuesta, cita_creada) si se puede resolver sin IA."""
+    if _GREETING_RE.match(user_text.strip()):
+        return (
+            "Hola, soy Asistto de Humanio. Puedo explicarte el servicio, recomendarte un paquete o ayudarte a agendar una llamada. ¿Qué te gustaría hacer?",
+            False,
+        )
+
     if not _in_schedule_flow(user_text, history):
         return None, False
 
