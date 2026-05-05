@@ -4,7 +4,7 @@ Plantilla para crear y desplegar un chatbot de WhatsApp sin n8n:
 
 - FastAPI
 - WhatsApp Cloud API de Meta
-- OpenAI
+- OpenAI u OpenRouter por API compatible
 - Postgres
 - Panel admin con login, conversaciones, CRM, dashboard y escalaciones
 - Dockerfile listo para Easypanel
@@ -25,7 +25,9 @@ Variables principales:
 - `WHATSAPP_PHONE_NUMBER_ID`: Phone Number ID de tu numero de WhatsApp.
 - `WHATSAPP_VERIFY_TOKEN`: texto secreto inventado por ti para validar el webhook en Meta.
 - `META_APP_SECRET`: App Secret de Meta para validar firmas. Recomendado en produccion.
-- `OPENAI_API_KEY`: API key de OpenAI.
+- `OPENAI_API_KEY`: API key de OpenAI o de OpenRouter.
+- `OPENAI_BASE_URL`: usa `https://openrouter.ai/api/v1` cuando trabajes con OpenRouter.
+- `OPENAI_MODEL`: modelo del agente. Para modelos gratis de OpenRouter puedes usar `openrouter/free`.
 - `DATABASE_URL`: conexion interna al Postgres de Easypanel.
 - `ADMIN_USER`, `ADMIN_PASSWORD`, `SESSION_SECRET`: acceso al panel `/admin`.
 - `QUALIFIED_CTA_URL`: link opcional para leads calificados.
@@ -35,6 +37,23 @@ Tambien se soportan los aliases anteriores:
 - `WHATSAPP_API_TOKEN` en lugar de `WHATSAPP_ACCESS_TOKEN`.
 - `VERIFY_TOKEN` en lugar de `WHATSAPP_VERIFY_TOKEN`.
 - `WEBHOOK_DOMAIN` en lugar de `PUBLIC_BASE_URL`.
+
+## OpenRouter gratis
+
+Para usar modelos gratis de OpenRouter, configura:
+
+```text
+OPENAI_API_KEY=tu_openrouter_api_key
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+OPENAI_MODEL=openrouter/free
+OPENROUTER_SITE_URL=https://bot.humanio.digital
+OPENROUTER_APP_NAME=Humanio WhatsApp Bot
+```
+
+`openrouter/free` elige automaticamente un modelo gratuito disponible. Si prefieres un
+modelo especifico, usa un ID con sufijo `:free`, por ejemplo
+`meta-llama/llama-3.2-3b-instruct:free`, siempre revisando que siga disponible en
+OpenRouter.
 
 ## 2. Personaliza el bot
 

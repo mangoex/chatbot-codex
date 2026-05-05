@@ -18,6 +18,9 @@ class ConfigAliasTests(unittest.TestCase):
                 "WHATSAPP_VERIFY_TOKEN": "verify-token",
                 "PUBLIC_BASE_URL": "https://bot.humanio.digital",
                 "OPENAI_API_KEY": "openai-key",
+                "OPENAI_BASE_URL": "https://openrouter.ai/api/v1",
+                "OPENROUTER_SITE_URL": "https://bot.humanio.digital",
+                "OPENROUTER_APP_NAME": "Humanio WhatsApp Bot",
                 "DATABASE_URL": "postgres://user:pass@db:5432/bot",
                 "ADMIN_USER": "admin",
                 "ADMIN_PASSWORD": "admin-pass",
@@ -28,6 +31,9 @@ class ConfigAliasTests(unittest.TestCase):
         self.assertEqual(config.WHATSAPP_API_TOKEN, "wa-token")
         self.assertEqual(config.VERIFY_TOKEN, "verify-token")
         self.assertEqual(config.WEBHOOK_DOMAIN, "https://bot.humanio.digital")
+        self.assertEqual(config.OPENAI_BASE_URL, "https://openrouter.ai/api/v1")
+        self.assertEqual(config.OPENROUTER_SITE_URL, "https://bot.humanio.digital")
+        self.assertEqual(config.OPENROUTER_APP_NAME, "Humanio WhatsApp Bot")
         self.assertEqual(config.validate(), ["WHATSAPP_PHONE_NUMBER_ID"])
 
     def test_existing_variable_names_still_take_precedence(self):
