@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 import httpx
 
-from app import config
+from app import config, db
 
 log = logging.getLogger("calendar")
 
@@ -100,6 +100,24 @@ def _format_dt(dt: datetime) -> str:
     return dt.strftime("%d/%m/%Y a las %H:%M")
 
 
+def _event_start(item: dict[str, Any]) -> datetime | None:
+    raw = item.get("start", {}).get("dateTime")
+    if not raw:
+        return None
+    try:
+        return _parse_start(raw)
+    except Exception:
+        return None
+
+
+def _same_slot(a: datetime | None, b: datetime | None) -> bool:
+    if not a or not b:
+        return False
+    a = a.astimezone(_tz())
+    b = b.astimezone(_tz())
+    return a.date() == b.date() and abs((a - b).total_seconds()) <= 60 * 75
+
+
 async def _access_token() -> str:
     data = {
         "client_id": config.GOOGLE_CLIENT_ID,
@@ -182,6 +200,121 @@ async def _insert_event(token: str, data: dict[str, Any], start: datetime, end: 
         return resp.json()
 
 
+async def _delete_event(token: str, event_id: str) -> bool:
+    calendar_id = quote(config.GOOGLE_CALENDAR_ID, safe="")
+    event_id = quote(event_id, safe="")
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.delete(
+            f"{_CALENDAR_API}/calendars/{calendar_id}/events/{event_id}",
+            headers=headers,
+        )
+        if resp.status_code in (404, 410):
+            return False
+        resp.raise_for_status()
+    return True
+
+
+async def _search_events_for_wa_id(token: str, wa_id: str) -> list[dict]:
+    calendar_id = quote(config.GOOGLE_CALENDAR_ID, safe="")
+    now = datetime.now(_tz()) - timedelta(hours=2)
+    params = {
+        "timeMin": now.isoformat(),
+        "timeMax": (now + timedelta(days=90)).isoformat(),
+        "timeZone": config.GOOGLE_CALENDAR_TIMEZONE,
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "maxResults": "20",
+        "q": wa_id,
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(
+            f"{_CALENDAR_API}/calendars/{calendar_id}/events",
+            headers=headers,
+            params=params,
+        )
+        resp.raise_for_status()
+        payload = resp.json()
+    return [
+        item
+        for item in payload.get("items", [])
+        if item.get("status") != "cancelled" and item.get("id")
+    ]
+
+
+def _filter_candidates(candidates: list[dict], hint_start: datetime | None) -> list[dict]:
+    if not hint_start:
+        return candidates
+    return [item for item in candidates if _same_slot(_event_start(item), hint_start)]
+
+
+async def _candidate_from_db(wa_id: str, hint_start: datetime | None) -> tuple[dict | None, int]:
+    rows = await db.list_active_calendar_appointments(wa_id)
+    candidates: list[dict] = []
+    for row in rows:
+        candidates.append(
+            {
+                "id": row["google_event_id"],
+                "summary": row.get("attendee_name") or row.get("topic") or "Llamada Asistto",
+                "start": {"dateTime": row["start_at"].isoformat()},
+                "_db": True,
+            }
+        )
+    filtered = _filter_candidates(candidates, hint_start)
+    if len(filtered) == 1:
+        return filtered[0], len(candidates)
+    return None, len(filtered)
+
+
+async def cancel_appointment(
+    wa_id: str,
+    hint_start: datetime | None = None,
+) -> tuple[str, bool]:
+    """Cancela una cita activa del contacto y borra el evento real de Google Calendar."""
+    if not enabled():
+        return (
+            "Puedo ayudarte a cancelar, pero el calendario no esta activo en este momento. Te paso con el equipo para revisarlo.",
+            False,
+        )
+
+    try:
+        token = await _access_token()
+        candidate, count = await _candidate_from_db(wa_id, hint_start)
+        if candidate is None:
+            searched = await _search_events_for_wa_id(token, wa_id)
+            searched = _filter_candidates(searched, hint_start)
+            if len(searched) == 1:
+                candidate = searched[0]
+            elif len(searched) > 1 or count > 1:
+                return (
+                    "Tengo mas de una cita activa. Dime el dia y hora de la cita que quieres cancelar.",
+                    False,
+                )
+            else:
+                return (
+                    "No encontre una cita activa ligada a este WhatsApp. Si quieres, dime el dia y hora y la revisamos.",
+                    False,
+                )
+
+        event_id = str(candidate["id"])
+        deleted = await _delete_event(token, event_id)
+        await db.mark_calendar_appointment_cancelled(event_id)
+        start = _event_start(candidate)
+        when = f" del {_format_dt(start)}" if start else ""
+        if deleted:
+            return f"Listo, cancele tu cita{when} y la borre del calendario.", True
+        return f"Esa cita{when} ya no aparece activa en calendario. La marque como cancelada.", True
+    except httpx.HTTPStatusError as exc:
+        log.exception("Google Calendar rechazo la cancelacion: %s", exc.response.text[:500])
+    except Exception:
+        log.exception("Error cancelando cita en Google Calendar")
+    return (
+        "No pude cancelar la cita en calendario en este momento. Te paso con el equipo para revisarlo.",
+        False,
+    )
+
+
 async def process_reply(wa_id: str, reply: str) -> tuple[str, bool]:
     """Procesa el marcador [[CALENDAR_EVENT: {...}]] y devuelve respuesta limpia."""
     match = _MARKER_RE.search(reply)
@@ -219,7 +352,18 @@ async def process_reply(wa_id: str, reply: str) -> tuple[str, bool]:
                 "Ese horario aparece ocupado en mi calendario. Dime otro dia u hora y lo reviso.",
                 False,
             )
-        await _insert_event(token, data, start, end)
+        event = await _insert_event(token, data, start, end)
+        event_id = event.get("id")
+        if event_id:
+            await db.save_calendar_appointment(
+                wa_id=wa_id,
+                google_event_id=event_id,
+                calendar_id=config.GOOGLE_CALENDAR_ID,
+                attendee_name=str(data.get("attendee_name") or "").strip() or None,
+                topic=str(data.get("topic") or "").strip() or None,
+                start_at=start,
+                end_at=end,
+            )
     except httpx.HTTPStatusError as exc:
         log.exception("Google Calendar rechazo la cita: %s", exc.response.text[:500])
         return (

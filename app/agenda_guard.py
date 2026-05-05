@@ -12,6 +12,11 @@ _SCHEDULE_RE = re.compile(
     r"|\b(?:agendar|agendemos|agenda una|programar una|reservar una)\b",
     re.IGNORECASE | re.DOTALL,
 )
+_CANCEL_RE = re.compile(
+    r"\b(cancelar|cancela|cancele|cancelame|cancélame|no\s+(?:podre|podré|puedo|voy\s+a\s+poder)"
+    r"(?:\s+\w+){0,4}\s+(?:asistir|ir)|no\s+asistire|no\s+asistiré)\b",
+    re.IGNORECASE,
+)
 _GREETING_RE = re.compile(r"^(?:si,?\s*)?(?:hola|buenos dias|buenos días|buenas tardes|buenas noches|hey|hello)[!.\s]*$", re.IGNORECASE)
 _NAME_RE = re.compile(
     r"\b(?:soy|me llamo|mi nombre es)\s+([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){0,3})",
@@ -260,6 +265,9 @@ async def maybe_handle(wa_id: str, user_text: str, history: list[dict]) -> tuple
             "Hola, soy Asistto de Humanio. Te puedo explicar como funcionan los chatbots de WhatsApp con IA, paquetes o casos de uso para tu negocio. ¿Qué te gustaría resolver primero?",
             False,
         )
+
+    if _CANCEL_RE.search(user_text):
+        return await calendar_client.cancel_appointment(wa_id, _extract_start(user_text))
 
     if _looks_like_service_scheduling(user_text, history):
         return (

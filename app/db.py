@@ -43,6 +43,24 @@ CREATE TABLE IF NOT EXISTS processed_messages (
     processed_at TIMESTAMPTZ DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS calendar_appointments (
+    id BIGSERIAL PRIMARY KEY,
+    wa_id TEXT NOT NULL,
+    google_event_id TEXT UNIQUE NOT NULL,
+    calendar_id TEXT NOT NULL,
+    attendee_name TEXT,
+    topic TEXT,
+    start_at TIMESTAMPTZ NOT NULL,
+    end_at TIMESTAMPTZ NOT NULL,
+    status TEXT NOT NULL DEFAULT 'scheduled'
+        CHECK (status IN ('scheduled','cancelled')),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    cancelled_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_calendar_appts_wa_status
+    ON calendar_appointments(wa_id, status, start_at);
+
 CREATE TABLE IF NOT EXISTS escalations (
     id BIGSERIAL PRIMARY KEY,
     wa_id TEXT NOT NULL,
@@ -328,6 +346,74 @@ async def get_lead(wa_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+async def save_calendar_appointment(
+    wa_id: str,
+    google_event_id: str,
+    calendar_id: str,
+    attendee_name: str | None,
+    topic: str | None,
+    start_at,
+    end_at,
+) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO calendar_appointments(
+                wa_id, google_event_id, calendar_id, attendee_name,
+                topic, start_at, end_at
+            )
+            VALUES($1,$2,$3,$4,$5,$6,$7)
+            ON CONFLICT (google_event_id) DO UPDATE SET
+                wa_id = EXCLUDED.wa_id,
+                calendar_id = EXCLUDED.calendar_id,
+                attendee_name = EXCLUDED.attendee_name,
+                topic = EXCLUDED.topic,
+                start_at = EXCLUDED.start_at,
+                end_at = EXCLUDED.end_at,
+                status = 'scheduled',
+                cancelled_at = NULL,
+                updated_at = now()
+            """,
+            wa_id,
+            google_event_id,
+            calendar_id,
+            attendee_name,
+            topic,
+            start_at,
+            end_at,
+        )
+
+
+async def list_active_calendar_appointments(wa_id: str) -> list[dict]:
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT *
+            FROM calendar_appointments
+            WHERE wa_id = $1
+              AND status = 'scheduled'
+              AND start_at >= now() - interval '2 hours'
+            ORDER BY start_at ASC
+            """,
+            wa_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def mark_calendar_appointment_cancelled(google_event_id: str) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE calendar_appointments SET
+                status = 'cancelled',
+                cancelled_at = now(),
+                updated_at = now()
+            WHERE google_event_id = $1
+            """,
+            google_event_id,
+        )
+
+
 async def list_leads(status: str | None = None, limit: int = 200) -> list[dict]:
     query = "SELECT * FROM leads"
     args: list = []
@@ -497,6 +583,10 @@ async def clear_contact_data(wa_ids: list[str]) -> dict[str, int]:
             ),
             "pending_follow_ups": await conn.execute(
                 "DELETE FROM pending_follow_ups WHERE wa_id = ANY($1::text[])",
+                wa_ids,
+            ),
+            "calendar_appointments": await conn.execute(
+                "DELETE FROM calendar_appointments WHERE wa_id = ANY($1::text[])",
                 wa_ids,
             ),
         }
