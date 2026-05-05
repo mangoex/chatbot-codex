@@ -24,6 +24,18 @@ _NAME_ONLY_RE = re.compile(
 )
 _ASKED_NAME_RE = re.compile(r"\b(nombre completo|dime tu nombre|tu nombre)\b", re.IGNORECASE)
 _ASKED_DATETIME_RE = re.compile(r"\b(d[ií]a y hora|fecha y hora|qu[eé] d[ií]a|qu[eé] hora)\b", re.IGNORECASE)
+_SERVICE_SCHEDULING_RE = re.compile(
+    r"^(?:agendar\s+llamadas|agendar\s+citas|agenda\s+de\s+citas|citas|llamadas|calendario|recordatorios)$",
+    re.IGNORECASE,
+)
+_SERVICE_CONTEXT_RE = re.compile(
+    r"\b(automatizar|captura de leads|consultas de servicios|agendar llamadas|tipo de negocio|servicio|como funciona|funciona)\b",
+    re.IGNORECASE,
+)
+_ROLE_WORD_RE = re.compile(
+    r"\b(consultor|consultora|asesor|asesora|dentista|doctor|doctora|medico|médico|abogado|abogada|arquitecto|arquitecta|contador|contadora|coach|agencia|empresa|negocio|clinica|clínica|restaurante|taller|inmobiliaria|servicios?|ia|marketing|ventas|finanzas|recursos|humanos|operaciones)\b",
+    re.IGNORECASE,
+)
 _TIME_RE = re.compile(
     r"(?:\ba\s+las\b|\ba\s+la\b|\balas\b)?\s*\b(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\b",
     re.IGNORECASE,
@@ -85,9 +97,20 @@ def _last_assistant_text(history: list[dict]) -> str:
     return ""
 
 
+def _looks_like_service_scheduling(user_text: str, history: list[dict]) -> bool:
+    """Distingue seleccionar la habilidad de agendar llamadas de pedir una cita real."""
+    text = user_text.strip(" .,!¡¿?")
+    last_assistant = _last_assistant_text(history)
+    if not _SERVICE_SCHEDULING_RE.match(text):
+        return False
+    return bool(_SERVICE_CONTEXT_RE.search(last_assistant))
+
+
 def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
     """Agenda solo si el usuario la pide o si ya estamos pidiendo datos de cita."""
     last_assistant = _last_assistant_text(history)
+    if _looks_like_service_scheduling(user_text, history):
+        return False
     if _SCHEDULE_RE.search(user_text):
         return True
     if _ASKED_NAME_RE.search(last_assistant) or _ASKED_DATETIME_RE.search(last_assistant):
@@ -97,12 +120,14 @@ def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
 
 def _clean_name(name: str) -> str | None:
     clean = name.strip(" .,;:¡!¿?")
-    stop = re.search(r"\b(doy|tengo|quiero|necesito|para|porque|con|y|mañana|manana|lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo)\b", clean, re.IGNORECASE)
+    stop = re.search(r"\b(doy|tengo|quiero|necesito|para|porque|con|y|de|mañana|manana|lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo)\b", clean, re.IGNORECASE)
     if stop:
         clean = clean[: stop.start()].strip(" .,;:¡!¿?")
     if len(clean) < 2 or len(clean) > 60:
         return None
     if any(ch.isdigit() for ch in clean):
+        return None
+    if _ROLE_WORD_RE.search(clean):
         return None
     return clean.title()
 
@@ -233,6 +258,12 @@ async def maybe_handle(wa_id: str, user_text: str, history: list[dict]) -> tuple
     if _GREETING_RE.match(user_text.strip()):
         return (
             "Hola, soy Asistto de Humanio. Te puedo explicar como funcionan los chatbots de WhatsApp con IA, paquetes o casos de uso para tu negocio. ¿Qué te gustaría resolver primero?",
+            False,
+        )
+
+    if _looks_like_service_scheduling(user_text, history):
+        return (
+            "Perfecto. Asistto puede pedir datos al prospecto, entender el motivo de la llamada y crear la cita en tu calendario. ¿Quieres que te recomiende un paquete para eso?",
             False,
         )
 
