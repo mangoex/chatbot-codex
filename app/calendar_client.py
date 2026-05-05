@@ -28,6 +28,60 @@ def enabled() -> bool:
     )
 
 
+def config_status() -> dict[str, bool | str]:
+    return {
+        "GOOGLE_CALENDAR_ENABLED": bool(config.GOOGLE_CALENDAR_ENABLED),
+        "GOOGLE_CLIENT_ID": bool(config.GOOGLE_CLIENT_ID),
+        "GOOGLE_CLIENT_SECRET": bool(config.GOOGLE_CLIENT_SECRET),
+        "GOOGLE_REFRESH_TOKEN": bool(config.GOOGLE_REFRESH_TOKEN),
+        "GOOGLE_CALENDAR_ID": bool(config.GOOGLE_CALENDAR_ID),
+        "GOOGLE_CALENDAR_TIMEZONE": config.GOOGLE_CALENDAR_TIMEZONE,
+        "enabled": enabled(),
+    }
+
+
+def _safe_error(exc: Exception) -> str:
+    if isinstance(exc, httpx.HTTPStatusError):
+        text = exc.response.text[:500]
+        return f"HTTP {exc.response.status_code}: {text}"
+    return str(exc)[:500]
+
+
+async def diagnostics() -> dict:
+    status = config_status()
+    result: dict[str, Any] = {"config": status, "token_ok": False, "calendar_ok": False}
+    if not enabled():
+        result["error"] = "Google Calendar no esta activo o faltan variables."
+        return result
+    try:
+        token = await _access_token()
+        result["token_ok"] = True
+        calendar_id = quote(config.GOOGLE_CALENDAR_ID, safe="")
+        now = datetime.now(_tz())
+        params = {
+            "timeMin": now.isoformat(),
+            "timeMax": (now + timedelta(days=1)).isoformat(),
+            "timeZone": config.GOOGLE_CALENDAR_TIMEZONE,
+            "singleEvents": "true",
+            "maxResults": "1",
+        }
+        headers = {"Authorization": f"Bearer {token}"}
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(
+                f"{_CALENDAR_API}/calendars/{calendar_id}/events",
+                headers=headers,
+                params=params,
+            )
+            resp.raise_for_status()
+            payload = resp.json()
+        result["calendar_ok"] = True
+        result["calendar_id"] = config.GOOGLE_CALENDAR_ID
+        result["items_seen"] = len(payload.get("items", []))
+    except Exception as exc:
+        result["error"] = _safe_error(exc)
+    return result
+
+
 def _tz() -> ZoneInfo:
     try:
         return ZoneInfo(config.GOOGLE_CALENDAR_TIMEZONE)
