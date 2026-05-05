@@ -29,8 +29,12 @@ id_rsa*
 # MCP local
 .mcp.json
 .mcp.local.json
-.codex/config.toml
-!.codex/config.example.toml
+.codex/
+AGENTS.md
+
+# Assistant-local caches and generated skills
+.agents/
+.claude/
 
 # Directorios de runtime / build
 *.pyc
