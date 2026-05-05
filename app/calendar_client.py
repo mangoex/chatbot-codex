@@ -64,20 +64,31 @@ async def _is_available(token: str, start: datetime, end: datetime) -> bool:
     buffer_minutes = max(config.GOOGLE_APPOINTMENT_BUFFER_MINUTES, 0)
     check_start = start - timedelta(minutes=buffer_minutes)
     check_end = end + timedelta(minutes=buffer_minutes)
-    body = {
+    calendar_id = quote(config.GOOGLE_CALENDAR_ID, safe="")
+    params = {
         "timeMin": check_start.isoformat(),
         "timeMax": check_end.isoformat(),
         "timeZone": config.GOOGLE_CALENDAR_TIMEZONE,
-        "items": [{"id": config.GOOGLE_CALENDAR_ID}],
+        "singleEvents": "true",
+        "orderBy": "startTime",
+        "maxResults": "10",
     }
     headers = {"Authorization": f"Bearer {token}"}
     async with httpx.AsyncClient(timeout=20) as client:
-        resp = await client.post(f"{_CALENDAR_API}/freeBusy", headers=headers, json=body)
+        resp = await client.get(
+            f"{_CALENDAR_API}/calendars/{calendar_id}/events",
+            headers=headers,
+            params=params,
+        )
         resp.raise_for_status()
         payload = resp.json()
-    calendars = payload.get("calendars", {})
-    busy = calendars.get(config.GOOGLE_CALENDAR_ID, {}).get("busy", [])
-    return not busy
+    for item in payload.get("items", []):
+        if item.get("status") == "cancelled":
+            continue
+        if item.get("transparency") == "transparent":
+            continue
+        return False
+    return True
 
 
 async def _insert_event(token: str, data: dict[str, Any], start: datetime, end: datetime) -> dict:
