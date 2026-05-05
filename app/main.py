@@ -6,7 +6,18 @@ from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header, Qu
 from fastapi.responses import PlainTextResponse
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import config, db, openai_client, whatsapp_client, signature, escalations, admin, leads, follow_ups
+from app import (
+    admin,
+    calendar_client,
+    config,
+    db,
+    escalations,
+    follow_ups,
+    leads,
+    openai_client,
+    signature,
+    whatsapp_client,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -110,8 +121,13 @@ async def _process_message_safe(payload: dict) -> None:
 
 
 MEDIA_REPLY = (
-    "¡Gracias por compartir eso! 😊 Por el momento solo puedo leer mensajes de texto "
+    "¡Gracias por compartir eso! Por el momento solo puedo leer mensajes de texto "
     "por este canal. Si quieres contarme más sobre tu negocio, escríbeme y con gusto seguimos."
+)
+
+AI_ERROR_REPLY = (
+    "Perdón, tardé más de lo esperado y no pude procesar bien ese mensaje. "
+    "¿Me lo repites en una frase?"
 )
 
 
@@ -154,18 +170,30 @@ async def _process_message(payload: dict) -> None:
         log.info("Media recibida de %s (%s)", wa_id, media_type)
         return
 
-    # Caso B: texto normal → flujo OpenAI
+    # Caso B: texto normal → guardar primero para que aparezca en admin de inmediato.
     if not user_text.strip():
         return  # nada que procesar
 
-    raw_reply = await openai_client.complete(user_text, history)
-    reply = await leads.process_reply(
-        wa_id,
-        raw_reply,
-        history + [{"role": "user", "content": user_text}],
-    )
-
     await db.save_message(wa_id, "user", user_text)
+    current_history = history + [{"role": "user", "content": user_text}]
+
+    try:
+        raw_reply = await openai_client.complete(user_text, history)
+    except Exception:
+        log.exception("Error llamando al modelo")
+        await db.save_message(wa_id, "assistant", AI_ERROR_REPLY)
+        await whatsapp_client.send_text(wa_id, AI_ERROR_REPLY)
+        return
+
+    calendar_reply, scheduled = await calendar_client.process_reply(wa_id, raw_reply)
+    reply = await leads.process_reply(wa_id, calendar_reply, current_history)
+    if scheduled:
+        await db.upsert_lead(
+            wa_id,
+            qualification_status="calificado",
+            action_link_sent=True,
+        )
+
     await db.save_message(wa_id, "assistant", reply)
 
     await whatsapp_client.send_text(wa_id, reply)
