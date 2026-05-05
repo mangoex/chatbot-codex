@@ -58,6 +58,14 @@ def _system_prompt() -> str:
     return f"{config.SYSTEM_PROMPT}\n\n--- contexto_runtime ---\n{_runtime_context()}"
 
 
+def _safe_error(exc: Exception) -> str:
+    status = getattr(exc, "status_code", None)
+    body = getattr(exc, "body", None)
+    if status:
+        return f"HTTP {status}: {body or str(exc)}"[:700]
+    return str(exc)[:700]
+
+
 def count_tokens(messages: list[dict]) -> int:
     enc = _encoder()
     total = 0
@@ -87,8 +95,9 @@ async def _chat(messages: list[dict]) -> str:
         kwargs["max_tokens"] = config.OPENAI_MAX_TOKENS
     try:
         resp = await _get_client().chat.completions.create(**kwargs)
-    except Exception as exc:
-        if "max_tokens" not in str(exc):
+    except Exception:
+        # Algunos proveedores/modelos compatibles no aceptan max_tokens. Reintentamos una vez.
+        if "max_tokens" not in kwargs:
             raise
         kwargs.pop("max_tokens", None)
         resp = await _get_client().chat.completions.create(**kwargs)
@@ -104,6 +113,30 @@ async def complete(user_message: str, history: list[dict]) -> str:
         + [{"role": "user", "content": user_message}]
     )
     return await _chat(messages)
+
+
+async def diagnostics() -> dict:
+    result = {
+        "OPENAI_API_KEY": bool(config.OPENAI_API_KEY),
+        "OPENAI_BASE_URL": config.OPENAI_BASE_URL or "OpenAI directo",
+        "OPENAI_MODEL": config.OPENAI_MODEL,
+        "OPENAI_TIMEOUT_SECONDS": config.OPENAI_TIMEOUT_SECONDS,
+        "OPENAI_MAX_TOKENS": config.OPENAI_MAX_TOKENS,
+        "ok": False,
+    }
+    if not config.OPENAI_API_KEY:
+        result["error"] = "Falta OPENAI_API_KEY."
+        return result
+    try:
+        reply = await _chat([
+            {"role": "system", "content": "Responde solo OK."},
+            {"role": "user", "content": "ping"},
+        ])
+        result["ok"] = True
+        result["reply"] = reply[:120]
+    except Exception as exc:
+        result["error"] = _safe_error(exc)
+    return result
 
 
 async def summarize_conversation(history: list[dict], lead: dict | None = None) -> str:
