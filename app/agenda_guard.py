@@ -7,8 +7,10 @@ from zoneinfo import ZoneInfo
 from app import calendar_client, config
 
 _SCHEDULE_RE = re.compile(
-    r"\b(agend|agenda|agendar|cita|llamada|demo|reunion|reunión)\b",
-    re.IGNORECASE,
+    r"\b(?:quiero|quisiera|necesito|me interesa|puedo|podemos|ay[uú]dame|ayudame|vamos a|deseo|me gustar[ií]a)\b"
+    r".{0,60}\b(?:agend\w*|cita|llamada|demo|reuni[oó]n)\b"
+    r"|\b(?:agendar|agendemos|agenda una|programar una|reservar una)\b",
+    re.IGNORECASE | re.DOTALL,
 )
 _GREETING_RE = re.compile(r"^(?:si,?\s*)?(?:hola|buenos dias|buenos días|buenas tardes|buenas noches|hey|hello)[!.\s]*$", re.IGNORECASE)
 _NAME_RE = re.compile(
@@ -84,8 +86,13 @@ def _last_assistant_text(history: list[dict]) -> str:
 
 
 def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
-    text = f"{_history_text(history)}\n{user_text}"
-    return bool(_SCHEDULE_RE.search(text) or _ASKED_DATETIME_RE.search(_last_assistant_text(history)))
+    """Agenda solo si el usuario la pide o si ya estamos pidiendo datos de cita."""
+    last_assistant = _last_assistant_text(history)
+    if _SCHEDULE_RE.search(user_text):
+        return True
+    if _ASKED_NAME_RE.search(last_assistant) or _ASKED_DATETIME_RE.search(last_assistant):
+        return True
+    return False
 
 
 def _clean_name(name: str) -> str | None:
@@ -225,7 +232,7 @@ async def maybe_handle(wa_id: str, user_text: str, history: list[dict]) -> tuple
     """Devuelve (respuesta, cita_creada) si se puede resolver sin IA."""
     if _GREETING_RE.match(user_text.strip()):
         return (
-            "Hola, soy Asistto de Humanio. Puedo explicarte el servicio, recomendarte un paquete o ayudarte a agendar una llamada. ¿Qué te gustaría hacer?",
+            "Hola, soy Asistto de Humanio. Te puedo explicar como funcionan los chatbots de WhatsApp con IA, paquetes o casos de uso para tu negocio. ¿Qué te gustaría resolver primero?",
             False,
         )
 
