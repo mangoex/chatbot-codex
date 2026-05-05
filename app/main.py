@@ -8,6 +8,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from app import (
     admin,
+    agenda_guard,
     calendar_client,
     config,
     db,
@@ -131,6 +132,34 @@ AI_ERROR_REPLY = (
 )
 
 
+async def _send_and_track(
+    wa_id: str,
+    user_text: str,
+    reply: str,
+    history: list[dict],
+    scheduled: bool = False,
+) -> None:
+    await db.save_message(wa_id, "assistant", reply)
+    await whatsapp_client.send_text(wa_id, reply)
+    if scheduled:
+        await db.upsert_lead(
+            wa_id,
+            qualification_status="calificado",
+            action_link_sent=True,
+        )
+    await escalations.record_if_escalated(
+        wa_id=wa_id,
+        user_text=user_text,
+        bot_reply=reply,
+        message_type="text",
+        media_type=None,
+        history=history,
+    )
+    lead = await db.get_lead(wa_id)
+    if not lead or lead.get("qualification_status") == "en_progreso":
+        await follow_ups.schedule(wa_id)
+
+
 async def _process_message(payload: dict) -> None:
     msg = whatsapp_client.extract_message(payload)
     if msg is None:
@@ -177,6 +206,13 @@ async def _process_message(payload: dict) -> None:
     await db.save_message(wa_id, "user", user_text)
     current_history = history + [{"role": "user", "content": user_text}]
 
+    agenda_reply, scheduled = await agenda_guard.maybe_handle(wa_id, user_text, current_history)
+    if agenda_reply:
+        reply = await leads.process_reply(wa_id, agenda_reply, current_history)
+        await _send_and_track(wa_id, user_text, reply, history, scheduled=scheduled)
+        log.info("Agenda guard respondio a %s (%d chars)", wa_id, len(reply))
+        return
+
     try:
         raw_reply = await openai_client.complete(user_text, history)
     except Exception:
@@ -187,29 +223,7 @@ async def _process_message(payload: dict) -> None:
 
     calendar_reply, scheduled = await calendar_client.process_reply(wa_id, raw_reply)
     reply = await leads.process_reply(wa_id, calendar_reply, current_history)
-    if scheduled:
-        await db.upsert_lead(
-            wa_id,
-            qualification_status="calificado",
-            action_link_sent=True,
-        )
 
-    await db.save_message(wa_id, "assistant", reply)
-
-    await whatsapp_client.send_text(wa_id, reply)
-
-    await escalations.record_if_escalated(
-        wa_id=wa_id,
-        user_text=user_text,
-        bot_reply=reply,
-        message_type="text",
-        media_type=None,
-        history=history,
-    )
-
-    # Programar follow-up solo si la conversación aún está en progreso
-    lead = await db.get_lead(wa_id)
-    if not lead or lead.get("qualification_status") == "en_progreso":
-        await follow_ups.schedule(wa_id)
+    await _send_and_track(wa_id, user_text, reply, history, scheduled=scheduled)
 
     log.info("Respondido a %s (%d chars)", wa_id, len(reply))
