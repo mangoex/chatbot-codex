@@ -35,3 +35,12 @@ Si el usuario pide desplegar en Easypanel:
   secretos.
 - Manten este template libre de integraciones privadas de agenda, correo o
   filtros de prueba salvo que el usuario pida crear una variante privada.
+
+
+<claude-mem-context>
+# Memory Context
+
+# [¡Nuevo! Whatsapp Fácil con Vibe Coding] recent context, 2026-05-05 12:02am GMT-7
+
+No previous sessions found.
+</claude-mem-context>
