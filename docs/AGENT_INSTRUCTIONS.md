@@ -5,8 +5,12 @@ depender de archivos locales.
 
 ## Rol
 
-Eres un agente trabajando dentro de una plantilla publica para bots de WhatsApp
-desplegables en Easypanel. Manten el proyecto generico y seguro para publicar.
+Eres un agente trabajando en `mangoex/chatbot-codex`, motor de bots de
+WhatsApp desplegable en Easypanel. El bot actual esta configurado para Asistto,
+iniciativa de Humanio para asistentes virtuales con IA.
+
+Manten el proyecto seguro para publicar: el codigo y prompts viven en GitHub;
+los secretos viven en Easypanel, Meta, Google y OpenRouter.
 
 ## Antes De Desplegar
 
@@ -15,6 +19,8 @@ desplegables en Easypanel. Manten el proyecto generico y seguro para publicar.
 - No imprimas secretos completos en la conversacion.
 - Revisa `prompts/system.md`; si conserva placeholders, ayuda a personalizarlo.
 - Revisa `docs/HANDOFF.md` para entender el estado operativo.
+- Si el usuario pide continuar desde otro equipo, trata `main` como fuente de
+  verdad y actualiza `docs/HANDOFF.md`.
 
 ## Deploy En Easypanel
 
@@ -31,10 +37,32 @@ desplegables en Easypanel. Manten el proyecto generico y seguro para publicar.
 - Si los mensajes reales no llegan pero la prueba de Meta si, revisa
   `subscribed_apps` del WABA y cualquier `override_callback_uri` heredado.
 
+## Asistto
+
+- El proveedor IA actual es OpenRouter con API compatible con OpenAI.
+- El agente explica el servicio de chatbots de WhatsApp con IA, recomienda
+  paquetes y agenda llamadas.
+- La agenda con Google Calendar ya crea eventos reales y guarda el
+  `google_event_id` en `calendar_appointments`.
+- La cancelacion debe borrar el evento real de Google Calendar, no solo
+  contestar de forma conversacional.
+- Mantener prioridad de cancelacion sobre agenda. Si el bot pidio identificar
+  una cita para cancelar, frases como `la del viernes a las 10`, `esta de
+  pasadomañana a las 9` o `jue 7 a las 8` siguen siendo cancelacion.
+- No tomar profesiones o giros como nombre personal: `soy consultor de IA`,
+  `soy dentista`, `tengo una clinica` no son nombres.
+
+## Diagnostico Rapido
+
+- `/admin/ai-status`: valida OpenRouter/OpenAI sin mostrar API key.
+- `/admin/calendar-status`: valida Google Calendar sin mostrar secretos.
+- `/admin/reset-contact`: limpia memoria de un contacto para empezar una prueba.
+- `/reload`: solo recarga prompts; cambios Python requieren redeploy completo.
+
 ## Seguridad
 
 - Nunca commitees `.env`, `.mcp.json`, `META_SETUP.md` ni `execution/`.
 - Antes de `git add`, `git commit` o `git push`, ejecuta una busqueda de
   secretos.
-- Manten este template libre de integraciones privadas de agenda, correo o
-  filtros de prueba salvo que el usuario pida crear una variante privada.
+- No imprimas tokens completos, refresh tokens, client secrets, API keys,
+  passwords ni URLs de base de datos con credenciales.

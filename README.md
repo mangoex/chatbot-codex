@@ -92,6 +92,11 @@ El `GOOGLE_REFRESH_TOKEN` debe venir de OAuth con permiso de Google Calendar. No
 en GitHub. Cuando el modelo detecta nombre, objetivo y fecha/hora, el backend consulta los
 eventos existentes en esa ventana y crea el evento con Google Calendar API si el horario esta libre.
 
+Las citas creadas se guardan en Postgres en `calendar_appointments` junto con el
+`google_event_id`. Esto permite cancelar y borrar el evento real de Google Calendar cuando
+el usuario escribe algo como `no podre asistir`, `cancela mi cita` o `la quiero cancelar`.
+Si hay varias citas activas, el bot pide dia y hora para identificar la correcta.
+
 ## 4. Ejecutar localmente
 
 Necesitas Postgres y las variables de `.env` listas.
@@ -111,6 +116,9 @@ Endpoints:
 - `POST /reload`
 - `POST /maintenance/reset-contact`
 - `GET /admin`
+- `GET /admin/ai-status`
+- `GET /admin/calendar-status`
+- `GET /admin/reset-contact`
 
 ## 5. DNS para Easypanel
 

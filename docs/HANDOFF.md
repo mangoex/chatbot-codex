@@ -1,18 +1,34 @@
-# WhatsApp Bot Handoff
+# Asistto WhatsApp Bot Handoff
 
-Este documento resume el estado del proyecto para continuar desde otra
+Este documento resume el estado operativo para continuar el proyecto desde otra
 computadora usando GitHub como fuente de verdad. No contiene secretos.
 
 ## Estado Actual
 
 - Repo remoto: `https://github.com/mangoex/chatbot-codex.git`.
-- Rama de trabajo: `codex/easypanel-fastapi`.
+- Rama fuente de verdad: `main`.
 - App desplegada en Easypanel con FastAPI + Postgres.
-- Dominio publico usado para el bot: `https://bot.humanio.digital`.
+- Dominio publico: `https://bot.humanio.digital`.
 - Healthcheck esperado: `GET https://bot.humanio.digital/health`.
 - Webhook principal: `https://bot.humanio.digital/webhooks/whatsapp`.
-- El bot acepta tambien `/webhook` por compatibilidad.
-- OpenRouter esta soportado usando `OPENAI_BASE_URL` y `OPENAI_API_KEY`.
+- Webhook compatible: `https://bot.humanio.digital/webhook`.
+- Panel admin: `https://bot.humanio.digital/admin`.
+- Producto configurado: Asistto, iniciativa de Humanio para chatbots de
+  WhatsApp con IA.
+- Proveedor IA actual: OpenRouter usando API compatible con OpenAI.
+- Agenda real con Google Calendar: activa y probada.
+
+## Cambios Importantes Ya Subidos
+
+Los ultimos commits funcionales en `main` antes de este handoff fueron:
+
+- `057c407`: agrega flujo de cancelacion real de citas en Google Calendar y
+  tabla `calendar_appointments`.
+- `25af39e`: corrige casos de agenda como `pasadomañana`, `Gracias` despues
+  de confirmar cita y cambios de hora como `a las 10`.
+- `e825bcb`: mantiene modo cancelacion cuando el bot pide identificar la cita;
+  soporta frases como `esta de pasadomañana a las 9`, `la quiero cancelar` y
+  abreviaturas como `jue 7 a las 8`.
 
 ## Variables De Entorno
 
@@ -21,39 +37,50 @@ Configurar en el servicio `app` de Easypanel, no solo a nivel de proyecto:
 ```env
 PORT=8000
 PUBLIC_BASE_URL=https://bot.humanio.digital
-WHATSAPP_API_TOKEN=
+WHATSAPP_ACCESS_TOKEN=
 WHATSAPP_PHONE_NUMBER_ID=
-VERIFY_TOKEN=
+WHATSAPP_VERIFY_TOKEN=
 META_APP_SECRET=
 OPENAI_API_KEY=
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
-OPENAI_MODEL=
+OPENAI_MODEL=openrouter/free
 OPENROUTER_SITE_URL=https://bot.humanio.digital
-OPENROUTER_APP_NAME=WhatsApp Bot
+OPENROUTER_APP_NAME=Asistto
+OPENAI_TIMEOUT_SECONDS=45
+OPENAI_MAX_TOKENS=450
 DATABASE_URL=
 ADMIN_USER=
 ADMIN_PASSWORD=
 SESSION_SECRET=
-QUALIFIED_CTA_URL=
+QUALIFIED_CTA_URL=https://asistto.humanio.digital/
 ENABLE_FOLLOW_UPS=false
+GOOGLE_CALENDAR_ENABLED=true
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REFRESH_TOKEN=
+GOOGLE_CALENDAR_ID=primary
+GOOGLE_CALENDAR_TIMEZONE=America/Chihuahua
+GOOGLE_APPOINTMENT_DURATION_MINUTES=30
+GOOGLE_APPOINTMENT_BUFFER_MINUTES=0
+GOOGLE_APPOINTMENT_SUMMARY_PREFIX=Llamada Asistto
+GOOGLE_APPOINTMENT_LOCATION=
 ```
 
-Notas:
+Aliases soportados:
 
-- `WHATSAPP_API_TOKEN` debe ser el token permanente de WhatsApp Cloud API.
-- `META_APP_SECRET` puede quedar vacio durante pruebas; en produccion conviene
-  configurarlo.
-- `QUALIFIED_CTA_URL` es opcional y reemplaza `[[ACTION_LINK]]`.
+- `WHATSAPP_API_TOKEN` en lugar de `WHATSAPP_ACCESS_TOKEN`.
+- `VERIFY_TOKEN` en lugar de `WHATSAPP_VERIFY_TOKEN`.
+- `WEBHOOK_DOMAIN` en lugar de `PUBLIC_BASE_URL`.
 
 ## Meta / WhatsApp
 
-Problema resuelto durante la configuracion:
+Problema ya resuelto:
 
-- Los mensajes reales no llegaban al bot aunque la prueba de Meta si funcionaba.
-- La causa fue un `override_callback_uri` heredado apuntando a un webhook viejo
+- Los mensajes reales no llegaban al bot aunque la prueba de Meta si
+  funcionaba.
+- La causa era un `override_callback_uri` heredado apuntando a un webhook viejo
   de n8n/Chatwoot.
-- Se corrigio desde Graph API Explorer actualizando `subscribed_apps` del WABA
-  para usar el webhook del bot.
+- Se corrigio desde Graph API Explorer actualizando `subscribed_apps` del WABA.
 
 Validacion recomendada:
 
@@ -61,16 +88,11 @@ Validacion recomendada:
 GET /v25.0/{WABA_ID}/subscribed_apps
 ```
 
-La respuesta debe mostrar la app correcta y el `override_callback_uri` debe
-apuntar a:
+El webhook debe apuntar a:
 
 ```text
 https://bot.humanio.digital/webhooks/whatsapp
 ```
-
-Si al actualizar `subscribed_apps` aparece `Callback verification failed` con
-HTTP 403, el `verify_token` enviado a Meta no coincide con `VERIFY_TOKEN` en
-Easypanel.
 
 ## Configuracion Del Agente
 
@@ -79,30 +101,131 @@ El agente se configura por archivos versionados:
 - `prompts/system.md`: identidad, objetivo, estilo, reglas y criterio comercial.
 - `prompts/knowledge/*.md` o `*.txt`: base de conocimiento por temas.
 
-El sistema carga `prompts/system.md` y despues concatena los archivos de
-`prompts/knowledge/` en orden alfabetico.
+El bot actual esta configurado para Asistto:
+
+- Explica como funcionan chatbots de WhatsApp con IA.
+- Responde casos de uso y beneficios.
+- Recomienda paquetes:
+  - Inicio: 47 USD/mes.
+  - PRO: 97 USD/mes.
+  - Premium: 149 USD/mes.
+- Distingue entre `quiero automatizar agendar citas` y `quiero agendar una
+  llamada con Asistto`.
+- Evita tomar profesiones como nombres, por ejemplo `soy consultor de IA`.
 
 Marcadores soportados:
 
 - `[[ACTION_LINK]]`: marca el lead como calificado y se reemplaza por
   `QUALIFIED_CTA_URL` si existe.
-- `[[DESCALIFICADO: motivo]]`: marca el lead como descalificado en CRM.
+- `[[DESCALIFICADO: motivo]]`: marca el lead como descalificado.
+- `[[CALENDAR_EVENT: {...}]]`: marcador interno para crear citas en Google
+  Calendar. No debe mostrarse al usuario.
+
+## Agenda Y Cancelacion
+
+Agenda:
+
+- El backend crea eventos reales en Google Calendar cuando tiene nombre,
+  objetivo y fecha/hora.
+- Antes de crear, revisa si el horario esta ocupado.
+- Las citas nuevas se guardan en Postgres en `calendar_appointments` con
+  `google_event_id`.
+- Ejemplos soportados:
+  - `mañana a las 5`
+  - `pasadomañana a las 9`
+  - `jueves 7 de mayo a las 10`
+  - si un horario esta ocupado, `a las 10` reutiliza el dia anterior.
+
+Cancelacion:
+
+- El bot detecta frases como `no podré asistir`, `no puedo ir`, `cancela mi
+  cita`, `la quiero cancelar`.
+- Si hay una sola cita activa, borra el evento real de Google Calendar.
+- Si hay varias citas activas, pide solo dia y hora.
+- Debe mantener modo cancelacion en seguimientos como:
+  - `esta de pasadomañana a las 9`
+  - `la del jueves a las 9`
+  - `jue 7 a las 8`
+  - `la quiero cancelar`
+- Para citas creadas antes de `calendar_appointments`, intenta buscar en Google
+  Calendar por el WhatsApp guardado en la descripcion del evento.
+
+## Endpoints Utiles
+
+- `GET /health`: valida que la app este viva.
+- `POST /reload`: recarga prompts sin redeploy; requiere `RELOAD_TOKEN`.
+- `POST /maintenance/reset-contact`: limpia memoria de un contacto; requiere
+  `RELOAD_TOKEN`.
+- `GET /admin`: panel principal.
+- `GET /admin/conversations`: conversaciones.
+- `GET /admin/reset-contact`: UI para limpiar un contacto.
+- `GET /admin/calendar-status`: diagnostico seguro de Google Calendar.
+- `GET /admin/ai-status`: diagnostico seguro de IA/OpenRouter/OpenAI.
+
+Importante: cambios de Python requieren redeploy completo desde GitHub/main.
+`/reload` solo sirve para recargar prompts/conocimiento dentro del contenedor.
+
+## Pruebas Recomendadas
+
+Despues de cada redeploy:
+
+```text
+GET https://bot.humanio.digital/health
+GET https://bot.humanio.digital/admin/ai-status
+GET https://bot.humanio.digital/admin/calendar-status
+```
+
+Prueba de informacion:
+
+```text
+Hola
+Quiero entender como funciona un chatbot de WhatsApp
+Soy consultor de IA
+Agendar citas
+```
+
+Prueba de agenda:
+
+```text
+Hola, quiero agendar una cita
+Miguel Gonzalez
+pasadomañana a las 9
+gracias
+```
+
+Prueba de horario ocupado:
+
+```text
+quiero otra cita
+Miguel Gonzalez
+pasadomañana a las 9
+a las 10
+```
+
+Prueba de cancelacion:
+
+```text
+quiero cancelar mi cita
+esta de pasadomañana a las 9
+```
 
 ## Siguiente Etapa Recomendada
 
-1. Personalizar `prompts/system.md` para el negocio real.
-2. Crear archivos en `prompts/knowledge/` con servicios, FAQs, precios,
-   politicas y objeciones.
-3. Reimplementar en Easypanel.
-4. Probar desde WhatsApp real y revisar el panel `/admin/conversations`.
-5. Luego construir un panel creador de agentes multi-cliente:
-   - bots
-   - bot prompts
-   - bot knowledge
-   - bot skills
-   - bot WhatsApp numbers
-   - conversations
-   - leads
+1. Hacer mas pruebas reales de conversacion, agenda y cancelacion.
+2. Afinar prompt y base de conocimiento de Asistto.
+3. Agregar registros visibles en admin para citas creadas/canceladas.
+4. Mejorar cancelacion cuando existan dos citas exactas a la misma hora.
+5. Preparar panel creador de agentes multi-cliente:
+   - `bots`
+   - `bot_prompts`
+   - `bot_knowledge`
+   - `bot_skills`
+   - `bot_integrations`
+   - `bot_whatsapp_numbers`
+   - `calendar_appointments`
+
+La arquitectura futura debe enrutar por `phone_number_id` de Meta para que un
+solo backend maneje muchos bots/clientes.
 
 ## Prompt Para Continuar En Otra Computadora
 
@@ -110,28 +233,50 @@ Copia este prompt en una nueva sesion de Codex:
 
 ```text
 Estoy continuando el proyecto `mangoex/chatbot-codex`, un bot de WhatsApp Cloud
-API desplegado en Easypanel con FastAPI, Postgres, OpenRouter/OpenAI y panel
-admin.
+API desplegado en Easypanel con FastAPI, Postgres, OpenRouter/OpenAI, Google
+Calendar y panel admin.
 
 Contexto importante:
 - Repo: https://github.com/mangoex/chatbot-codex.git
-- Rama relevante: codex/easypanel-fastapi
+- Rama fuente de verdad: main
 - Dominio publico: https://bot.humanio.digital
 - Webhook: https://bot.humanio.digital/webhooks/whatsapp
-- El problema anterior era que los mensajes reales no llegaban porque el WABA
-  tenia un override_callback_uri viejo de n8n/Chatwoot. Ya se corrigio con
-  Graph API Explorer y los mensajes reales ya llegan.
-- No imprimir ni commitear secretos. Las variables reales estan en Easypanel y
-  Meta, no en GitHub.
+- Panel admin: https://bot.humanio.digital/admin
+- Producto actual: Asistto, iniciativa de Humanio para chatbots de WhatsApp con
+  IA que explican el servicio, capturan leads, recomiendan paquetes, agendan
+  citas y cancelan citas en Google Calendar.
+- Proveedor IA actual: OpenRouter con `OPENAI_BASE_URL=https://openrouter.ai/api/v1`.
+- No imprimir ni commitear secretos. Las variables reales estan en Easypanel,
+  Meta, OpenRouter y Google, no en GitHub.
+- El problema anterior de Meta era un `override_callback_uri` viejo de
+  n8n/Chatwoot. Ya fue corregido y WhatsApp real funciona.
 
-Quiero continuar con la configuracion del agente:
-1. Revisar `prompts/system.md`.
-2. Crear una base de conocimiento en `prompts/knowledge/`.
-3. Definir habilidades del chatbot: calificar leads, responder FAQ, escalar a
-   humano y enviar CTA.
-4. Preparar el camino para un futuro panel creador de agentes multi-cliente.
+Estado funcional:
+- `prompts/system.md` y `prompts/knowledge/` ya estan personalizados para
+  Asistto.
+- Google Calendar ya crea citas reales.
+- Las citas nuevas se guardan en Postgres en `calendar_appointments`.
+- El bot ya maneja casos como `pasadomañana a las 9`, `gracias` despues de
+  confirmar cita, cambios de hora como `a las 10`, y continuidad de cancelacion
+  con frases como `esta de pasadomañana a las 9`, `la quiero cancelar` o
+  `jue 7 a las 8`.
 
-Primero lee `README.md`, `.env.example`, `docs/HANDOFF.md` y
-`docs/AGENT_INSTRUCTIONS.md`. Despues revisa la estructura del proyecto y propon
-o implementa los siguientes pasos sin tocar secretos.
+Primero lee:
+- `README.md`
+- `.env.example`
+- `docs/HANDOFF.md`
+- `docs/AGENT_INSTRUCTIONS.md`
+- `prompts/system.md`
+- `app/agenda_guard.py`
+- `app/calendar_client.py`
+- `app/db.py`
+
+Tareas siguientes:
+1. Verificar que GitHub/main este desplegado en Easypanel.
+2. Probar en WhatsApp real: informacion, agenda, horario ocupado y cancelacion.
+3. Si algo falla, revisar primero `/admin/ai-status`, `/admin/calendar-status`
+   y las conversaciones en `/admin/conversations`.
+4. Afinar prompt y base de conocimiento sin tocar secretos.
+5. Preparar el futuro panel creador de agentes multi-cliente con bots,
+   knowledge, skills, integraciones y enrutamiento por `phone_number_id`.
 ```
