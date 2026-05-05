@@ -31,6 +31,17 @@ _RETRY_DATETIME_RE = re.compile(
     r"\b(ocupado|ocupada|otro dia|otro día|otra hora|dime otro|dime otra|lo reviso)\b",
     re.IGNORECASE,
 )
+_CANCEL_CLARIFY_RE = re.compile(
+    r"\b(cita\s+activa|citas\s+activas|cita\s+que\s+quieres\s+cancelar|"
+    r"dia\s+y\s+hora\s+de\s+la\s+cita|día\s+y\s+hora\s+de\s+la\s+cita|"
+    r"no\s+encontre\s+una\s+cita|no\s+encontr[eé]\s+una\s+cita)\b",
+    re.IGNORECASE,
+)
+_CANCEL_FOLLOWUP_RE = re.compile(
+    r"\b(esa|esta|ésta|la|la\s+del|la\s+de|es\s+mia|es\s+mía|quiero\s+cancelar|"
+    r"cancelarla|cancelar\s+esa|cancelar\s+esta)\b",
+    re.IGNORECASE,
+)
 _GREETING_RE = re.compile(r"^(?:si,?\s*)?(?:hola|buenos dias|buenos días|buenas tardes|buenas noches|hey|hello)[!.\s]*$", re.IGNORECASE)
 _NAME_RE = re.compile(
     r"\b(?:soy|me llamo|mi nombre es)\s+([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){0,3})",
@@ -64,6 +75,10 @@ _EXPLICIT_TIME_RE = re.compile(
     re.IGNORECASE,
 )
 _DATE_NUM_RE = re.compile(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b")
+_WEEKDAY_DAY_RE = re.compile(
+    r"\b(?:lun|lunes|mar|martes|mie|mi[eé]rcoles|jue|jueves|vie|viernes|sab|s[aá]bado|dom|domingo)\.?\s+(\d{1,2})\b",
+    re.IGNORECASE,
+)
 _DATE_MONTH_RE = re.compile(
     r"\b(\d{1,2})\s*(?:de\s*)?"
     r"(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)"
@@ -71,14 +86,21 @@ _DATE_MONTH_RE = re.compile(
     re.IGNORECASE,
 )
 _WEEKDAYS = {
+    "lun": 0,
     "lunes": 0,
+    "mar": 1,
     "martes": 1,
+    "mie": 2,
     "miercoles": 2,
     "miércoles": 2,
+    "jue": 3,
     "jueves": 3,
+    "vie": 4,
     "viernes": 4,
+    "sab": 5,
     "sabado": 5,
     "sábado": 5,
+    "dom": 6,
     "domingo": 6,
 }
 _MONTHS = {
@@ -121,6 +143,38 @@ def _last_assistant_text(history: list[dict]) -> str:
     return ""
 
 
+def _last_user_date(history: list[dict]) -> datetime | None:
+    for item in reversed(history[:-1]):
+        if item.get("role") != "user":
+            continue
+        date = _extract_date(item.get("content", ""))
+        if date:
+            return date
+    return None
+
+
+def _last_user_start(history: list[dict]) -> datetime | None:
+    for item in reversed(history[:-1]):
+        if item.get("role") != "user":
+            continue
+        start = _extract_start(item.get("content", ""))
+        if start:
+            return start
+    return None
+
+
+def _is_cancel_clarification(history: list[dict]) -> bool:
+    return bool(_CANCEL_CLARIFY_RE.search(_last_assistant_text(history)))
+
+
+def _is_cancel_continuation(user_text: str, history: list[dict]) -> bool:
+    if not _is_cancel_clarification(history):
+        return False
+    if _extract_start_with_context(user_text, history):
+        return True
+    return bool(_CANCEL_FOLLOWUP_RE.search(user_text))
+
+
 def _looks_like_service_scheduling(user_text: str, history: list[dict]) -> bool:
     """Distingue seleccionar la habilidad de agendar llamadas de pedir una cita real."""
     text = user_text.strip(" .,!¡¿?")
@@ -133,6 +187,8 @@ def _looks_like_service_scheduling(user_text: str, history: list[dict]) -> bool:
 def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
     """Agenda solo si el usuario la pide o si ya estamos pidiendo datos de cita."""
     last_assistant = _last_assistant_text(history)
+    if _is_cancel_clarification(history):
+        return False
     if _looks_like_service_scheduling(user_text, history):
         return False
     if _SCHEDULE_RE.search(user_text):
@@ -212,6 +268,11 @@ def _extract_date(text: str) -> datetime | None:
     if "hoy" in lower:
         return base
 
+    weekday_day_match = _WEEKDAY_DAY_RE.search(lower)
+    if weekday_day_match:
+        day = int(weekday_day_match.group(1))
+        return base.replace(day=day)
+
     month_match = _DATE_MONTH_RE.search(lower)
     if month_match:
         day = int(month_match.group(1))
@@ -283,12 +344,25 @@ def _extract_start_with_context(text: str, history: list[dict]) -> datetime | No
     if not _RETRY_DATETIME_RE.search(last_assistant):
         return None
 
-    for item in reversed(history[:-1]):
-        if item.get("role") != "user":
-            continue
-        date = _extract_date(item.get("content", ""))
-        if date:
-            return date.replace(hour=time[0], minute=time[1], second=0, microsecond=0)
+    date = _last_user_date(history)
+    if date:
+        return date.replace(hour=time[0], minute=time[1], second=0, microsecond=0)
+    return None
+
+
+def _extract_cancel_start(text: str, history: list[dict]) -> datetime | None:
+    start = _extract_start(text)
+    if start:
+        return start
+
+    previous_start = _last_user_start(history)
+    if previous_start and _CANCEL_FOLLOWUP_RE.search(text):
+        return previous_start
+
+    time = _extract_time(text)
+    date = _last_user_date(history)
+    if time and date:
+        return date.replace(hour=time[0], minute=time[1], second=0, microsecond=0)
     return None
 
 
@@ -314,8 +388,11 @@ async def maybe_handle(wa_id: str, user_text: str, history: list[dict]) -> tuple
     if _THANKS_RE.match(user_text.strip()) and _SCHEDULED_CONFIRMATION_RE.search(_last_assistant_text(history)):
         return "Con gusto. Te esperamos en la llamada.", False
 
-    if _CANCEL_RE.search(user_text):
-        return await calendar_client.cancel_appointment(wa_id, _extract_start(user_text))
+    if _CANCEL_RE.search(user_text) or _is_cancel_continuation(user_text, history):
+        return await calendar_client.cancel_appointment(
+            wa_id,
+            _extract_cancel_start(user_text, history),
+        )
 
     if _looks_like_service_scheduling(user_text, history):
         return (
