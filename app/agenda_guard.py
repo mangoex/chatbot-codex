@@ -1,6 +1,7 @@
 """Guardrails deterministicos para el flujo de agenda antes de llamar al modelo."""
 import json
 import re
+import unicodedata
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,19 @@ _SCHEDULE_RE = re.compile(
 _CANCEL_RE = re.compile(
     r"\b(cancelar|cancela|cancele|cancelame|cancélame|no\s+(?:podre|podré|puedo|voy\s+a\s+poder)"
     r"(?:\s+\w+){0,4}\s+(?:asistir|ir)|no\s+asistire|no\s+asistiré)\b",
+    re.IGNORECASE,
+)
+_THANKS_RE = re.compile(
+    r"^(?:gracias|muchas gracias|ok gracias|perfecto gracias|listo gracias|va gracias)[!.\s]*$",
+    re.IGNORECASE,
+)
+_SCHEDULED_CONFIRMATION_RE = re.compile(
+    r"\b(?:quedo|quedó|agendada|agende|agendé)\b.*\b(?:llamada|cita)\b"
+    r"|\blisto\b.*\b(?:agendada|agende|agendé)\b",
+    re.IGNORECASE,
+)
+_RETRY_DATETIME_RE = re.compile(
+    r"\b(ocupado|ocupada|otro dia|otro día|otra hora|dime otro|dime otra|lo reviso)\b",
     re.IGNORECASE,
 )
 _GREETING_RE = re.compile(r"^(?:si,?\s*)?(?:hola|buenos dias|buenos días|buenas tardes|buenas noches|hey|hello)[!.\s]*$", re.IGNORECASE)
@@ -91,6 +105,11 @@ def _now() -> datetime:
         return datetime.now(ZoneInfo("America/Chihuahua"))
 
 
+def _norm(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", text.lower())
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Mn")
+
+
 def _history_text(history: list[dict], limit: int = 12) -> str:
     return "\n".join(item.get("content", "") for item in history[-limit:])
 
@@ -119,6 +138,8 @@ def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
     if _SCHEDULE_RE.search(user_text):
         return True
     if _ASKED_NAME_RE.search(last_assistant) or _ASKED_DATETIME_RE.search(last_assistant):
+        return True
+    if _RETRY_DATETIME_RE.search(last_assistant) and _extract_time(user_text):
         return True
     return False
 
@@ -182,9 +203,11 @@ def _extract_name(text: str, history: list[dict]) -> str | None:
 
 def _extract_date(text: str) -> datetime | None:
     base = _now()
-    lower = text.lower()
+    lower = _norm(text)
 
-    if "mañana" in lower or "manana" in lower:
+    if "pasadomanana" in lower or "pasado manana" in lower:
+        return base + timedelta(days=2)
+    if "manana" in lower:
         return base + timedelta(days=1)
     if "hoy" in lower:
         return base
@@ -247,6 +270,28 @@ def _extract_start(text: str) -> datetime | None:
     return date.replace(hour=time[0], minute=time[1], second=0, microsecond=0)
 
 
+def _extract_start_with_context(text: str, history: list[dict]) -> datetime | None:
+    start = _extract_start(text)
+    if start:
+        return start
+
+    time = _extract_time(text)
+    if not time or _extract_date(text):
+        return None
+
+    last_assistant = _last_assistant_text(history)
+    if not _RETRY_DATETIME_RE.search(last_assistant):
+        return None
+
+    for item in reversed(history[:-1]):
+        if item.get("role") != "user":
+            continue
+        date = _extract_date(item.get("content", ""))
+        if date:
+            return date.replace(hour=time[0], minute=time[1], second=0, microsecond=0)
+    return None
+
+
 def _topic(user_text: str, history: list[dict]) -> str:
     joined = f"{_history_text(history)}\n{user_text}".lower()
     if "consult" in joined:
@@ -266,6 +311,9 @@ async def maybe_handle(wa_id: str, user_text: str, history: list[dict]) -> tuple
             False,
         )
 
+    if _THANKS_RE.match(user_text.strip()) and _SCHEDULED_CONFIRMATION_RE.search(_last_assistant_text(history)):
+        return "Con gusto. Te esperamos en la llamada.", False
+
     if _CANCEL_RE.search(user_text):
         return await calendar_client.cancel_appointment(wa_id, _extract_start(user_text))
 
@@ -279,7 +327,7 @@ async def maybe_handle(wa_id: str, user_text: str, history: list[dict]) -> tuple
         return None, False
 
     name = _extract_name(user_text, history)
-    start = _extract_start(user_text)
+    start = _extract_start_with_context(user_text, history)
 
     if not name:
         return "Claro. Para agendar la llamada, dime tu nombre completo.", False
