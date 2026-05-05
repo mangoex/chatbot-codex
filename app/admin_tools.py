@@ -4,7 +4,7 @@ import html
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app import calendar_client, db
+from app import calendar_client, db, openai_client
 
 router = APIRouter(prefix="/admin", tags=["admin-tools"])
 
@@ -106,3 +106,32 @@ async def calendar_status_page(request: Request):
     </section>
     """
     return HTMLResponse(_page("Estado de Google Calendar", body))
+
+
+@router.get("/ai-status", response_class=HTMLResponse)
+async def ai_status_page(request: Request):
+    _require_login(request)
+    data = await openai_client.diagnostics()
+    rows = "".join(
+        f"<tr><td><code>{html.escape(str(key))}</code></td><td>{_yesno(value) if isinstance(value, bool) else html.escape(str(value))}</td></tr>"
+        for key, value in data.items()
+        if key not in {"error", "reply"}
+    )
+    error = data.get("error")
+    reply = data.get("reply")
+    error_html = f"<p class='danger'>Error: {html.escape(str(error))}</p>" if error else ""
+    reply_html = f"<p>Respuesta: <code>{html.escape(str(reply))}</code></p>" if reply else ""
+    body = f"""
+    <section class="panel">
+      <h1>Estado de IA</h1>
+      <p>Esta pagina no muestra la API key. Solo valida el modelo y proveedor configurados.</p>
+      <table>{rows}</table>
+      {reply_html}
+      {error_html}
+      <div class="actions">
+        <a class="btn" href="/admin/ai-status">Probar otra vez</a>
+        <a class="btn secondary" href="/admin/conversations">Volver</a>
+      </div>
+    </section>
+    """
+    return HTMLResponse(_page("Estado de IA", body))
