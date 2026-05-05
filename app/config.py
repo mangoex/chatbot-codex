@@ -5,12 +5,24 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 def _env(*names: str, default: str = "") -> str:
     for name in names:
         value = os.getenv(name, "").strip()
         if value:
             return value
     return default
+
+
+def _bool(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int(name: str, default: str) -> int:
+    try:
+        return int(os.getenv(name, default))
+    except ValueError:
+        return int(default)
 
 
 PORT = int(_env("PORT", default="8000"))
@@ -27,19 +39,19 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
 OPENAI_BASE_URL = _env("OPENAI_BASE_URL")
 OPENROUTER_SITE_URL = _env("OPENROUTER_SITE_URL", "PUBLIC_BASE_URL")
 OPENROUTER_APP_NAME = _env("OPENROUTER_APP_NAME", default="WhatsApp Bot")
+OPENAI_TIMEOUT_SECONDS = _int("OPENAI_TIMEOUT_SECONDS", "45")
+OPENAI_MAX_TOKENS = _int("OPENAI_MAX_TOKENS", "450")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
-HISTORY_WINDOW = int(os.getenv("HISTORY_WINDOW", "10"))
-MAX_PROMPT_TOKENS = int(os.getenv("MAX_PROMPT_TOKENS", "6000"))
-MAX_USER_MESSAGE_CHARS = int(os.getenv("MAX_USER_MESSAGE_CHARS", "4000"))
-HISTORY_TTL_DAYS = int(os.getenv("HISTORY_TTL_DAYS", "30"))
+HISTORY_WINDOW = _int("HISTORY_WINDOW", "10")
+MAX_PROMPT_TOKENS = _int("MAX_PROMPT_TOKENS", "6000")
+MAX_USER_MESSAGE_CHARS = _int("MAX_USER_MESSAGE_CHARS", "4000")
+HISTORY_TTL_DAYS = _int("HISTORY_TTL_DAYS", "30")
 
 RELOAD_TOKEN = os.getenv("RELOAD_TOKEN", "")
-ENABLE_FOLLOW_UPS = os.getenv("ENABLE_FOLLOW_UPS", "false").strip().lower() in {
-    "1", "true", "yes", "on"
-}
-FOLLOW_UP_MINUTES = int(os.getenv("FOLLOW_UP_MINUTES", "10"))
+ENABLE_FOLLOW_UPS = _bool("ENABLE_FOLLOW_UPS")
+FOLLOW_UP_MINUTES = _int("FOLLOW_UP_MINUTES", "10")
 
 ADMIN_USER = os.getenv("ADMIN_USER", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
@@ -47,6 +59,20 @@ SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 
 # URL opcional para leads calificados: agenda, formulario, landing, checkout, etc.
 QUALIFIED_CTA_URL = os.getenv("QUALIFIED_CTA_URL", "")
+
+# Google Calendar OAuth. Guardar valores reales solo en Easypanel/.env, nunca en git.
+GOOGLE_CALENDAR_ENABLED = _bool("GOOGLE_CALENDAR_ENABLED")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REFRESH_TOKEN = os.getenv("GOOGLE_REFRESH_TOKEN", "")
+GOOGLE_CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
+GOOGLE_CALENDAR_TIMEZONE = os.getenv("GOOGLE_CALENDAR_TIMEZONE", "America/Chihuahua")
+GOOGLE_APPOINTMENT_DURATION_MINUTES = _int("GOOGLE_APPOINTMENT_DURATION_MINUTES", "30")
+GOOGLE_APPOINTMENT_BUFFER_MINUTES = _int("GOOGLE_APPOINTMENT_BUFFER_MINUTES", "0")
+GOOGLE_APPOINTMENT_SUMMARY_PREFIX = os.getenv(
+    "GOOGLE_APPOINTMENT_SUMMARY_PREFIX", "Llamada Asistto"
+)
+GOOGLE_APPOINTMENT_LOCATION = os.getenv("GOOGLE_APPOINTMENT_LOCATION", "")
 
 PROMPTS_DIR = Path(os.getenv("PROMPTS_DIR", "prompts"))
 
@@ -99,4 +125,15 @@ def validate() -> list[str]:
     ):
         if not globals().get(key):
             missing.append(key)
+
+    if GOOGLE_CALENDAR_ENABLED:
+        for key in (
+            "GOOGLE_CLIENT_ID",
+            "GOOGLE_CLIENT_SECRET",
+            "GOOGLE_REFRESH_TOKEN",
+            "GOOGLE_CALENDAR_ID",
+        ):
+            if not globals().get(key):
+                missing.append(key)
+
     return missing
