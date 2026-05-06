@@ -260,6 +260,12 @@ Phase 3A agrega configuracion editable del agente por bot:
 - La agencia y los usuarios `client_admin` pueden editar. `client_viewer` tiene
   acceso de solo lectura.
 
+Manual operativo:
+
+- `docs/ADMIN_MANUAL.md` documenta roles, rutas, alta de clientes, alta de
+  bots, prompt, knowledge, conversaciones, CRM, escalaciones, diagnosticos y
+  prompts visuales para generar laminas con `gpt-image-2`.
+
 ## Prompt Para Continuar En Otra Computadora
 
 Copia este prompt en una nueva sesion de Codex:

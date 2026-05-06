@@ -190,6 +190,12 @@ https://bot.humanio.digital/admin
 
 Usa `ADMIN_USER` y `ADMIN_PASSWORD`.
 
+Manual del administrador:
+
+```text
+docs/ADMIN_MANUAL.md
+```
+
 ## Seguridad
 
 Antes de publicar este template:
