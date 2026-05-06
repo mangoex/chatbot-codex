@@ -489,6 +489,7 @@ async def process_reply(
     wa_id: str,
     reply: str,
     bot_id: int | None = None,
+    replace_existing: bool = False,
 ) -> tuple[str, bool]:
     """Procesa el marcador [[CALENDAR_EVENT: {...}]] y devuelve respuesta limpia."""
     match = _MARKER_RE.search(reply)
@@ -529,6 +530,10 @@ async def process_reply(
     if start < datetime.now(_tz(runtime)) + timedelta(minutes=2):
         return "Ese horario ya paso o esta demasiado cerca. Dime otro dia y hora, por favor.", False
 
+    existing_rows = []
+    if replace_existing:
+        existing_rows = await db.list_active_calendar_appointments(wa_id, bot_id=bot_id)
+
     try:
         token = await _access_token(runtime)
         if not await _is_available(runtime, token, start, end):
@@ -549,6 +554,16 @@ async def process_reply(
                 end_at=end,
                 bot_id=bot_id,
             )
+            if replace_existing:
+                for row in existing_rows:
+                    old_event_id = str(row.get("google_event_id") or "")
+                    if not old_event_id or old_event_id == event_id:
+                        continue
+                    try:
+                        await _delete_event(runtime, token, old_event_id)
+                    except Exception:
+                        log.exception("No se pudo borrar cita anterior %s", old_event_id)
+                    await db.mark_calendar_appointment_cancelled(old_event_id)
     except httpx.HTTPStatusError as exc:
         log.exception("Google Calendar rechazo la cita: %s", exc.response.text[:500])
         return (
@@ -564,7 +579,10 @@ async def process_reply(
 
     attendee = str(data.get("attendee_name") or "").strip()
     who = f", {attendee}" if attendee else ""
-    confirmation = f"Listo{who}. Quedo agendada la llamada para el {_format_dt(start)}."
+    if replace_existing and existing_rows:
+        confirmation = f"Listo{who}. Reprograme la llamada para el {_format_dt(start)} y cancele la cita anterior."
+    else:
+        confirmation = f"Listo{who}. Quedo agendada la llamada para el {_format_dt(start)}."
     if visible:
         return f"{visible}\n\n{confirmation}", True
     return confirmation, True
