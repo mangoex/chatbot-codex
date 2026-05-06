@@ -1,7 +1,11 @@
 import importlib
 import os
+import sys
+import types
 import unittest
 from unittest.mock import patch
+
+sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
 
 
 class ConfigAliasTests(unittest.TestCase):

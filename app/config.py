@@ -26,6 +26,7 @@ def _int(name: str, default: str) -> int:
 
 
 PORT = int(_env("PORT", default="8000"))
+DEFAULT_BOT_SLUG = _env("DEFAULT_BOT_SLUG", default="asistto")
 
 WEBHOOK_DOMAIN = _env("WEBHOOK_DOMAIN", "PUBLIC_BASE_URL")
 

@@ -249,8 +249,12 @@ def _filter_candidates(candidates: list[dict], hint_start: datetime | None) -> l
     return [item for item in candidates if _same_slot(_event_start(item), hint_start)]
 
 
-async def _candidate_from_db(wa_id: str, hint_start: datetime | None) -> tuple[dict | None, int]:
-    rows = await db.list_active_calendar_appointments(wa_id)
+async def _candidate_from_db(
+    wa_id: str,
+    hint_start: datetime | None,
+    bot_id: int | None = None,
+) -> tuple[dict | None, int]:
+    rows = await db.list_active_calendar_appointments(wa_id, bot_id=bot_id)
     candidates: list[dict] = []
     for row in rows:
         candidates.append(
@@ -270,6 +274,7 @@ async def _candidate_from_db(wa_id: str, hint_start: datetime | None) -> tuple[d
 async def cancel_appointment(
     wa_id: str,
     hint_start: datetime | None = None,
+    bot_id: int | None = None,
 ) -> tuple[str, bool]:
     """Cancela una cita activa del contacto y borra el evento real de Google Calendar."""
     if not enabled():
@@ -280,7 +285,7 @@ async def cancel_appointment(
 
     try:
         token = await _access_token()
-        candidate, count = await _candidate_from_db(wa_id, hint_start)
+        candidate, count = await _candidate_from_db(wa_id, hint_start, bot_id=bot_id)
         if candidate is None:
             searched = await _search_events_for_wa_id(token, wa_id)
             searched = _filter_candidates(searched, hint_start)
@@ -315,7 +320,11 @@ async def cancel_appointment(
     )
 
 
-async def process_reply(wa_id: str, reply: str) -> tuple[str, bool]:
+async def process_reply(
+    wa_id: str,
+    reply: str,
+    bot_id: int | None = None,
+) -> tuple[str, bool]:
     """Procesa el marcador [[CALENDAR_EVENT: {...}]] y devuelve respuesta limpia."""
     match = _MARKER_RE.search(reply)
     if not match:
@@ -363,6 +372,7 @@ async def process_reply(wa_id: str, reply: str) -> tuple[str, bool]:
                 topic=str(data.get("topic") or "").strip() or None,
                 start_at=start,
                 end_at=end,
+                bot_id=bot_id,
             )
     except httpx.HTTPStatusError as exc:
         log.exception("Google Calendar rechazo la cita: %s", exc.response.text[:500])

@@ -5,13 +5,20 @@ from app import config
 GRAPH_VERSION = "v21.0"
 
 
-async def send_text(to_wa_id: str, body: str) -> dict:
+async def send_text(
+    to_wa_id: str,
+    body: str,
+    phone_number_id: str | None = None,
+    access_token: str | None = None,
+) -> dict:
+    sender_phone_number_id = phone_number_id or config.WHATSAPP_PHONE_NUMBER_ID
+    token = access_token or config.WHATSAPP_API_TOKEN
     url = (
         f"https://graph.facebook.com/{GRAPH_VERSION}/"
-        f"{config.WHATSAPP_PHONE_NUMBER_ID}/messages"
+        f"{sender_phone_number_id}/messages"
     )
     headers = {
-        "Authorization": f"Bearer {config.WHATSAPP_API_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
     payload = {
@@ -42,6 +49,7 @@ def extract_message(payload: dict) -> dict | None:
         entry = payload["entry"][0]
         change = entry["changes"][0]
         value = change["value"]
+        metadata = value.get("metadata", {}) or {}
         messages = value.get("messages")
         if not messages:
             return None
@@ -54,6 +62,8 @@ def extract_message(payload: dict) -> dict | None:
             "text": "",
             "media_id": None,
             "media_mime": None,
+            "phone_number_id": metadata.get("phone_number_id", ""),
+            "display_phone_number": metadata.get("display_phone_number", ""),
         }
         if mtype == "text":
             out["text"] = msg.get("text", {}).get("body", "")

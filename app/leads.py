@@ -61,7 +61,12 @@ def _replace_action_markers(reply: str) -> tuple[str, bool]:
     return clean.strip(), found
 
 
-async def process_reply(wa_id: str, reply: str, history: list[dict]) -> str:
+async def process_reply(
+    wa_id: str,
+    reply: str,
+    history: list[dict],
+    bot_id: int | None = None,
+) -> str:
     """
     Detecta marcadores en la respuesta del modelo, actualiza el lead en DB
     y devuelve la respuesta limpia lista para enviar al usuario.
@@ -73,6 +78,7 @@ async def process_reply(wa_id: str, reply: str, history: list[dict]) -> str:
     if offered_action:
         await db.upsert_lead(
             wa_id,
+            bot_id=bot_id,
             qualification_status="calificado",
             action_link_sent=True,
             nombre=nombre,
@@ -87,6 +93,7 @@ async def process_reply(wa_id: str, reply: str, history: list[dict]) -> str:
         clean_reply = _DISQUALIFY_RE.sub("", reply).strip()
         await db.upsert_lead(
             wa_id,
+            bot_id=bot_id,
             qualification_status="descalificado",
             disqualify_reason=reason,
             nombre=nombre,
@@ -97,6 +104,7 @@ async def process_reply(wa_id: str, reply: str, history: list[dict]) -> str:
 
     await db.upsert_lead(
         wa_id,
+        bot_id=bot_id,
         qualification_status="en_progreso",
         nombre=nombre,
         negocio=negocio,

@@ -377,7 +377,12 @@ def _topic(user_text: str, history: list[dict]) -> str:
     return "Conocer Asistto y revisar automatizacion"
 
 
-async def maybe_handle(wa_id: str, user_text: str, history: list[dict]) -> tuple[str | None, bool]:
+async def maybe_handle(
+    wa_id: str,
+    user_text: str,
+    history: list[dict],
+    bot_id: int | None = None,
+) -> tuple[str | None, bool]:
     """Devuelve (respuesta, cita_creada) si se puede resolver sin IA."""
     if _GREETING_RE.match(user_text.strip()):
         return (
@@ -392,6 +397,7 @@ async def maybe_handle(wa_id: str, user_text: str, history: list[dict]) -> tuple
         return await calendar_client.cancel_appointment(
             wa_id,
             _extract_cancel_start(user_text, history),
+            bot_id=bot_id,
         )
 
     if _looks_like_service_scheduling(user_text, history):
@@ -420,4 +426,4 @@ async def maybe_handle(wa_id: str, user_text: str, history: list[dict]) -> tuple
         "topic": _topic(user_text, history),
     }
     marker = f"[[CALENDAR_EVENT: {json.dumps(data, ensure_ascii=False)}]]"
-    return await calendar_client.process_reply(wa_id, marker)
+    return await calendar_client.process_reply(wa_id, marker, bot_id=bot_id)

@@ -5,8 +5,119 @@ from app import config
 _pool: asyncpg.Pool | None = None
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS clients (
+    id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT UNIQUE NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active','paused','archived')),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    name TEXT,
+    password_hash TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active','disabled')),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS client_users (
+    client_id BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role TEXT NOT NULL CHECK (role IN ('agency_admin','client_admin','client_viewer')),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (client_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS bots (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
+    slug TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('draft','active','paused','archived')),
+    openai_model TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS bot_whatsapp_numbers (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    phone_number_id TEXT UNIQUE NOT NULL,
+    display_phone_number TEXT,
+    whatsapp_access_token TEXT,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active','paused','archived')),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS bot_prompts (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    version INT NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft','active','archived')),
+    content TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    published_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_bot_prompts_bot_status
+    ON bot_prompts(bot_id, status, version DESC);
+
+CREATE TABLE IF NOT EXISTS bot_knowledge (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('active','draft','archived')),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS bot_skills (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    skill_type TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(bot_id, skill_type)
+);
+
+CREATE TABLE IF NOT EXISTS bot_integrations (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    integration_type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS integration_secrets (
+    id BIGSERIAL PRIMARY KEY,
+    integration_id BIGINT NOT NULL REFERENCES bot_integrations(id) ON DELETE CASCADE,
+    secret_name TEXT NOT NULL,
+    encrypted_value TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(integration_id, secret_name)
+);
+
 CREATE TABLE IF NOT EXISTS leads (
     id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
     wa_id TEXT UNIQUE NOT NULL,
     nombre TEXT,
     negocio TEXT,
@@ -18,9 +129,11 @@ CREATE TABLE IF NOT EXISTS leads (
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(qualification_status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_leads_bot_status ON leads(bot_id, qualification_status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS pending_follow_ups (
     id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
     wa_id TEXT UNIQUE NOT NULL,
     send_after TIMESTAMPTZ NOT NULL,
     sent BOOLEAN NOT NULL DEFAULT FALSE,
@@ -31,20 +144,24 @@ CREATE INDEX IF NOT EXISTS idx_follow_ups_due
 
 CREATE TABLE IF NOT EXISTS conversations (
     id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
     wa_id TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user','assistant')),
     content TEXT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_conv_wa_id_ts ON conversations(wa_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_conv_bot_wa_ts ON conversations(bot_id, wa_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS processed_messages (
     message_id TEXT PRIMARY KEY,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
     processed_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS calendar_appointments (
     id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
     wa_id TEXT NOT NULL,
     google_event_id TEXT UNIQUE NOT NULL,
     calendar_id TEXT NOT NULL,
@@ -60,9 +177,12 @@ CREATE TABLE IF NOT EXISTS calendar_appointments (
 );
 CREATE INDEX IF NOT EXISTS idx_calendar_appts_wa_status
     ON calendar_appointments(wa_id, status, start_at);
+CREATE INDEX IF NOT EXISTS idx_calendar_appts_bot_status
+    ON calendar_appointments(bot_id, wa_id, status, start_at);
 
 CREATE TABLE IF NOT EXISTS escalations (
     id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
     wa_id TEXT NOT NULL,
     customer_name TEXT,
     city TEXT,
@@ -100,10 +220,31 @@ async def close_pool() -> None:
 
 async def run_migrations() -> None:
     async with _pool.acquire() as conn:
+        # Existing deployments may already have these tables without bot_id.
+        # Add the nullable column before SCHEMA_SQL creates bot_id indexes.
+        for table in (
+            "leads",
+            "pending_follow_ups",
+            "conversations",
+            "processed_messages",
+            "calendar_appointments",
+            "escalations",
+        ):
+            await conn.execute(
+                f"""
+                DO $$
+                BEGIN
+                    IF to_regclass('{table}') IS NOT NULL THEN
+                        ALTER TABLE {table} ADD COLUMN IF NOT EXISTS bot_id BIGINT;
+                    END IF;
+                END $$;
+                """
+            )
         await conn.execute(SCHEMA_SQL)
         await conn.execute(
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS action_link_sent BOOLEAN NOT NULL DEFAULT FALSE"
         )
+    await ensure_default_bot()
 
 
 async def purge_old(ttl_days: int) -> int:
@@ -132,18 +273,26 @@ async def mark_processed(message_id: str) -> None:
         )
 
 
-async def get_history(wa_id: str, limit: int) -> list[dict]:
+async def get_history(wa_id: str, limit: int, bot_id: int | None = None) -> list[dict]:
     """Devuelve los últimos `limit` mensajes en orden cronológico ascendente."""
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT role, content FROM conversations "
-            "WHERE wa_id = $1 ORDER BY created_at DESC LIMIT $2",
-            wa_id, limit,
+            """
+            SELECT role, content FROM conversations
+            WHERE wa_id = $1
+              AND (
+                $3::bigint IS NULL
+                OR bot_id = $3
+                OR ($3 = 1 AND bot_id IS NULL)
+              )
+            ORDER BY created_at DESC LIMIT $2
+            """,
+            wa_id, limit, bot_id,
         )
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
 
-async def list_conversation_threads(limit: int = 100) -> list[dict]:
+async def list_conversation_threads(limit: int = 100, bot_id: int | None = None) -> list[dict]:
     """Lista conversaciones agrupadas por wa_id con ultimo mensaje y metadata de lead."""
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
@@ -152,11 +301,21 @@ async def list_conversation_threads(limit: int = 100) -> list[dict]:
                 SELECT DISTINCT ON (wa_id)
                     wa_id, role, content, created_at
                 FROM conversations
+                WHERE (
+                    $1::bigint IS NULL
+                    OR bot_id = $1
+                    OR ($1 = 1 AND bot_id IS NULL)
+                )
                 ORDER BY wa_id, created_at DESC
             ),
             counts AS (
                 SELECT wa_id, COUNT(*) AS message_count
                 FROM conversations
+                WHERE (
+                    $1::bigint IS NULL
+                    OR bot_id = $1
+                    OR ($1 = 1 AND bot_id IS NULL)
+                )
                 GROUP BY wa_id
             )
             SELECT
@@ -172,14 +331,19 @@ async def list_conversation_threads(limit: int = 100) -> list[dict]:
             JOIN counts ON counts.wa_id = lm.wa_id
             LEFT JOIN leads ON leads.wa_id = lm.wa_id
             ORDER BY lm.created_at DESC
-            LIMIT $1
+            LIMIT $2
             """,
+            bot_id,
             limit,
         )
     return [dict(r) for r in rows]
 
 
-async def list_conversation_messages(wa_id: str, limit: int = 100) -> list[dict]:
+async def list_conversation_messages(
+    wa_id: str,
+    limit: int = 100,
+    bot_id: int | None = None,
+) -> list[dict]:
     """Devuelve los mensajes de una conversacion en orden cronologico."""
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
@@ -187,20 +351,31 @@ async def list_conversation_messages(wa_id: str, limit: int = 100) -> list[dict]
             SELECT role, content, created_at
             FROM conversations
             WHERE wa_id = $1
+              AND (
+                $3::bigint IS NULL
+                OR bot_id = $3
+                OR ($3 = 1 AND bot_id IS NULL)
+              )
             ORDER BY created_at DESC
             LIMIT $2
             """,
             wa_id,
             limit,
+            bot_id,
         )
     return [dict(r) for r in reversed(rows)]
 
 
-async def save_message(wa_id: str, role: str, content: str) -> None:
+async def save_message(
+    wa_id: str,
+    role: str,
+    content: str,
+    bot_id: int | None = None,
+) -> None:
     async with _pool.acquire() as conn:
         await conn.execute(
-            "INSERT INTO conversations(wa_id, role, content) VALUES($1, $2, $3)",
-            wa_id, role, content,
+            "INSERT INTO conversations(wa_id, role, content, bot_id) VALUES($1, $2, $3, $4)",
+            wa_id, role, content, bot_id,
         )
 
 
@@ -318,7 +493,7 @@ async def escalation_counts() -> dict:
     return {r["status"]: r["n"] for r in rows}
 
 
-async def upsert_lead(wa_id: str, **kwargs) -> None:
+async def upsert_lead(wa_id: str, bot_id: int | None = None, **kwargs) -> None:
     """Crea o actualiza el registro de lead. Solo actualiza los campos pasados."""
     fields = {k: v for k, v in kwargs.items()
               if k in ("nombre", "negocio", "qualification_status",
@@ -326,23 +501,38 @@ async def upsert_lead(wa_id: str, **kwargs) -> None:
     if not fields:
         return
     set_clause = ", ".join(
-        f"{col} = ${i + 2}" for i, col in enumerate(fields)
+        f"{col} = ${i + 3}" for i, col in enumerate(fields)
     )
     values = list(fields.values())
     async with _pool.acquire() as conn:
         await conn.execute(
             f"""
-            INSERT INTO leads(wa_id, {", ".join(fields)})
-            VALUES($1, {", ".join(f"${i+2}" for i in range(len(fields)))})
-            ON CONFLICT (wa_id) DO UPDATE SET {set_clause}, updated_at = now()
+            INSERT INTO leads(wa_id, bot_id, {", ".join(fields)})
+            VALUES($1, $2, {", ".join(f"${i+3}" for i in range(len(fields)))})
+            ON CONFLICT (wa_id) DO UPDATE SET
+                {set_clause},
+                bot_id = COALESCE($2, leads.bot_id),
+                updated_at = now()
             """,
-            wa_id, *values,
+            wa_id, bot_id, *values,
         )
 
 
-async def get_lead(wa_id: str) -> dict | None:
+async def get_lead(wa_id: str, bot_id: int | None = None) -> dict | None:
     async with _pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM leads WHERE wa_id = $1", wa_id)
+        row = await conn.fetchrow(
+            """
+            SELECT * FROM leads
+            WHERE wa_id = $1
+              AND (
+                $2::bigint IS NULL
+                OR bot_id = $2
+                OR ($2 = 1 AND bot_id IS NULL)
+              )
+            """,
+            wa_id,
+            bot_id,
+        )
     return dict(row) if row else None
 
 
@@ -354,17 +544,19 @@ async def save_calendar_appointment(
     topic: str | None,
     start_at,
     end_at,
+    bot_id: int | None = None,
 ) -> None:
     async with _pool.acquire() as conn:
         await conn.execute(
             """
             INSERT INTO calendar_appointments(
-                wa_id, google_event_id, calendar_id, attendee_name,
+                wa_id, bot_id, google_event_id, calendar_id, attendee_name,
                 topic, start_at, end_at
             )
-            VALUES($1,$2,$3,$4,$5,$6,$7)
+            VALUES($1,$2,$3,$4,$5,$6,$7,$8)
             ON CONFLICT (google_event_id) DO UPDATE SET
                 wa_id = EXCLUDED.wa_id,
+                bot_id = COALESCE(EXCLUDED.bot_id, calendar_appointments.bot_id),
                 calendar_id = EXCLUDED.calendar_id,
                 attendee_name = EXCLUDED.attendee_name,
                 topic = EXCLUDED.topic,
@@ -375,6 +567,7 @@ async def save_calendar_appointment(
                 updated_at = now()
             """,
             wa_id,
+            bot_id,
             google_event_id,
             calendar_id,
             attendee_name,
@@ -384,18 +577,27 @@ async def save_calendar_appointment(
         )
 
 
-async def list_active_calendar_appointments(wa_id: str) -> list[dict]:
+async def list_active_calendar_appointments(
+    wa_id: str,
+    bot_id: int | None = None,
+) -> list[dict]:
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT *
             FROM calendar_appointments
             WHERE wa_id = $1
+              AND (
+                $2::bigint IS NULL
+                OR bot_id = $2
+                OR ($2 = 1 AND bot_id IS NULL)
+              )
               AND status = 'scheduled'
               AND start_at >= now() - interval '2 hours'
             ORDER BY start_at ASC
             """,
             wa_id,
+            bot_id,
         )
     return [dict(r) for r in rows]
 
@@ -594,3 +796,68 @@ async def clear_contact_data(wa_ids: list[str]) -> dict[str, int]:
         key: int(value.split()[-1]) if value else 0
         for key, value in results.items()
     }
+
+
+async def ensure_default_bot() -> int:
+    """Creates the default Asistto client/bot/number rows for backwards compatibility."""
+    async with _pool.acquire() as conn:
+        client = await conn.fetchrow(
+            """
+            INSERT INTO clients(name, slug)
+            VALUES('Humanio', 'humanio')
+            ON CONFLICT (slug) DO UPDATE SET updated_at = now()
+            RETURNING id
+            """
+        )
+        bot = await conn.fetchrow(
+            """
+            INSERT INTO bots(client_id, slug, name, description, openai_model)
+            VALUES($1, $2, 'Asistto', 'Bot principal de Humanio para Asistto', $3)
+            ON CONFLICT (slug) DO UPDATE SET
+                client_id = EXCLUDED.client_id,
+                openai_model = EXCLUDED.openai_model,
+                updated_at = now()
+            RETURNING id
+            """,
+            client["id"],
+            config.DEFAULT_BOT_SLUG or "asistto",
+            config.OPENAI_MODEL,
+        )
+        if config.WHATSAPP_PHONE_NUMBER_ID:
+            await conn.execute(
+                """
+                INSERT INTO bot_whatsapp_numbers(bot_id, phone_number_id, display_phone_number)
+                VALUES($1, $2, '')
+                ON CONFLICT (phone_number_id) DO UPDATE SET
+                    bot_id = EXCLUDED.bot_id,
+                    updated_at = now()
+                """,
+                bot["id"],
+                config.WHATSAPP_PHONE_NUMBER_ID,
+            )
+        return int(bot["id"])
+
+
+async def get_bot_by_phone_number_id(phone_number_id: str) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                bots.id AS bot_id,
+                bots.client_id,
+                bots.slug,
+                bots.name,
+                bot_whatsapp_numbers.phone_number_id,
+                bot_whatsapp_numbers.display_phone_number,
+                bot_whatsapp_numbers.whatsapp_access_token,
+                bots.openai_model
+            FROM bot_whatsapp_numbers
+            JOIN bots ON bots.id = bot_whatsapp_numbers.bot_id
+            WHERE bot_whatsapp_numbers.phone_number_id = $1
+              AND bot_whatsapp_numbers.status = 'active'
+              AND bots.status = 'active'
+            LIMIT 1
+            """,
+            phone_number_id,
+        )
+    return dict(row) if row else None

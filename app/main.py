@@ -10,6 +10,7 @@ from app import (
     admin,
     admin_tools,
     agenda_guard,
+    bots,
     calendar_client,
     config,
     db,
@@ -135,17 +136,24 @@ AI_ERROR_REPLY = (
 
 
 async def _send_and_track(
+    bot: bots.BotContext,
     wa_id: str,
     user_text: str,
     reply: str,
     history: list[dict],
     scheduled: bool = False,
 ) -> None:
-    await db.save_message(wa_id, "assistant", reply)
-    await whatsapp_client.send_text(wa_id, reply)
+    await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
+    await whatsapp_client.send_text(
+        wa_id,
+        reply,
+        phone_number_id=bot.whatsapp_phone_number_id,
+        access_token=bot.whatsapp_access_token,
+    )
     if scheduled:
         await db.upsert_lead(
             wa_id,
+            bot_id=bot.id,
             qualification_status="calificado",
             action_link_sent=True,
         )
@@ -157,7 +165,7 @@ async def _send_and_track(
         media_type=None,
         history=history,
     )
-    lead = await db.get_lead(wa_id)
+    lead = await db.get_lead(wa_id, bot_id=bot.id)
     if not lead or lead.get("qualification_status") == "en_progreso":
         await follow_ups.schedule(wa_id)
 
@@ -168,6 +176,7 @@ async def _process_message(payload: dict) -> None:
         return
 
     wa_id = msg["wa_id"]
+    bot = await bots.resolve_by_phone_number_id(msg.get("phone_number_id"))
     if await db.was_processed(msg["message_id"]):
         log.info("Mensaje duplicado, ignorado: %s", msg["message_id"])
         return
@@ -180,15 +189,20 @@ async def _process_message(payload: dict) -> None:
     # El usuario escribió → cancelar cualquier follow-up pendiente
     await follow_ups.cancel(wa_id)
 
-    history = await db.get_history(wa_id, config.HISTORY_WINDOW)
+    history = await db.get_history(wa_id, config.HISTORY_WINDOW, bot_id=bot.id)
 
     # Caso A: media entrante → reply fijo, no llamamos OpenAI
     if media_type:
         reply = MEDIA_REPLY
         saved_user_msg = user_text or f"[envió un archivo de tipo {media_type}]"
-        await db.save_message(wa_id, "user", saved_user_msg)
-        await db.save_message(wa_id, "assistant", reply)
-        await whatsapp_client.send_text(wa_id, reply)
+        await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
+        await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
+        await whatsapp_client.send_text(
+            wa_id,
+            reply,
+            phone_number_id=bot.whatsapp_phone_number_id,
+            access_token=bot.whatsapp_access_token,
+        )
         await escalations.record_if_escalated(
             wa_id=wa_id,
             user_text=saved_user_msg,
@@ -205,13 +219,15 @@ async def _process_message(payload: dict) -> None:
     if not user_text.strip():
         return  # nada que procesar
 
-    await db.save_message(wa_id, "user", user_text)
+    await db.save_message(wa_id, "user", user_text, bot_id=bot.id)
     current_history = history + [{"role": "user", "content": user_text}]
 
-    agenda_reply, scheduled = await agenda_guard.maybe_handle(wa_id, user_text, current_history)
+    agenda_reply, scheduled = await agenda_guard.maybe_handle(
+        wa_id, user_text, current_history, bot_id=bot.id
+    )
     if agenda_reply:
-        reply = await leads.process_reply(wa_id, agenda_reply, current_history)
-        await _send_and_track(wa_id, user_text, reply, history, scheduled=scheduled)
+        reply = await leads.process_reply(wa_id, agenda_reply, current_history, bot_id=bot.id)
+        await _send_and_track(bot, wa_id, user_text, reply, history, scheduled=scheduled)
         log.info("Agenda guard respondio a %s (%d chars)", wa_id, len(reply))
         return
 
@@ -219,13 +235,20 @@ async def _process_message(payload: dict) -> None:
         raw_reply = await openai_client.complete(user_text, history)
     except Exception:
         log.exception("Error llamando al modelo")
-        await db.save_message(wa_id, "assistant", AI_ERROR_REPLY)
-        await whatsapp_client.send_text(wa_id, AI_ERROR_REPLY)
+        await db.save_message(wa_id, "assistant", AI_ERROR_REPLY, bot_id=bot.id)
+        await whatsapp_client.send_text(
+            wa_id,
+            AI_ERROR_REPLY,
+            phone_number_id=bot.whatsapp_phone_number_id,
+            access_token=bot.whatsapp_access_token,
+        )
         return
 
-    calendar_reply, scheduled = await calendar_client.process_reply(wa_id, raw_reply)
-    reply = await leads.process_reply(wa_id, calendar_reply, current_history)
+    calendar_reply, scheduled = await calendar_client.process_reply(
+        wa_id, raw_reply, bot_id=bot.id
+    )
+    reply = await leads.process_reply(wa_id, calendar_reply, current_history, bot_id=bot.id)
 
-    await _send_and_track(wa_id, user_text, reply, history, scheduled=scheduled)
+    await _send_and_track(bot, wa_id, user_text, reply, history, scheduled=scheduled)
 
     log.info("Respondido a %s (%d chars)", wa_id, len(reply))

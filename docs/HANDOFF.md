@@ -227,6 +227,19 @@ esta de pasadomañana a las 9
 La arquitectura futura debe enrutar por `phone_number_id` de Meta para que un
 solo backend maneje muchos bots/clientes.
 
+## Multi-Bot Studio
+
+Design spec:
+`docs/superpowers/specs/2026-05-05-multi-bot-studio-design.md`.
+
+Phase 1 implementation plan:
+`docs/superpowers/plans/2026-05-05-multi-bot-foundation.md`.
+
+La primera fase de implementacion agrega clientes, bots, tablas base y
+enrutamiento por `phone_number_id` sin cambiar el comportamiento publico de
+Asistto. El bot actual queda como fallback usando las variables globales de
+Easypanel.
+
 ## Prompt Para Continuar En Otra Computadora
 
 Copia este prompt en una nueva sesion de Codex:

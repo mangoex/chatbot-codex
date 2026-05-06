@@ -72,6 +72,13 @@ prompts/knowledge/
 El sistema guarda el mensaje entrante en el admin antes de llamar al modelo. Si la IA tarda,
 la conversacion aparece de inmediato y la respuesta se agrega cuando esta lista.
 
+## Multi-bot foundation
+
+La app esta avanzando hacia una arquitectura multi-cliente. El bot actual de
+Asistto sigue siendo el bot por defecto y usa las variables globales de entorno.
+Los nuevos bots viviran en Postgres y los mensajes entrantes de WhatsApp se
+enrutaran por el `phone_number_id` de Meta.
+
 ## 3. Agenda con Google Calendar
 
 La agenda es opcional. Para activarla configura en Easypanel:
