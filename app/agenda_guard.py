@@ -18,6 +18,12 @@ _CANCEL_RE = re.compile(
     r"(?:\s+\w+){0,4}\s+(?:asistir|ir)|no\s+asistire|no\s+asistiré)\b",
     re.IGNORECASE,
 )
+_RESCHEDULE_RE = re.compile(
+    r"\b(cambiar|cambiarla|cambiarlo|mover|moverla|moverlo|reagendar|reagenda|"
+    r"reprogramar|reprograma|modificar|modifica|pasar|posponer|no\s+voy\s+a\s+poder|"
+    r"no\s+podre|no\s+podré)\b",
+    re.IGNORECASE,
+)
 _THANKS_RE = re.compile(
     r"^(?:gracias|muchas gracias|ok gracias|perfecto gracias|listo gracias|va gracias)[!.\s]*$",
     re.IGNORECASE,
@@ -54,6 +60,15 @@ _NAME_ONLY_RE = re.compile(
 )
 _ASKED_NAME_RE = re.compile(r"\b(nombre completo|dime tu nombre|tu nombre)\b", re.IGNORECASE)
 _ASKED_DATETIME_RE = re.compile(r"\b(d[ií]a y hora|fecha y hora|qu[eé] d[ií]a|qu[eé] hora)\b", re.IGNORECASE)
+_RESCHEDULE_DATETIME_PROMPT_RE = re.compile(
+    r"\b(sin problema|claro|ok|perfecto)\b.*\b(qu[eé] d[ií]a y hora|qu[eé] d[ií]a|qu[eé] hora|te queda)\b",
+    re.IGNORECASE,
+)
+_SAME_TIME_RE = re.compile(r"\b(misma hora|la misma hora|igual hora|esa hora)\b", re.IGNORECASE)
+_ASSISTANT_NAME_RE = re.compile(
+    r"\b(?:gracias|listo),\s+([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){1,3})[.!?,]",
+    re.IGNORECASE,
+)
 _SERVICE_SCHEDULING_RE = re.compile(
     r"^(?:agendar\s+llamadas|agendar\s+citas|agenda\s+de\s+citas|citas|llamadas|calendario|recordatorios)$",
     re.IGNORECASE,
@@ -175,6 +190,16 @@ def _is_cancel_continuation(user_text: str, history: list[dict]) -> bool:
     return bool(_CANCEL_FOLLOWUP_RE.search(user_text))
 
 
+def _is_reschedule_continuation(user_text: str, history: list[dict]) -> bool:
+    last_assistant = _last_assistant_text(history)
+    if _RESCHEDULE_DATETIME_PROMPT_RE.search(last_assistant):
+        return True
+    recent = _history_text(history, limit=8)
+    if _RESCHEDULE_RE.search(recent) and (_extract_date(user_text) or _SAME_TIME_RE.search(user_text)):
+        return True
+    return False
+
+
 def _looks_like_service_scheduling(user_text: str, history: list[dict]) -> bool:
     """Distingue seleccionar la habilidad de agendar llamadas de pedir una cita real."""
     text = user_text.strip(" .,!¡¿?")
@@ -192,6 +217,8 @@ def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
     if _looks_like_service_scheduling(user_text, history):
         return False
     if _SCHEDULE_RE.search(user_text):
+        return True
+    if _is_reschedule_continuation(user_text, history):
         return True
     if _ASKED_NAME_RE.search(last_assistant) or _ASKED_DATETIME_RE.search(last_assistant):
         return True
@@ -231,8 +258,8 @@ def _extract_name(text: str, history: list[dict]) -> str | None:
         if direct:
             return direct
 
-    # Buscar primero expresiones explicitas en cualquier mensaje reciente.
-    for item in reversed(history):
+    # Buscar primero expresiones explicitas en mensajes recientes.
+    for item in reversed(history[-20:]):
         if item.get("role") != "user":
             continue
         match = _NAME_RE.search(item.get("content", ""))
@@ -241,9 +268,19 @@ def _extract_name(text: str, history: list[dict]) -> str | None:
             if name:
                 return name
 
+    # Reutilizar el nombre ya confirmado por el bot en este hilo.
+    for item in reversed(history[-20:]):
+        if item.get("role") != "assistant":
+            continue
+        match = _ASSISTANT_NAME_RE.search(item.get("content", ""))
+        if match:
+            name = _clean_name(match.group(1))
+            if name:
+                return name
+
     # Buscar pares: asistente pidio nombre -> siguiente mensaje de usuario fue el nombre.
     previous_assistant = ""
-    for item in history:
+    for item in history[-20:]:
         role = item.get("role")
         content = item.get("content", "")
         if role == "assistant":
@@ -336,8 +373,19 @@ def _extract_start_with_context(text: str, history: list[dict]) -> datetime | No
     if start:
         return start
 
+    date = _extract_date(text)
+    if date and _SAME_TIME_RE.search(text):
+        previous_start = _last_user_start(history)
+        if previous_start:
+            return date.replace(
+                hour=previous_start.hour,
+                minute=previous_start.minute,
+                second=0,
+                microsecond=0,
+            )
+
     time = _extract_time(text)
-    if not time or _extract_date(text):
+    if not time or date:
         return None
 
     last_assistant = _last_assistant_text(history)
@@ -400,6 +448,10 @@ async def maybe_handle(
             bot_id=bot_id,
         )
 
+    reschedule_flow = _RESCHEDULE_RE.search(user_text) or _is_reschedule_continuation(user_text, history)
+    if reschedule_flow and not _extract_start_with_context(user_text, history):
+        return "Sin problema. ¿Qué día y hora te queda?", False
+
     if _looks_like_service_scheduling(user_text, history):
         return (
             "Perfecto. Asistto puede pedir datos al prospecto, entender el motivo de la llamada y crear la cita en tu calendario. ¿Quieres que te recomiende un paquete para eso?",
@@ -426,4 +478,9 @@ async def maybe_handle(
         "topic": _topic(user_text, history),
     }
     marker = f"[[CALENDAR_EVENT: {json.dumps(data, ensure_ascii=False)}]]"
-    return await calendar_client.process_reply(wa_id, marker, bot_id=bot_id)
+    return await calendar_client.process_reply(
+        wa_id,
+        marker,
+        bot_id=bot_id,
+        replace_existing=bool(reschedule_flow),
+    )
