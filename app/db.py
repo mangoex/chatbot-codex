@@ -1247,6 +1247,37 @@ async def get_bot_integration(bot_id: int, integration_id: int) -> dict | None:
     return item
 
 
+async def get_active_bot_integration(
+    bot_id: int,
+    integration_type: str,
+) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                bot_integrations.*,
+                (
+                    SELECT COUNT(*)
+                    FROM integration_secrets
+                    WHERE integration_secrets.integration_id = bot_integrations.id
+                ) AS secret_count
+            FROM bot_integrations
+            WHERE bot_id = $1
+              AND integration_type = $2
+              AND enabled = TRUE
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 1
+            """,
+            bot_id,
+            integration_type,
+        )
+    if not row:
+        return None
+    item = dict(row)
+    item["config"] = _normalize_config(item.get("config"))
+    return item
+
+
 async def create_bot_integration(
     bot_id: int,
     integration_type: str,
@@ -1328,6 +1359,19 @@ async def list_integration_secrets(integration_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def get_integration_secret_values(integration_id: int) -> dict[str, str]:
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT secret_name, encrypted_value
+            FROM integration_secrets
+            WHERE integration_id = $1
+            """,
+            integration_id,
+        )
+    return {r["secret_name"]: r["encrypted_value"] for r in rows}
+
+
 async def upsert_integration_secret(
     integration_id: int,
     secret_name: str,
@@ -1359,6 +1403,61 @@ async def delete_integration_secret(integration_id: int, secret_name: str) -> bo
             secret_name,
         )
     return result.endswith(" 1") if result else False
+
+
+async def list_bot_skills(bot_id: int) -> list[dict]:
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT *
+            FROM bot_skills
+            WHERE bot_id = $1
+            ORDER BY skill_type ASC
+            """,
+            bot_id,
+        )
+    return _dict_rows(rows)
+
+
+async def get_bot_skill(bot_id: int, skill_type: str) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT *
+            FROM bot_skills
+            WHERE bot_id = $1 AND skill_type = $2
+            """,
+            bot_id,
+            skill_type,
+        )
+    if not row:
+        return None
+    item = dict(row)
+    item["config"] = _normalize_config(item.get("config"))
+    return item
+
+
+async def upsert_bot_skill(
+    bot_id: int,
+    skill_type: str,
+    enabled: bool = True,
+    config_data: dict | None = None,
+) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO bot_skills(bot_id, skill_type, enabled, config)
+            VALUES($1, $2, $3, $4::jsonb)
+            ON CONFLICT (bot_id, skill_type) DO UPDATE SET
+                enabled = EXCLUDED.enabled,
+                config = EXCLUDED.config,
+                updated_at = now()
+            """,
+            bot_id,
+            skill_type,
+            enabled,
+            json.dumps(config_data or {}),
+        )
 
 
 async def list_client_users(client_id: int) -> list[dict]:

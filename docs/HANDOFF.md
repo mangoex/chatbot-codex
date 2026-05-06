@@ -272,6 +272,19 @@ Phase 3B agrega configuracion de integraciones por bot:
 - Esta fase deja configuradas las conexiones por cliente. La siguiente fase debe
   hacer que las habilidades consuman esas integraciones en runtime.
 
+Phase 3C agrega runtime inicial de habilidades:
+
+- `/admin/bots/{bot_id}/skills` permite activar/desactivar habilidades.
+- La habilidad `google_calendar` controla agenda y cancelacion.
+- Si el bot tiene una integracion activa `google_calendar`, Calendar usa esa
+  configuracion y sus secretos cifrados.
+- Secretos esperados para Google Calendar: `client_secret` y `refresh_token`.
+  `client_id` puede ir en config JSON o como secreto `client_id`.
+- Config JSON util: `calendar_id`, `timezone`, `duration_minutes`,
+  `buffer_minutes`, `summary_prefix`, `location`.
+- Si un bot no tiene integracion `google_calendar`, se conserva el fallback
+  global de variables `GOOGLE_*` para Asistto.
+
 ## Prompt Para Continuar En Otra Computadora
 
 Copia este prompt en una nueva sesion de Codex:
