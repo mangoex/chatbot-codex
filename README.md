@@ -32,6 +32,7 @@ Variables principales:
 - `OPENAI_MAX_TOKENS`: limite de salida para respuestas mas cortas y rapidas.
 - `DATABASE_URL`: conexion interna al Postgres de Easypanel.
 - `ADMIN_USER`, `ADMIN_PASSWORD`, `SESSION_SECRET`: acceso al panel `/admin`.
+- `INTEGRATION_SECRET_KEY`: clave estable para cifrar secretos de integraciones por bot.
 - `QUALIFIED_CTA_URL`: link opcional para leads calificados.
 
 Tambien se soportan los aliases anteriores:
@@ -86,6 +87,8 @@ La primera version del panel multi-bot agrega:
 - `GET /admin/bots/{bot_id}`: detalle del bot con conversaciones y leads.
 - `GET /admin/bots/{bot_id}/prompt`: editor del prompt activo del bot.
 - `GET /admin/bots/{bot_id}/knowledge`: base de conocimiento del bot.
+- `GET /admin/bots/{bot_id}/integrations`: integraciones del bot con APIs,
+  calendarios, CRMs o webhooks.
 - Login de clientes con usuarios guardados en Postgres.
 
 Si un bot tiene prompt o conocimiento activo en Postgres, el runtime lo usa en
@@ -189,6 +192,10 @@ https://bot.humanio.digital/admin
 ```
 
 Usa `ADMIN_USER` y `ADMIN_PASSWORD`.
+
+Desde el detalle de cada bot puedes editar su prompt, base de conocimiento e
+integraciones. Los secretos de integraciones se guardan cifrados en Postgres con
+`INTEGRATION_SECRET_KEY` y no se muestran de vuelta en el panel.
 
 ## Seguridad
 

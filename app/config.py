@@ -57,6 +57,7 @@ FOLLOW_UP_MINUTES = _int("FOLLOW_UP_MINUTES", "10")
 ADMIN_USER = os.getenv("ADMIN_USER", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
+INTEGRATION_SECRET_KEY = os.getenv("INTEGRATION_SECRET_KEY", "")
 
 # URL opcional para leads calificados: agenda, formulario, landing, checkout, etc.
 QUALIFIED_CTA_URL = os.getenv("QUALIFIED_CTA_URL", "")

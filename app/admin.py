@@ -1,5 +1,6 @@
 """Admin frontend: login, dashboard, conversations, CRM and escalations."""
 import html
+import json
 import re
 import secrets
 from datetime import datetime
@@ -7,7 +8,7 @@ from datetime import datetime
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app import auth, config, db
+from app import auth, config, db, secure_store
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -72,6 +73,23 @@ def _fmt_dt(value: datetime | None) -> str:
 def _clip(value: str | None, size: int = 160) -> str:
     text = (value or "").strip()
     return text if len(text) <= size else text[: size - 1].rstrip() + "..."
+
+
+def _parse_config_json(value: str) -> dict:
+    clean = (value or "").strip()
+    if not clean:
+        return {}
+    try:
+        parsed = json.loads(clean)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"Config JSON invalido: {exc.msg}") from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="Config JSON debe ser un objeto.")
+    return parsed
+
+
+def _pretty_json(value: dict | None) -> str:
+    return json.dumps(value or {}, ensure_ascii=True, indent=2)
 
 
 def _wa_link(wa_id: str) -> str:
@@ -201,7 +219,9 @@ BASE_CSS = """
   .btn.whatsapp { background: #1f9d61; border-color: #1f9d61; }
   .actions { display: flex; gap: 7px; flex-wrap: wrap; }
   .editor textarea { min-height: 520px; line-height: 1.45; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  .editor textarea.short { min-height: 220px; }
   .knowledge-preview { white-space: pre-wrap; color: var(--muted); font-size: 13px; max-height: 90px; overflow: hidden; }
+  .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
   .muted { color: var(--muted); }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
   .messages { display: grid; gap: 10px; }
@@ -559,6 +579,7 @@ async def bot_detail(request: Request, bot_id: int):
       <div class="actions">
         <a class="btn secondary" href="/admin/bots/{bot_id}/prompt">Editar prompt</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/knowledge">Base de conocimiento</a>
+        <a class="btn secondary" href="/admin/bots/{bot_id}/integrations">Integraciones</a>
       </div>
     </section>
     <section class="grid kpis">
@@ -763,6 +784,263 @@ async def archive_bot_knowledge_page(
     if not archived:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
     return RedirectResponse(f"/admin/bots/{bot_id}/knowledge?saved=1", status_code=302)
+
+
+INTEGRATION_TYPES = (
+    ("google_calendar", "Google Calendar"),
+    ("external_api", "API externa"),
+    ("webhook", "Webhook"),
+    ("crm", "CRM"),
+    ("custom", "Personalizada"),
+)
+
+
+def _integration_type_options(selected: str = "external_api") -> str:
+    return "".join(
+        f'<option value="{html.escape(value)}" {"selected" if value == selected else ""}>{html.escape(label)}</option>'
+        for value, label in INTEGRATION_TYPES
+    )
+
+
+@router.get("/bots/{bot_id}/integrations", response_class=HTMLResponse)
+async def bot_integrations_page(request: Request, bot_id: int, saved: str | None = None):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    integrations = await db.list_bot_integrations(bot_id, include_archived=True)
+    can_edit = _is_agency(session) or session.get("role") == "client_admin"
+    rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(item["name"])}</strong><br><span class="muted code">{html.escape(item["integration_type"])}</span></td>
+          <td><span class="badge {'b-calificado' if item.get("enabled") else 'b-descalificado'}">{'activa' if item.get("enabled") else 'inactiva'}</span></td>
+          <td>{int(item.get("secret_count") or 0)} secretos</td>
+          <td>{_fmt_dt(item.get("updated_at") or item.get("created_at"))}</td>
+          <td><a class="btn secondary" href="/admin/bots/{bot_id}/integrations/{item["id"]}">Abrir</a></td>
+        </tr>
+        """
+        for item in integrations
+    ) or '<tr><td colspan="5" class="empty">Sin integraciones configuradas.</td></tr>'
+    create_form = ""
+    if can_edit:
+        create_form = f"""
+        <div class="panel editor">
+          <h2>Nueva integracion</h2>
+          <form method="post" action="/admin/bots/{bot_id}/integrations">
+            <label>Nombre</label><input name="name" placeholder="Agenda principal, CRM ventas, API cliente..." required>
+            <label>Tipo</label><select name="integration_type">{_integration_type_options()}</select>
+            <label>Config JSON sin secretos</label><textarea class="short" name="config_json" required>{html.escape(_pretty_json({"base_url": "", "calendar_id": "primary", "timezone": "America/Chihuahua"}))}</textarea>
+            <label><input type="checkbox" name="enabled" checked style="width:auto"> Activa</label>
+            <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Crear integracion</button></div>
+          </form>
+        </div>
+        """
+    notice = '<div class="trend">Cambios guardados.</div>' if saved else ""
+    body = f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots/{bot_id}">Volver</a><h1>Integraciones</h1><div class="sub">{html.escape(bot["name"])} puede conectarse a agenda, CRM, APIs o webhooks por cliente.</div>{notice}</div>
+    </div>
+    <section class="grid split">
+      <div class="table-wrap"><table><thead><tr><th>Integracion</th><th>Estado</th><th>Secretos</th><th>Actualizada</th><th></th></tr></thead><tbody>{rows}</tbody></table></div>
+      {create_form or '<div class="panel"><h2>Permisos</h2><div class="sub">Tu usuario tiene acceso de solo lectura.</div></div>'}
+    </section>
+    """
+    return HTMLResponse(_layout("Integraciones", "bots", body))
+
+
+@router.post("/bots/{bot_id}/integrations")
+async def create_bot_integration_page(
+    request: Request,
+    bot_id: int,
+    name: str = Form(...),
+    integration_type: str = Form(...),
+    config_json: str = Form("{}"),
+    enabled: str | None = Form(None),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    clean_name = name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="El nombre es obligatorio")
+    config_data = _parse_config_json(config_json)
+    integration_id = await db.create_bot_integration(
+        bot_id=bot_id,
+        integration_type=integration_type.strip() or "custom",
+        name=clean_name,
+        config_data=config_data,
+        enabled=enabled == "on",
+    )
+    return RedirectResponse(
+        f"/admin/bots/{bot_id}/integrations/{integration_id}?saved=1",
+        status_code=302,
+    )
+
+
+@router.get("/bots/{bot_id}/integrations/{integration_id}", response_class=HTMLResponse)
+async def edit_bot_integration_page(
+    request: Request,
+    bot_id: int,
+    integration_id: int,
+    saved: str | None = None,
+):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    integration = await db.get_bot_integration(bot_id, integration_id)
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integracion no encontrada")
+    secret_rows = await db.list_integration_secrets(integration_id)
+    can_edit = _is_agency(session) or session.get("role") == "client_admin"
+    readonly = "" if can_edit else "readonly"
+    disabled = "" if can_edit else "disabled"
+    secret_html = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(secret["secret_name"])}</strong><br><span class="muted">Valor guardado y oculto</span></td>
+          <td>{_fmt_dt(secret.get("updated_at") or secret.get("created_at"))}</td>
+          <td>
+            {'<form class="inline" method="post" action="/admin/bots/%s/integrations/%s/secrets/%s/delete"><button class="btn secondary" type="submit">Eliminar</button></form>' % (bot_id, integration_id, html.escape(secret["secret_name"])) if can_edit else '<span class="badge">Solo lectura</span>'}
+          </td>
+        </tr>
+        """
+        for secret in secret_rows
+    ) or '<tr><td colspan="3" class="empty">Sin secretos guardados.</td></tr>'
+    save_button = (
+        '<button class="btn" type="submit">Guardar cambios</button>'
+        if can_edit else
+        '<span class="badge">Solo lectura</span>'
+    )
+    archive_form = (
+        f"""
+        <form method="post" action="/admin/bots/{bot_id}/integrations/{integration_id}/archive" style="margin-top:10px">
+          <button class="btn secondary" type="submit">Desactivar integracion</button>
+        </form>
+        """
+        if can_edit and integration.get("enabled") else ""
+    )
+    secret_form = ""
+    if can_edit:
+        secret_form = f"""
+        <div class="panel">
+          <h2>Guardar secreto</h2>
+          <form method="post" action="/admin/bots/{bot_id}/integrations/{integration_id}/secrets">
+            <label>Nombre del secreto</label><input name="secret_name" placeholder="api_key, access_token, refresh_token" required>
+            <label>Valor</label><input name="secret_value" type="password" required>
+            <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Guardar secreto</button></div>
+          </form>
+        </div>
+        """
+    notice = '<div class="trend">Cambios guardados.</div>' if saved else ""
+    checked = "checked" if integration.get("enabled") else ""
+    body = f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots/{bot_id}/integrations">Volver</a><h1>{html.escape(integration["name"])}</h1><div class="sub">{html.escape(bot["name"])} - {html.escape(integration["integration_type"])}</div>{notice}</div>
+    </div>
+    <section class="grid split">
+      <div class="panel editor">
+        <h2>Configuracion</h2>
+        <form method="post" action="/admin/bots/{bot_id}/integrations/{integration_id}">
+          <label>Nombre</label><input name="name" value="{html.escape(integration["name"])}" {readonly} required>
+          <label>Tipo</label><select name="integration_type" {disabled}>{_integration_type_options(integration["integration_type"])}</select>
+          <label>Config JSON sin secretos</label><textarea class="short" name="config_json" {readonly} required>{html.escape(_pretty_json(integration.get("config")))}</textarea>
+          <label><input type="checkbox" name="enabled" {checked} {disabled} style="width:auto"> Activa</label>
+          <div class="actions" style="margin-top:14px">{save_button}</div>
+        </form>
+        {archive_form}
+      </div>
+      {secret_form or '<div class="panel"><h2>Secretos</h2><div class="sub">Solo administradores pueden guardar secretos.</div></div>'}
+    </section>
+    <section class="table-wrap" style="margin-top:14px">
+      <table><thead><tr><th>Secreto</th><th>Actualizado</th><th></th></tr></thead><tbody>{secret_html}</tbody></table>
+    </section>
+    """
+    return HTMLResponse(_layout("Integracion", "bots", body))
+
+
+@router.post("/bots/{bot_id}/integrations/{integration_id}")
+async def update_bot_integration_page(
+    request: Request,
+    bot_id: int,
+    integration_id: int,
+    name: str = Form(...),
+    integration_type: str = Form(...),
+    config_json: str = Form("{}"),
+    enabled: str | None = Form(None),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    if not await db.get_bot_integration(bot_id, integration_id):
+        raise HTTPException(status_code=404, detail="Integracion no encontrada")
+    clean_name = name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="El nombre es obligatorio")
+    updated = await db.update_bot_integration(
+        bot_id=bot_id,
+        integration_id=integration_id,
+        integration_type=integration_type.strip() or "custom",
+        name=clean_name,
+        config_data=_parse_config_json(config_json),
+        enabled=enabled == "on",
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Integracion no encontrada")
+    return RedirectResponse(
+        f"/admin/bots/{bot_id}/integrations/{integration_id}?saved=1",
+        status_code=302,
+    )
+
+
+@router.post("/bots/{bot_id}/integrations/{integration_id}/archive")
+async def archive_bot_integration_page(
+    request: Request,
+    bot_id: int,
+    integration_id: int,
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    archived = await db.archive_bot_integration(bot_id, integration_id)
+    if not archived:
+        raise HTTPException(status_code=404, detail="Integracion no encontrada")
+    return RedirectResponse(f"/admin/bots/{bot_id}/integrations?saved=1", status_code=302)
+
+
+@router.post("/bots/{bot_id}/integrations/{integration_id}/secrets")
+async def upsert_bot_integration_secret_page(
+    request: Request,
+    bot_id: int,
+    integration_id: int,
+    secret_name: str = Form(...),
+    secret_value: str = Form(...),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    if not await db.get_bot_integration(bot_id, integration_id):
+        raise HTTPException(status_code=404, detail="Integracion no encontrada")
+    clean_name = re.sub(r"[^a-zA-Z0-9_.-]+", "_", secret_name.strip()).strip("_")
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Nombre de secreto invalido")
+    encrypted = secure_store.encrypt_secret(secret_value)
+    await db.upsert_integration_secret(integration_id, clean_name, encrypted)
+    return RedirectResponse(
+        f"/admin/bots/{bot_id}/integrations/{integration_id}?saved=1",
+        status_code=302,
+    )
+
+
+@router.post("/bots/{bot_id}/integrations/{integration_id}/secrets/{secret_name}/delete")
+async def delete_bot_integration_secret_page(
+    request: Request,
+    bot_id: int,
+    integration_id: int,
+    secret_name: str,
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    if not await db.get_bot_integration(bot_id, integration_id):
+        raise HTTPException(status_code=404, detail="Integracion no encontrada")
+    await db.delete_integration_secret(integration_id, secret_name)
+    return RedirectResponse(
+        f"/admin/bots/{bot_id}/integrations/{integration_id}?saved=1",
+        status_code=302,
+    )
 
 
 @router.get("/dashboard", response_class=HTMLResponse)

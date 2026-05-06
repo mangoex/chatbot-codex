@@ -260,6 +260,18 @@ Phase 3A agrega configuracion editable del agente por bot:
 - La agencia y los usuarios `client_admin` pueden editar. `client_viewer` tiene
   acceso de solo lectura.
 
+Phase 3B agrega configuracion de integraciones por bot:
+
+- `/admin/bots/{bot_id}/integrations` lista y crea integraciones.
+- `/admin/bots/{bot_id}/integrations/{integration_id}` edita nombre, tipo,
+  estado y config JSON no secreta.
+- Cada integracion puede guardar secretos de escritura unica como `api_key`,
+  `access_token` o `refresh_token`.
+- Los secretos se cifran antes de guardarse en `integration_secrets` con
+  `INTEGRATION_SECRET_KEY`; si no existe, se usa `SESSION_SECRET`.
+- Esta fase deja configuradas las conexiones por cliente. La siguiente fase debe
+  hacer que las habilidades consuman esas integraciones en runtime.
+
 ## Prompt Para Continuar En Otra Computadora
 
 Copia este prompt en una nueva sesion de Codex:

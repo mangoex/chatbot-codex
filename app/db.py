@@ -1,4 +1,6 @@
 """Acceso a Postgres: pool, schema idempotente, lectura/escritura de historial."""
+import json
+
 import asyncpg
 from app import config
 
@@ -1170,6 +1172,191 @@ async def archive_bot_knowledge(bot_id: int, knowledge_id: int) -> bool:
             """,
             bot_id,
             knowledge_id,
+        )
+    return result.endswith(" 1") if result else False
+
+
+def _normalize_config(value) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def _dict_rows(rows) -> list[dict]:
+    result = []
+    for row in rows:
+        item = dict(row)
+        if "config" in item:
+            item["config"] = _normalize_config(item.get("config"))
+        result.append(item)
+    return result
+
+
+async def list_bot_integrations(
+    bot_id: int,
+    include_archived: bool = False,
+) -> list[dict]:
+    query = """
+        SELECT
+            bot_integrations.*,
+            (
+                SELECT COUNT(*)
+                FROM integration_secrets
+                WHERE integration_secrets.integration_id = bot_integrations.id
+            ) AS secret_count
+        FROM bot_integrations
+        WHERE bot_id = $1
+    """
+    if not include_archived:
+        query += " AND enabled = TRUE"
+    query += " ORDER BY updated_at DESC, created_at DESC"
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(query, bot_id)
+    return _dict_rows(rows)
+
+
+async def get_bot_integration(bot_id: int, integration_id: int) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                bot_integrations.*,
+                (
+                    SELECT COUNT(*)
+                    FROM integration_secrets
+                    WHERE integration_secrets.integration_id = bot_integrations.id
+                ) AS secret_count
+            FROM bot_integrations
+            WHERE bot_id = $1 AND id = $2
+            """,
+            bot_id,
+            integration_id,
+        )
+    if not row:
+        return None
+    item = dict(row)
+    item["config"] = _normalize_config(item.get("config"))
+    return item
+
+
+async def create_bot_integration(
+    bot_id: int,
+    integration_type: str,
+    name: str,
+    config_data: dict | None = None,
+    enabled: bool = True,
+) -> int:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO bot_integrations(bot_id, integration_type, name, enabled, config)
+            VALUES($1, $2, $3, $4, $5::jsonb)
+            RETURNING id
+            """,
+            bot_id,
+            integration_type,
+            name,
+            enabled,
+            json.dumps(config_data or {}),
+        )
+    return int(row["id"])
+
+
+async def update_bot_integration(
+    bot_id: int,
+    integration_id: int,
+    integration_type: str,
+    name: str,
+    config_data: dict | None = None,
+    enabled: bool = True,
+) -> bool:
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE bot_integrations
+            SET integration_type = $3,
+                name = $4,
+                enabled = $5,
+                config = $6::jsonb,
+                updated_at = now()
+            WHERE bot_id = $1 AND id = $2
+            """,
+            bot_id,
+            integration_id,
+            integration_type,
+            name,
+            enabled,
+            json.dumps(config_data or {}),
+        )
+    return result.endswith(" 1") if result else False
+
+
+async def archive_bot_integration(bot_id: int, integration_id: int) -> bool:
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE bot_integrations
+            SET enabled = FALSE,
+                updated_at = now()
+            WHERE bot_id = $1 AND id = $2
+            """,
+            bot_id,
+            integration_id,
+        )
+    return result.endswith(" 1") if result else False
+
+
+async def list_integration_secrets(integration_id: int) -> list[dict]:
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT secret_name, created_at, updated_at
+            FROM integration_secrets
+            WHERE integration_id = $1
+            ORDER BY secret_name ASC
+            """,
+            integration_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def upsert_integration_secret(
+    integration_id: int,
+    secret_name: str,
+    encrypted_value: str,
+) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO integration_secrets(integration_id, secret_name, encrypted_value)
+            VALUES($1, $2, $3)
+            ON CONFLICT (integration_id, secret_name) DO UPDATE SET
+                encrypted_value = EXCLUDED.encrypted_value,
+                updated_at = now()
+            """,
+            integration_id,
+            secret_name,
+            encrypted_value,
+        )
+
+
+async def delete_integration_secret(integration_id: int, secret_name: str) -> bool:
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            DELETE FROM integration_secrets
+            WHERE integration_id = $1 AND secret_name = $2
+            """,
+            integration_id,
+            secret_name,
         )
     return result.endswith(" 1") if result else False
 
