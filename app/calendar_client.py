@@ -135,7 +135,7 @@ def config_status() -> dict[str, bool | str]:
 async def runtime_status(bot_id: int | None = None) -> dict[str, bool | str | int | None]:
     skill_on = await skill_runtime.calendar_skill_enabled(bot_id)
     runtime = await _runtime(bot_id)
-    return {
+    status: dict[str, bool | str | int | None] = {
         "source": runtime.source,
         "integration_id": runtime.integration_id,
         "skill_enabled": skill_on,
@@ -146,6 +146,20 @@ async def runtime_status(bot_id: int | None = None) -> dict[str, bool | str | in
         "GOOGLE_CALENDAR_TIMEZONE": runtime.timezone,
         "enabled": bool(skill_on and runtime.enabled),
     }
+    if bot_id and runtime.integration_id:
+        secrets = await db.get_integration_secret_values(runtime.integration_id)
+        status.update({
+            "secret_client_id_saved": bool(secrets.get("client_id") or secrets.get("google_client_id")),
+            "secret_client_secret_saved": bool(
+                secrets.get("client_secret") or secrets.get("google_client_secret")
+            ),
+            "secret_refresh_token_saved": bool(
+                secrets.get("refresh_token") or secrets.get("google_refresh_token")
+            ),
+            "secret_client_secret_decryptable": bool(runtime.client_secret),
+            "secret_refresh_token_decryptable": bool(runtime.refresh_token),
+        })
+    return status
 
 
 def _safe_error(exc: Exception) -> str:
@@ -488,6 +502,11 @@ async def process_reply(
 
     runtime = await _runtime(bot_id)
     if not runtime.enabled:
+        if runtime.source == "bot_integration":
+            return (
+                "No pude confirmar la cita porque la integracion de calendario de este bot no esta completa. Te paso con el equipo para revisarlo.",
+                False,
+            )
         fallback = "Tengo tus datos para la llamada. Te dejo el siguiente paso para avanzar:"
         if config.QUALIFIED_CTA_URL:
             fallback = f"{fallback} {config.QUALIFIED_CTA_URL}"

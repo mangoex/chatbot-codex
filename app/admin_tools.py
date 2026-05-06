@@ -79,9 +79,9 @@ async def reset_contact_submit(request: Request, wa_id: str = Form(...)):
 
 
 @router.get("/calendar-status", response_class=HTMLResponse)
-async def calendar_status_page(request: Request):
+async def calendar_status_page(request: Request, bot_id: int | None = None):
     _require_login(request)
-    data = await calendar_client.diagnostics()
+    data = await calendar_client.diagnostics(bot_id=bot_id)
     config = data.get("config", {})
     rows = "".join(
         f"<tr><td><code>{html.escape(str(key))}</code></td><td>{_yesno(value) if isinstance(value, bool) else html.escape(str(value))}</td></tr>"
@@ -94,13 +94,15 @@ async def calendar_status_page(request: Request):
     body = f"""
     <section class="panel">
       <h1>Estado de Google Calendar</h1>
-      <p>Esta pagina no muestra secretos. Solo valida si las variables existen y si Google acepta el token.</p>
+      <p>Esta pagina no muestra secretos. Solo valida si la configuracion existe, si los secretos se pueden descifrar y si Google acepta el token.</p>
+      {f'<p>Bot: <code>{bot_id}</code></p>' if bot_id else '<p>Bot: <code>global/env</code></p>'}
       <table>{rows}</table>
       <p>Token OAuth: {token}</p>
       <p>Acceso al calendario: {calendar}</p>
       {error_html}
       <div class="actions">
-        <a class="btn" href="/admin/calendar-status">Probar otra vez</a>
+        <a class="btn" href="/admin/calendar-status{f'?bot_id={bot_id}' if bot_id else ''}">Probar otra vez</a>
+        {f'<a class="btn secondary" href="/admin/bots/{bot_id}/integrations">Integraciones</a>' if bot_id else ''}
         <a class="btn secondary" href="/admin/conversations">Volver</a>
       </div>
     </section>
