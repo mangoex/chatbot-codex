@@ -58,6 +58,13 @@ async def _require_bot_access(session: dict, bot_id: int) -> dict:
     return bot
 
 
+async def _require_bot_editor(session: dict, bot_id: int) -> dict:
+    bot = await _require_bot_access(session, bot_id)
+    if _is_agency(session) or session.get("role") == "client_admin":
+        return bot
+    raise HTTPException(status_code=403, detail="Solo administradores pueden editar este bot")
+
+
 def _fmt_dt(value: datetime | None) -> str:
     return value.strftime("%d/%m/%Y %H:%M") if value else "-"
 
@@ -193,6 +200,8 @@ BASE_CSS = """
   .btn.secondary { background: white; color: var(--ink); }
   .btn.whatsapp { background: #1f9d61; border-color: #1f9d61; }
   .actions { display: flex; gap: 7px; flex-wrap: wrap; }
+  .editor textarea { min-height: 520px; line-height: 1.45; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  .knowledge-preview { white-space: pre-wrap; color: var(--muted); font-size: 13px; max-height: 90px; overflow: hidden; }
   .muted { color: var(--muted); }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
   .messages { display: grid; gap: 10px; }
@@ -545,6 +554,13 @@ async def bot_detail(request: Request, bot_id: int):
       <div><a class="sub" href="/admin/bots">Volver</a><h1>{html.escape(bot["name"])}</h1><div class="sub">{html.escape(bot.get("client_name") or "-")} - {html.escape(bot.get("phone_number_id") or "sin phone_number_id")}</div></div>
       <span class="badge">{html.escape(bot.get("status") or "active")}</span>
     </div>
+    <section class="panel" style="margin-bottom:14px">
+      <h2>Configuracion del agente</h2>
+      <div class="actions">
+        <a class="btn secondary" href="/admin/bots/{bot_id}/prompt">Editar prompt</a>
+        <a class="btn secondary" href="/admin/bots/{bot_id}/knowledge">Base de conocimiento</a>
+      </div>
+    </section>
     <section class="grid kpis">
       <div class="card"><div class="k">Conversaciones</div><div class="n">{metrics.get("conversations", 0)}</div></div>
       <div class="card"><div class="k">Mensajes</div><div class="n">{metrics.get("messages", 0)}</div></div>
@@ -557,6 +573,196 @@ async def bot_detail(request: Request, bot_id: int):
     </section>
     """
     return HTMLResponse(_layout("Bot", "bots", body))
+
+
+@router.get("/bots/{bot_id}/prompt", response_class=HTMLResponse)
+async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = None):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    prompt = await db.get_active_bot_prompt(bot_id)
+    content = (prompt or {}).get("content") or config.SYSTEM_PROMPT
+    source = "Postgres" if prompt else "Archivo base"
+    can_edit = _is_agency(session) or session.get("role") == "client_admin"
+    notice = '<div class="trend">Prompt publicado.</div>' if saved else ""
+    button = (
+        '<button class="btn" type="submit">Publicar prompt</button>'
+        if can_edit else
+        '<span class="badge">Solo lectura</span>'
+    )
+    readonly = "" if can_edit else "readonly"
+    body = f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots/{bot_id}">Volver</a><h1>Prompt</h1><div class="sub">{html.escape(bot["name"])} - origen actual: {source}</div></div>
+    </div>
+    <section class="panel editor">
+      <form method="post" action="/admin/bots/{bot_id}/prompt">
+        <label>Instrucciones del agente</label>
+        <textarea name="content" {readonly} required>{html.escape(content)}</textarea>
+        <div class="actions" style="margin-top:14px">{button}{notice}</div>
+      </form>
+    </section>
+    """
+    return HTMLResponse(_layout("Prompt", "bots", body))
+
+
+@router.post("/bots/{bot_id}/prompt")
+async def save_bot_prompt_page(
+    request: Request,
+    bot_id: int,
+    content: str = Form(...),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    clean = content.strip()
+    if not clean:
+        raise HTTPException(status_code=400, detail="El prompt no puede estar vacio")
+    await db.publish_bot_prompt(bot_id, clean)
+    return RedirectResponse(f"/admin/bots/{bot_id}/prompt?saved=1", status_code=302)
+
+
+@router.get("/bots/{bot_id}/knowledge", response_class=HTMLResponse)
+async def bot_knowledge_page(request: Request, bot_id: int, saved: str | None = None):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    docs = await db.list_bot_knowledge(bot_id, active_only=False)
+    can_edit = _is_agency(session) or session.get("role") == "client_admin"
+    rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(doc["title"])}</strong><br><div class="knowledge-preview">{html.escape(_clip(doc.get("content"), 260))}</div></td>
+          <td><span class="badge">{html.escape(doc.get("status") or "active")}</span></td>
+          <td>{_fmt_dt(doc.get("updated_at") or doc.get("created_at"))}</td>
+          <td><a class="btn secondary" href="/admin/bots/{bot_id}/knowledge/{doc["id"]}">Editar</a></td>
+        </tr>
+        """
+        for doc in docs
+    ) or '<tr><td colspan="4" class="empty">Sin documentos de conocimiento.</td></tr>'
+    create_form = ""
+    if can_edit:
+        create_form = f"""
+        <div class="panel">
+          <h2>Agregar documento</h2>
+          <form method="post" action="/admin/bots/{bot_id}/knowledge">
+            <label>Titulo</label><input name="title" placeholder="Servicios, precios, politicas..." required>
+            <label>Contenido</label><textarea name="content" rows="12" required></textarea>
+            <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Guardar documento</button></div>
+          </form>
+        </div>
+        """
+    notice = '<div class="trend">Cambios guardados.</div>' if saved else ""
+    body = f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots/{bot_id}">Volver</a><h1>Base de conocimiento</h1><div class="sub">{html.escape(bot["name"])} usa estos documentos junto con su prompt activo.</div>{notice}</div>
+    </div>
+    <section class="grid split">
+      <div class="table-wrap"><table><thead><tr><th>Documento</th><th>Estado</th><th>Actualizado</th><th></th></tr></thead><tbody>{rows}</tbody></table></div>
+      {create_form or '<div class="panel"><h2>Permisos</h2><div class="sub">Tu usuario tiene acceso de solo lectura.</div></div>'}
+    </section>
+    """
+    return HTMLResponse(_layout("Knowledge", "bots", body))
+
+
+@router.post("/bots/{bot_id}/knowledge")
+async def create_bot_knowledge_page(
+    request: Request,
+    bot_id: int,
+    title: str = Form(...),
+    content: str = Form(...),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    clean_title = title.strip()
+    clean_content = content.strip()
+    if not clean_title or not clean_content:
+        raise HTTPException(status_code=400, detail="Titulo y contenido son obligatorios")
+    await db.create_bot_knowledge(bot_id, clean_title, clean_content)
+    return RedirectResponse(f"/admin/bots/{bot_id}/knowledge?saved=1", status_code=302)
+
+
+@router.get("/bots/{bot_id}/knowledge/{knowledge_id}", response_class=HTMLResponse)
+async def edit_bot_knowledge_page(
+    request: Request,
+    bot_id: int,
+    knowledge_id: int,
+    saved: str | None = None,
+):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    doc = await db.get_bot_knowledge(bot_id, knowledge_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    can_edit = _is_agency(session) or session.get("role") == "client_admin"
+    readonly = "" if can_edit else "readonly"
+    button = (
+        '<button class="btn" type="submit">Guardar cambios</button>'
+        if can_edit else
+        '<span class="badge">Solo lectura</span>'
+    )
+    archive_section = (
+        f"""
+        <form method="post" action="/admin/bots/{bot_id}/knowledge/{knowledge_id}/archive" style="margin-top:10px">
+          <button class="btn secondary" type="submit">Archivar</button>
+        </form>
+        """
+        if can_edit and doc.get("status") != "archived" else ""
+    )
+    notice = '<div class="trend">Documento actualizado.</div>' if saved else ""
+    body = f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots/{bot_id}/knowledge">Volver</a><h1>{html.escape(doc["title"])}</h1><div class="sub">{html.escape(bot["name"])} - {html.escape(doc.get("status") or "active")}</div></div>
+    </div>
+    <section class="panel editor">
+      <form method="post" action="/admin/bots/{bot_id}/knowledge/{knowledge_id}">
+        <label>Titulo</label><input name="title" value="{html.escape(doc["title"])}" {readonly} required>
+        <label>Contenido</label><textarea name="content" {readonly} required>{html.escape(doc.get("content") or "")}</textarea>
+        <div class="actions" style="margin-top:14px">{button}{notice}</div>
+      </form>
+      {archive_section}
+    </section>
+    """
+    return HTMLResponse(_layout("Knowledge", "bots", body))
+
+
+@router.post("/bots/{bot_id}/knowledge/{knowledge_id}")
+async def update_bot_knowledge_page(
+    request: Request,
+    bot_id: int,
+    knowledge_id: int,
+    title: str = Form(...),
+    content: str = Form(...),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    clean_title = title.strip()
+    clean_content = content.strip()
+    if not clean_title or not clean_content:
+        raise HTTPException(status_code=400, detail="Titulo y contenido son obligatorios")
+    updated = await db.update_bot_knowledge(
+        bot_id,
+        knowledge_id,
+        clean_title,
+        clean_content,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    return RedirectResponse(
+        f"/admin/bots/{bot_id}/knowledge/{knowledge_id}?saved=1",
+        status_code=302,
+    )
+
+
+@router.post("/bots/{bot_id}/knowledge/{knowledge_id}/archive")
+async def archive_bot_knowledge_page(
+    request: Request,
+    bot_id: int,
+    knowledge_id: int,
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    archived = await db.archive_bot_knowledge(bot_id, knowledge_id)
+    if not archived:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+    return RedirectResponse(f"/admin/bots/{bot_id}/knowledge?saved=1", status_code=302)
 
 
 @router.get("/dashboard", response_class=HTMLResponse)

@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import tiktoken
 from openai import AsyncOpenAI
-from app import config
+from app import bot_content, config
 
 _client: AsyncOpenAI | None = None
 
@@ -54,8 +54,9 @@ def _runtime_context() -> str:
     )
 
 
-def _system_prompt() -> str:
-    return f"{config.SYSTEM_PROMPT}\n\n--- contexto_runtime ---\n{_runtime_context()}"
+async def _system_prompt(bot_id: int | None = None) -> str:
+    prompt = await bot_content.system_prompt_for_bot(bot_id)
+    return f"{prompt}\n\n--- contexto_runtime ---\n{_runtime_context()}"
 
 
 def _safe_error(exc: Exception) -> str:
@@ -104,8 +105,12 @@ async def _chat(messages: list[dict]) -> str:
     return resp.choices[0].message.content or ""
 
 
-async def complete(user_message: str, history: list[dict]) -> str:
-    system = _system_prompt()
+async def complete(
+    user_message: str,
+    history: list[dict],
+    bot_id: int | None = None,
+) -> str:
+    system = await _system_prompt(bot_id)
     fitted = fit_history(system, history, user_message, config.MAX_PROMPT_TOKENS)
     messages = (
         [{"role": "system", "content": system}]
