@@ -616,12 +616,22 @@ async def mark_calendar_appointment_cancelled(google_event_id: str) -> None:
         )
 
 
-async def list_leads(status: str | None = None, limit: int = 200) -> list[dict]:
+async def list_leads(
+    status: str | None = None,
+    limit: int = 200,
+    bot_id: int | None = None,
+) -> list[dict]:
     query = "SELECT * FROM leads"
     args: list = []
+    filters: list[str] = []
     if status:
-        query += " WHERE qualification_status = $1"
         args.append(status)
+        filters.append(f"qualification_status = ${len(args)}")
+    if bot_id:
+        args.append(bot_id)
+        filters.append(f"(bot_id = ${len(args)} OR (${len(args)} = 1 AND bot_id IS NULL))")
+    if filters:
+        query += " WHERE " + " AND ".join(filters)
     query += f" ORDER BY created_at DESC LIMIT ${len(args) + 1}"
     args.append(limit)
     async with _pool.acquire() as conn:
@@ -653,27 +663,51 @@ async def update_lead_status(
         )
 
 
-async def crm_counts() -> dict:
+async def crm_counts(bot_id: int | None = None) -> dict:
     async with _pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT qualification_status, COUNT(*) AS n FROM leads GROUP BY qualification_status"
-        )
+        if bot_id:
+            rows = await conn.fetch(
+                """
+                SELECT qualification_status, COUNT(*) AS n
+                FROM leads
+                WHERE bot_id = $1 OR ($1 = 1 AND bot_id IS NULL)
+                GROUP BY qualification_status
+                """,
+                bot_id,
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT qualification_status, COUNT(*) AS n FROM leads GROUP BY qualification_status"
+            )
     return {r["qualification_status"]: r["n"] for r in rows}
 
 
-async def admin_metrics() -> dict:
+async def admin_metrics(bot_id: int | None = None) -> dict:
     """Metricas ligeras para el dashboard admin."""
     async with _pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT
-                (SELECT COUNT(DISTINCT wa_id) FROM conversations) AS conversations,
-                (SELECT COUNT(*) FROM conversations) AS messages,
-                (SELECT COUNT(*) FROM leads) AS leads,
-                (SELECT COUNT(*) FROM leads WHERE qualification_status = 'calificado') AS qualified,
-                (SELECT COUNT(*) FROM escalations WHERE status = 'pendiente') AS pending_escalations
-            """
-        )
+        if bot_id:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    (SELECT COUNT(DISTINCT wa_id) FROM conversations WHERE bot_id = $1 OR ($1 = 1 AND bot_id IS NULL)) AS conversations,
+                    (SELECT COUNT(*) FROM conversations WHERE bot_id = $1 OR ($1 = 1 AND bot_id IS NULL)) AS messages,
+                    (SELECT COUNT(*) FROM leads WHERE bot_id = $1 OR ($1 = 1 AND bot_id IS NULL)) AS leads,
+                    (SELECT COUNT(*) FROM leads WHERE qualification_status = 'calificado' AND (bot_id = $1 OR ($1 = 1 AND bot_id IS NULL))) AS qualified,
+                    (SELECT COUNT(*) FROM escalations WHERE status = 'pendiente' AND (bot_id = $1 OR ($1 = 1 AND bot_id IS NULL))) AS pending_escalations
+                """,
+                bot_id,
+            )
+        else:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    (SELECT COUNT(DISTINCT wa_id) FROM conversations) AS conversations,
+                    (SELECT COUNT(*) FROM conversations) AS messages,
+                    (SELECT COUNT(*) FROM leads) AS leads,
+                    (SELECT COUNT(*) FROM leads WHERE qualification_status = 'calificado') AS qualified,
+                    (SELECT COUNT(*) FROM escalations WHERE status = 'pendiente') AS pending_escalations
+                """
+            )
     return dict(row)
 
 
@@ -859,5 +893,226 @@ async def get_bot_by_phone_number_id(phone_number_id: str) -> dict | None:
             LIMIT 1
             """,
             phone_number_id,
+        )
+    return dict(row) if row else None
+
+
+async def list_clients(limit: int = 200) -> list[dict]:
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT
+                clients.*,
+                COUNT(bots.id) AS bot_count
+            FROM clients
+            LEFT JOIN bots ON bots.client_id = clients.id
+            GROUP BY clients.id
+            ORDER BY clients.created_at DESC
+            LIMIT $1
+            """,
+            limit,
+        )
+    return [dict(r) for r in rows]
+
+
+async def get_client(client_id: int) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM clients WHERE id = $1", client_id)
+    return dict(row) if row else None
+
+
+async def create_client(name: str, slug: str) -> int:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO clients(name, slug)
+            VALUES($1, $2)
+            ON CONFLICT (slug) DO UPDATE SET
+                name = EXCLUDED.name,
+                status = 'active',
+                updated_at = now()
+            RETURNING id
+            """,
+            name,
+            slug,
+        )
+    return int(row["id"])
+
+
+async def list_bots(client_id: int | None = None, limit: int = 200) -> list[dict]:
+    async with _pool.acquire() as conn:
+        if client_id:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    bots.*,
+                    clients.name AS client_name,
+                    bot_whatsapp_numbers.phone_number_id,
+                    bot_whatsapp_numbers.display_phone_number,
+                    bot_whatsapp_numbers.status AS whatsapp_status
+                FROM bots
+                LEFT JOIN clients ON clients.id = bots.client_id
+                LEFT JOIN bot_whatsapp_numbers ON bot_whatsapp_numbers.bot_id = bots.id
+                WHERE bots.client_id = $1
+                ORDER BY bots.created_at DESC
+                LIMIT $2
+                """,
+                client_id,
+                limit,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    bots.*,
+                    clients.name AS client_name,
+                    bot_whatsapp_numbers.phone_number_id,
+                    bot_whatsapp_numbers.display_phone_number,
+                    bot_whatsapp_numbers.status AS whatsapp_status
+                FROM bots
+                LEFT JOIN clients ON clients.id = bots.client_id
+                LEFT JOIN bot_whatsapp_numbers ON bot_whatsapp_numbers.bot_id = bots.id
+                ORDER BY bots.created_at DESC
+                LIMIT $1
+                """,
+                limit,
+            )
+    return [dict(r) for r in rows]
+
+
+async def get_bot(bot_id: int) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                bots.*,
+                clients.name AS client_name,
+                bot_whatsapp_numbers.phone_number_id,
+                bot_whatsapp_numbers.display_phone_number,
+                bot_whatsapp_numbers.status AS whatsapp_status
+            FROM bots
+            LEFT JOIN clients ON clients.id = bots.client_id
+            LEFT JOIN bot_whatsapp_numbers ON bot_whatsapp_numbers.bot_id = bots.id
+            WHERE bots.id = $1
+            """,
+            bot_id,
+        )
+    return dict(row) if row else None
+
+
+async def create_bot(
+    client_id: int,
+    slug: str,
+    name: str,
+    description: str | None = None,
+    phone_number_id: str | None = None,
+    display_phone_number: str | None = None,
+) -> int:
+    async with _pool.acquire() as conn:
+        bot = await conn.fetchrow(
+            """
+            INSERT INTO bots(client_id, slug, name, description, openai_model)
+            VALUES($1, $2, $3, $4, $5)
+            ON CONFLICT (slug) DO UPDATE SET
+                client_id = EXCLUDED.client_id,
+                name = EXCLUDED.name,
+                description = EXCLUDED.description,
+                openai_model = EXCLUDED.openai_model,
+                updated_at = now()
+            RETURNING id
+            """,
+            client_id,
+            slug,
+            name,
+            description,
+            config.OPENAI_MODEL,
+        )
+        if phone_number_id:
+            await conn.execute(
+                """
+                INSERT INTO bot_whatsapp_numbers(bot_id, phone_number_id, display_phone_number)
+                VALUES($1, $2, $3)
+                ON CONFLICT (phone_number_id) DO UPDATE SET
+                    bot_id = EXCLUDED.bot_id,
+                    display_phone_number = EXCLUDED.display_phone_number,
+                    updated_at = now()
+                """,
+                bot["id"],
+                phone_number_id,
+                display_phone_number or "",
+            )
+    return int(bot["id"])
+
+
+async def list_client_users(client_id: int) -> list[dict]:
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT users.id, users.email, users.name, users.status, client_users.role
+            FROM client_users
+            JOIN users ON users.id = client_users.user_id
+            WHERE client_users.client_id = $1
+            ORDER BY users.email ASC
+            """,
+            client_id,
+        )
+    return [dict(r) for r in rows]
+
+
+async def create_client_user(
+    client_id: int,
+    email: str,
+    name: str | None,
+    password_hash: str,
+    role: str = "client_admin",
+) -> int:
+    async with _pool.acquire() as conn:
+        user = await conn.fetchrow(
+            """
+            INSERT INTO users(email, name, password_hash)
+            VALUES($1, $2, $3)
+            ON CONFLICT (email) DO UPDATE SET
+                name = COALESCE(EXCLUDED.name, users.name),
+                password_hash = EXCLUDED.password_hash,
+                status = 'active',
+                updated_at = now()
+            RETURNING id
+            """,
+            email.lower().strip(),
+            name,
+            password_hash,
+        )
+        await conn.execute(
+            """
+            INSERT INTO client_users(client_id, user_id, role)
+            VALUES($1, $2, $3)
+            ON CONFLICT (client_id, user_id) DO UPDATE SET role = EXCLUDED.role
+            """,
+            client_id,
+            user["id"],
+            role,
+        )
+    return int(user["id"])
+
+
+async def get_user_login(email: str) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                users.id AS user_id,
+                users.email,
+                users.name,
+                users.password_hash,
+                client_users.client_id,
+                client_users.role
+            FROM users
+            JOIN client_users ON client_users.user_id = users.id
+            WHERE users.email = $1
+              AND users.status = 'active'
+            ORDER BY client_users.created_at ASC
+            LIMIT 1
+            """,
+            email.lower().strip(),
         )
     return dict(row) if row else None

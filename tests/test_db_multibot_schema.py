@@ -44,6 +44,25 @@ class MultiBotSchemaTests(unittest.TestCase):
         self.assertIn("bot_id", inspect.signature(db.save_calendar_appointment).parameters)
         self.assertIn("bot_id", inspect.signature(db.list_active_calendar_appointments).parameters)
 
+    def test_dashboard_helpers_exist(self):
+        for name in (
+            "list_clients",
+            "get_client",
+            "create_client",
+            "list_bots",
+            "get_bot",
+            "create_bot",
+            "list_client_users",
+            "create_client_user",
+            "get_user_login",
+        ):
+            self.assertTrue(callable(getattr(db, name)))
+
+        self.assertIn("client_id", inspect.signature(db.list_bots).parameters)
+        self.assertIn("bot_id", inspect.signature(db.list_leads).parameters)
+        self.assertIn("bot_id", inspect.signature(db.admin_metrics).parameters)
+        self.assertIn("bot_id", inspect.signature(db.crm_counts).parameters)
+
 
 if __name__ == "__main__":
     unittest.main()

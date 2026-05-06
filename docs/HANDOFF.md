@@ -240,6 +240,16 @@ enrutamiento por `phone_number_id` sin cambiar el comportamiento publico de
 Asistto. El bot actual queda como fallback usando las variables globales de
 Easypanel.
 
+Phase 2 agrega el primer Dashboard Multi-Bot:
+
+- Login de agencia con `ADMIN_USER` / `ADMIN_PASSWORD`.
+- Login de usuarios cliente desde Postgres.
+- `/admin/clients` para crear clientes, bots y usuarios cliente.
+- `/admin/bots` y `/admin/bots/{bot_id}` para operar bots.
+- Usuarios cliente solo ven bots de su `client_id`.
+- Las paginas actuales de conversaciones, dashboard y CRM se filtran por bot
+  cuando entra un usuario cliente.
+
 ## Prompt Para Continuar En Otra Computadora
 
 Copia este prompt en una nueva sesion de Codex:

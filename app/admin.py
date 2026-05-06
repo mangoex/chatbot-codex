@@ -1,21 +1,61 @@
 """Admin frontend: login, dashboard, conversations, CRM and escalations."""
 import html
+import re
 import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from app import config, db
+from app import auth, config, db
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-def _require_login(request: Request) -> str:
+def _require_login(request: Request) -> dict:
     user = request.session.get("user")
     if not user:
         raise HTTPException(status_code=302, headers={"Location": "/admin/login"})
-    return user
+    return {
+        "user": user,
+        "role": request.session.get("role", "agency_admin"),
+        "client_id": request.session.get("client_id"),
+        "user_id": request.session.get("user_id"),
+        "name": request.session.get("name") or user,
+    }
+
+
+def _is_agency(session: dict) -> bool:
+    return session.get("role") == "agency_admin"
+
+
+def _require_agency(request: Request) -> dict:
+    session = _require_login(request)
+    if not _is_agency(session):
+        raise HTTPException(status_code=403, detail="Solo agencia")
+    return session
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", value.lower().strip())
+    return slug.strip("-") or "cliente"
+
+
+async def _first_allowed_bot(session: dict) -> dict | None:
+    bots = await db.list_bots(
+        client_id=None if _is_agency(session) else int(session["client_id"]),
+        limit=1,
+    )
+    return bots[0] if bots else None
+
+
+async def _require_bot_access(session: dict, bot_id: int) -> dict:
+    bot = await db.get_bot(bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot no encontrado")
+    if not _is_agency(session) and bot.get("client_id") != session.get("client_id"):
+        raise HTTPException(status_code=403, detail="Sin acceso a este bot")
+    return bot
 
 
 def _fmt_dt(value: datetime | None) -> str:
@@ -201,6 +241,7 @@ ICONS = {
     "chat": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/></svg>',
     "crm": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
     "alert": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>',
+    "building": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M9 7h1"/><path d="M14 7h1"/><path d="M9 11h1"/><path d="M14 11h1"/><path d="M9 15h1"/><path d="M14 15h1"/></svg>',
     "out": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>',
     "wa": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 11.5a8 8 0 0 1-11.9 7L4 20l1.5-4A8 8 0 1 1 20 11.5Z"/><path d="M9 8.8c.4 2 1.9 3.5 4.2 4.3l1.3-1.1 1.8.4c.2 1.2-.6 2.3-1.8 2.3-3.5-.1-6.2-2.8-6.5-6.2C8 7.3 9.2 6.6 10.3 7l.4 1.7L9 8.8Z"/></svg>',
 }
@@ -209,6 +250,8 @@ ICONS = {
 def _nav(active: str) -> str:
     items = [
         ("dashboard", "Dashboard", "/admin/dashboard", ICONS["dashboard"]),
+        ("clients", "Clientes", "/admin/clients", ICONS["building"]),
+        ("bots", "Bots", "/admin/bots", ICONS["building"]),
         ("conversations", "Conversaciones", "/admin/conversations", ICONS["chat"]),
         ("crm", "CRM", "/admin/crm", ICONS["crm"]),
         ("escalations", "Escalaciones", "/admin/escalations", ICONS["alert"]),
@@ -284,6 +327,18 @@ async def login_submit(
     ok_pass = secrets.compare_digest(password, config.ADMIN_PASSWORD)
     if ok_user and ok_pass and config.ADMIN_USER and config.ADMIN_PASSWORD:
         request.session["user"] = username
+        request.session["role"] = "agency_admin"
+        request.session["client_id"] = None
+        request.session["user_id"] = None
+        request.session["name"] = username
+        return RedirectResponse("/admin/dashboard", status_code=302)
+    user = await db.get_user_login(username)
+    if user and auth.verify_password(password, user.get("password_hash")):
+        request.session["user"] = user["email"]
+        request.session["role"] = user["role"]
+        request.session["client_id"] = user["client_id"]
+        request.session["user_id"] = user["user_id"]
+        request.session["name"] = user.get("name") or user["email"]
         return RedirectResponse("/admin/dashboard", status_code=302)
     return RedirectResponse(
         "/admin/login?error=" + "Usuario+o+contrasena+incorrectos",
@@ -302,14 +357,218 @@ async def root(request: Request):
     return RedirectResponse("/admin/dashboard", status_code=302)
 
 
+@router.get("/clients", response_class=HTMLResponse)
+async def clients_page(request: Request):
+    _require_agency(request)
+    clients = await db.list_clients()
+    rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(c["name"])}</strong><br><span class="muted">{html.escape(c["slug"])}</span></td>
+          <td><span class="badge b-calificado">{int(c.get("bot_count") or 0)} bots</span></td>
+          <td><span class="badge">{html.escape(c.get("status") or "active")}</span></td>
+          <td><a class="btn secondary" href="/admin/clients/{c["id"]}">Ver</a></td>
+        </tr>
+        """
+        for c in clients
+    ) or '<tr><td colspan="4" class="empty">Aun no hay clientes.</td></tr>'
+    body = f"""
+    <div class="topbar"><div><h1>Clientes</h1><div class="sub">Cuentas de negocio con uno o mas bots de WhatsApp.</div></div></div>
+    <section class="grid split">
+      <div class="table-wrap"><table><thead><tr><th>Cliente</th><th>Bots</th><th>Estado</th><th></th></tr></thead><tbody>{rows}</tbody></table></div>
+      <div class="panel">
+        <h2>Crear cliente</h2>
+        <form method="post" action="/admin/clients">
+          <label>Nombre</label><input name="name" placeholder="Clinica Demo" required>
+          <label>Slug</label><input name="slug" placeholder="clinica-demo">
+          <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Crear cliente</button></div>
+        </form>
+      </div>
+    </section>
+    """
+    return HTMLResponse(_layout("Clientes", "clients", body))
+
+
+@router.post("/clients")
+async def create_client_page(request: Request, name: str = Form(...), slug: str = Form("")):
+    _require_agency(request)
+    clean_slug = _slugify(slug or name)
+    client_id = await db.create_client(name.strip(), clean_slug)
+    return RedirectResponse(f"/admin/clients/{client_id}", status_code=302)
+
+
+@router.get("/clients/{client_id}", response_class=HTMLResponse)
+async def client_detail(request: Request, client_id: int):
+    _require_agency(request)
+    client = await db.get_client(client_id)
+    if not client:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    bots = await db.list_bots(client_id=client_id)
+    users = await db.list_client_users(client_id)
+    bot_rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(b["name"])}</strong><br><span class="muted">{html.escape(b["slug"])}</span></td>
+          <td>{html.escape(b.get("display_phone_number") or b.get("phone_number_id") or "-")}</td>
+          <td><span class="badge">{html.escape(b.get("status") or "active")}</span></td>
+          <td><a class="btn secondary" href="/admin/bots/{b["id"]}">Abrir</a></td>
+        </tr>
+        """
+        for b in bots
+    ) or '<tr><td colspan="4" class="empty">Este cliente aun no tiene bots.</td></tr>'
+    user_rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(u.get("name") or u["email"])}</strong><br><span class="muted">{html.escape(u["email"])}</span></td>
+          <td><span class="badge">{html.escape(u["role"])}</span></td>
+          <td>{html.escape(u.get("status") or "active")}</td>
+        </tr>
+        """
+        for u in users
+    ) or '<tr><td colspan="3" class="empty">Sin usuarios cliente.</td></tr>'
+    body = f"""
+    <div class="topbar"><div><a class="sub" href="/admin/clients">Volver</a><h1>{html.escape(client["name"])}</h1><div class="sub">{html.escape(client["slug"])}</div></div></div>
+    <section class="grid split">
+      <div class="table-wrap"><table><thead><tr><th>Bot</th><th>WhatsApp</th><th>Estado</th><th></th></tr></thead><tbody>{bot_rows}</tbody></table></div>
+      <div class="panel">
+        <h2>Crear bot</h2>
+        <form method="post" action="/admin/bots">
+          <input type="hidden" name="client_id" value="{client_id}">
+          <label>Nombre del bot</label><input name="name" placeholder="Bot Clinica Demo" required>
+          <label>Slug</label><input name="slug" placeholder="bot-clinica-demo">
+          <label>Phone Number ID</label><input name="phone_number_id" placeholder="1234567890">
+          <label>Numero visible</label><input name="display_phone_number" placeholder="+52...">
+          <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Crear bot</button></div>
+        </form>
+      </div>
+    </section>
+    <section class="grid split" style="margin-top:14px">
+      <div class="table-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th></tr></thead><tbody>{user_rows}</tbody></table></div>
+      <div class="panel">
+        <h2>Crear usuario cliente</h2>
+        <form method="post" action="/admin/clients/{client_id}/users">
+          <label>Email</label><input name="email" type="email" required>
+          <label>Nombre</label><input name="name">
+          <label>Contrasena temporal</label><input name="password" type="password" required>
+          <label>Rol</label><select name="role"><option value="client_admin">Admin cliente</option><option value="client_viewer">Solo lectura</option></select>
+          <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Crear usuario</button></div>
+        </form>
+      </div>
+    </section>
+    """
+    return HTMLResponse(_layout("Cliente", "clients", body))
+
+
+@router.post("/clients/{client_id}/users")
+async def create_client_user_page(
+    request: Request,
+    client_id: int,
+    email: str = Form(...),
+    name: str = Form(""),
+    password: str = Form(...),
+    role: str = Form("client_admin"),
+):
+    _require_agency(request)
+    if role not in ("client_admin", "client_viewer"):
+        raise HTTPException(status_code=400, detail="Rol invalido")
+    await db.create_client_user(
+        client_id,
+        email,
+        name.strip() or None,
+        auth.hash_password(password),
+        role,
+    )
+    return RedirectResponse(f"/admin/clients/{client_id}", status_code=302)
+
+
+@router.get("/bots", response_class=HTMLResponse)
+async def bots_page(request: Request):
+    session = _require_login(request)
+    client_id = None if _is_agency(session) else int(session["client_id"])
+    bots = await db.list_bots(client_id=client_id)
+    rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(b["name"])}</strong><br><span class="muted">{html.escape(b["slug"])}</span></td>
+          <td>{html.escape(b.get("client_name") or "-")}</td>
+          <td>{html.escape(b.get("display_phone_number") or b.get("phone_number_id") or "-")}</td>
+          <td><span class="badge">{html.escape(b.get("status") or "active")}</span></td>
+          <td><a class="btn secondary" href="/admin/bots/{b["id"]}">Abrir</a></td>
+        </tr>
+        """
+        for b in bots
+    ) or '<tr><td colspan="5" class="empty">No hay bots disponibles.</td></tr>'
+    body = f"""
+    <div class="topbar"><div><h1>Bots</h1><div class="sub">Bots de WhatsApp configurados en esta instalacion.</div></div></div>
+    <section class="table-wrap"><table><thead><tr><th>Bot</th><th>Cliente</th><th>WhatsApp</th><th>Estado</th><th></th></tr></thead><tbody>{rows}</tbody></table></section>
+    """
+    return HTMLResponse(_layout("Bots", "bots", body))
+
+
+@router.post("/bots")
+async def create_bot_page(
+    request: Request,
+    client_id: int = Form(...),
+    name: str = Form(...),
+    slug: str = Form(""),
+    phone_number_id: str = Form(""),
+    display_phone_number: str = Form(""),
+):
+    _require_agency(request)
+    bot_id = await db.create_bot(
+        client_id=client_id,
+        slug=_slugify(slug or name),
+        name=name.strip(),
+        phone_number_id=phone_number_id.strip() or None,
+        display_phone_number=display_phone_number.strip() or None,
+    )
+    return RedirectResponse(f"/admin/bots/{bot_id}", status_code=302)
+
+
+@router.get("/bots/{bot_id}", response_class=HTMLResponse)
+async def bot_detail(request: Request, bot_id: int):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    metrics = await db.admin_metrics(bot_id=bot_id)
+    threads = await db.list_conversation_threads(limit=8, bot_id=bot_id)
+    lead_rows = await db.list_leads(limit=8, bot_id=bot_id)
+    thread_html = "".join(
+        f"<tr><td><strong>{html.escape(t['wa_id'])}</strong><br><span class='muted'>{html.escape(_clip(t.get('last_content'), 80))}</span></td><td>{_fmt_dt(t.get('last_message_at'))}</td><td><a class='btn secondary' href='/admin/conversations?bot_id={bot_id}&wa_id={html.escape(t['wa_id'])}'>Ver</a></td></tr>"
+        for t in threads
+    ) or '<tr><td colspan="3" class="empty">Sin conversaciones.</td></tr>'
+    leads_html = "".join(
+        f"<tr><td><strong>{html.escape(_display_name(l.get('nombre'), l['wa_id']))}</strong><br><span class='muted'>{html.escape(l['wa_id'])}</span></td><td><span class='badge b-{html.escape(l['qualification_status'])}'>{html.escape(l['qualification_status'].replace('_', ' '))}</span></td></tr>"
+        for l in lead_rows
+    ) or '<tr><td colspan="2" class="empty">Sin leads.</td></tr>'
+    body = f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots">Volver</a><h1>{html.escape(bot["name"])}</h1><div class="sub">{html.escape(bot.get("client_name") or "-")} - {html.escape(bot.get("phone_number_id") or "sin phone_number_id")}</div></div>
+      <span class="badge">{html.escape(bot.get("status") or "active")}</span>
+    </div>
+    <section class="grid kpis">
+      <div class="card"><div class="k">Conversaciones</div><div class="n">{metrics.get("conversations", 0)}</div></div>
+      <div class="card"><div class="k">Mensajes</div><div class="n">{metrics.get("messages", 0)}</div></div>
+      <div class="card"><div class="k">Leads</div><div class="n">{metrics.get("leads", 0)}</div></div>
+      <div class="card"><div class="k">Calificados</div><div class="n">{metrics.get("qualified", 0)}</div></div>
+    </section>
+    <section class="grid split" style="margin-top:14px">
+      <div class="table-wrap"><table><thead><tr><th>Conversacion</th><th>Ultimo</th><th></th></tr></thead><tbody>{thread_html}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Lead</th><th>Estado</th></tr></thead><tbody>{leads_html}</tbody></table></div>
+    </section>
+    """
+    return HTMLResponse(_layout("Bot", "bots", body))
+
+
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    _require_login(request)
+    session = _require_login(request)
     await db.qualify_leads_with_action_link(config.QUALIFIED_CTA_URL)
-    metrics = await db.admin_metrics()
-    crm_counts = await db.crm_counts()
+    scoped_bot = None if _is_agency(session) else await _first_allowed_bot(session)
+    scoped_bot_id = scoped_bot["id"] if scoped_bot else None
+    metrics = await db.admin_metrics(bot_id=scoped_bot_id)
+    crm_counts = await db.crm_counts(bot_id=scoped_bot_id)
     escalation_counts = await db.escalation_counts()
-    latest = await db.list_conversation_threads(limit=5)
+    latest = await db.list_conversation_threads(limit=5, bot_id=scoped_bot_id)
 
     qualified = int(metrics.get("qualified") or 0)
     leads = int(metrics.get("leads") or 0)
@@ -371,13 +630,19 @@ async def dashboard(request: Request):
 
 
 @router.get("/conversations", response_class=HTMLResponse)
-async def conversations(request: Request, wa_id: str | None = None):
-    _require_login(request)
+async def conversations(request: Request, wa_id: str | None = None, bot_id: int | None = None):
+    session = _require_login(request)
     await db.qualify_leads_with_action_link(config.QUALIFIED_CTA_URL)
-    threads = await db.list_conversation_threads(limit=100)
+    if bot_id:
+        await _require_bot_access(session, bot_id)
+    elif not _is_agency(session):
+        bot = await _first_allowed_bot(session)
+        bot_id = bot["id"] if bot else None
+    threads = await db.list_conversation_threads(limit=100, bot_id=bot_id)
     selected = wa_id or (threads[0]["wa_id"] if threads else None)
-    messages = await db.list_conversation_messages(selected, limit=120) if selected else []
-    lead = await db.get_lead(selected) if selected else None
+    messages = await db.list_conversation_messages(selected, limit=120, bot_id=bot_id) if selected else []
+    lead = await db.get_lead(selected, bot_id=bot_id) if selected else None
+    bot_qs = f"&bot_id={bot_id}" if bot_id else ""
 
     thread_rows = "".join(
         f"""
@@ -385,7 +650,7 @@ async def conversations(request: Request, wa_id: str | None = None):
           <td><strong>{html.escape(_display_name(t.get("nombre"), t["wa_id"]))}</strong><br><span class="muted">{html.escape(_clip(t.get("last_content"), 70))}</span></td>
           <td><span class="badge b-{html.escape(t.get("qualification_status") or "en_progreso")}">{html.escape((t.get("qualification_status") or "en_progreso").replace("_", " "))}</span></td>
           <td>{_fmt_dt(t.get("last_message_at"))}</td>
-          <td><a class="btn secondary" href="/admin/conversations?wa_id={html.escape(t["wa_id"])}">Ver</a></td>
+          <td><a class="btn secondary" href="/admin/conversations?wa_id={html.escape(t["wa_id"])}{bot_qs}">Ver</a></td>
         </tr>
         """
         for t in threads
@@ -428,12 +693,14 @@ async def conversations(request: Request, wa_id: str | None = None):
 
 @router.get("/crm", response_class=HTMLResponse)
 async def crm(request: Request, status: str = "en_progreso"):
-    _require_login(request)
+    session = _require_login(request)
     await db.qualify_leads_with_action_link(config.QUALIFIED_CTA_URL)
     if status not in ("en_progreso", "calificado", "descalificado", "todos"):
         status = "en_progreso"
-    counts = await db.crm_counts()
-    leads = await db.list_leads(None if status == "todos" else status, limit=200)
+    scoped_bot = None if _is_agency(session) else await _first_allowed_bot(session)
+    scoped_bot_id = scoped_bot["id"] if scoped_bot else None
+    counts = await db.crm_counts(bot_id=scoped_bot_id)
+    leads = await db.list_leads(None if status == "todos" else status, limit=200, bot_id=scoped_bot_id)
     tabs = [
         ("en_progreso", "No cualificados"),
         ("calificado", "Calificados"),
@@ -478,7 +745,7 @@ async def crm_update_status(
     wa_id: str,
     status: str = Form(...),
 ):
-    _require_login(request)
+    _require_agency(request)
     if status not in ("en_progreso", "calificado", "descalificado"):
         raise HTTPException(400, "Estado invalido")
     await db.update_lead_status(
@@ -491,7 +758,7 @@ async def crm_update_status(
 
 @router.get("/escalations", response_class=HTMLResponse)
 async def escalations(request: Request, status: str = "pendiente"):
-    _require_login(request)
+    _require_agency(request)
     if status not in ("pendiente", "en_proceso", "resuelto", "todos"):
         status = "pendiente"
     counts = await db.escalation_counts()
@@ -553,7 +820,7 @@ def _escalation_row(r: dict) -> str:
 
 @router.get("/escalations/{eid}", response_class=HTMLResponse)
 async def escalation_detail(request: Request, eid: int):
-    _require_login(request)
+    _require_agency(request)
     e = await db.get_escalation(eid)
     if not e:
         raise HTTPException(404, "Escalacion no encontrada")
@@ -607,7 +874,7 @@ async def escalation_update(
     status: str = Form(...),
     notes: str = Form(""),
 ):
-    _require_login(request)
+    _require_agency(request)
     if status not in ("pendiente", "en_proceso", "resuelto"):
         raise HTTPException(400, "Estado invalido")
     await db.update_escalation_status(eid, status, notes=notes or None)

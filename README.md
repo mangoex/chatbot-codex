@@ -79,6 +79,13 @@ Asistto sigue siendo el bot por defecto y usa las variables globales de entorno.
 Los nuevos bots viviran en Postgres y los mensajes entrantes de WhatsApp se
 enrutaran por el `phone_number_id` de Meta.
 
+La primera version del panel multi-bot agrega:
+
+- `GET /admin/clients`: clientes y usuarios cliente.
+- `GET /admin/bots`: bots disponibles por agencia o cliente.
+- `GET /admin/bots/{bot_id}`: detalle del bot con conversaciones y leads.
+- Login de clientes con usuarios guardados en Postgres.
+
 ## 3. Agenda con Google Calendar
 
 La agenda es opcional. Para activarla configura en Easypanel:
