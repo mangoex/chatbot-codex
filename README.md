@@ -89,6 +89,7 @@ La primera version del panel multi-bot agrega:
 - `GET /admin/bots/{bot_id}/knowledge`: base de conocimiento del bot.
 - `GET /admin/bots/{bot_id}/integrations`: integraciones del bot con APIs,
   calendarios, CRMs o webhooks.
+- `GET /admin/bots/{bot_id}/skills`: habilidades runtime activas para el bot.
 - Login de clientes con usuarios guardados en Postgres.
 
 Si un bot tiene prompt o conocimiento activo en Postgres, el runtime lo usa en
@@ -196,6 +197,30 @@ Usa `ADMIN_USER` y `ADMIN_PASSWORD`.
 Desde el detalle de cada bot puedes editar su prompt, base de conocimiento e
 integraciones. Los secretos de integraciones se guardan cifrados en Postgres con
 `INTEGRATION_SECRET_KEY` y no se muestran de vuelta en el panel.
+
+La primera habilidad runtime es `google_calendar`. Si existe una integracion
+activa de tipo `google_calendar`, el bot usa sus credenciales y config:
+
+```json
+{
+  "client_id": "google-oauth-client-id",
+  "calendar_id": "primary",
+  "timezone": "America/Chihuahua",
+  "duration_minutes": 30,
+  "buffer_minutes": 0,
+  "summary_prefix": "Llamada cliente"
+}
+```
+
+Guarda como secretos de esa integracion:
+
+```text
+client_secret
+refresh_token
+```
+
+Si no existe integracion `google_calendar` para el bot, se conserva el fallback
+global de variables `GOOGLE_*`.
 
 ## Seguridad
 

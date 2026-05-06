@@ -580,6 +580,7 @@ async def bot_detail(request: Request, bot_id: int):
         <a class="btn secondary" href="/admin/bots/{bot_id}/prompt">Editar prompt</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/knowledge">Base de conocimiento</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/integrations">Integraciones</a>
+        <a class="btn secondary" href="/admin/bots/{bot_id}/skills">Habilidades</a>
       </div>
     </section>
     <section class="grid kpis">
@@ -1041,6 +1042,82 @@ async def delete_bot_integration_secret_page(
         f"/admin/bots/{bot_id}/integrations/{integration_id}?saved=1",
         status_code=302,
     )
+
+
+SKILL_TYPES = (
+    ("google_calendar", "Google Calendar"),
+)
+
+
+def _default_skill_config(skill_type: str) -> dict:
+    if skill_type == "google_calendar":
+        return {"mode": "schedule_and_cancel"}
+    return {}
+
+
+@router.get("/bots/{bot_id}/skills", response_class=HTMLResponse)
+async def bot_skills_page(request: Request, bot_id: int, saved: str | None = None):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    rows = {row["skill_type"]: row for row in await db.list_bot_skills(bot_id)}
+    can_edit = _is_agency(session) or session.get("role") == "client_admin"
+    cards = []
+    for skill_type, label in SKILL_TYPES:
+        row = rows.get(skill_type)
+        enabled = True if row is None else bool(row.get("enabled"))
+        cfg = row.get("config") if row else _default_skill_config(skill_type)
+        checked = "checked" if enabled else ""
+        disabled = "" if can_edit else "disabled"
+        readonly = "" if can_edit else "readonly"
+        button = (
+            '<button class="btn" type="submit">Guardar habilidad</button>'
+            if can_edit else
+            '<span class="badge">Solo lectura</span>'
+        )
+        cards.append(
+            f"""
+            <div class="panel editor">
+              <h2>{html.escape(label)}</h2>
+              <form method="post" action="/admin/bots/{bot_id}/skills/{html.escape(skill_type)}">
+                <label><input type="checkbox" name="enabled" {checked} {disabled} style="width:auto"> Activa</label>
+                <label>Config JSON</label><textarea class="short" name="config_json" {readonly} required>{html.escape(_pretty_json(cfg))}</textarea>
+                <div class="actions" style="margin-top:14px">{button}</div>
+              </form>
+            </div>
+            """
+        )
+    notice = '<div class="trend">Cambios guardados.</div>' if saved else ""
+    body = f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots/{bot_id}">Volver</a><h1>Habilidades</h1><div class="sub">{html.escape(bot["name"])} ejecuta estas capacidades durante la conversacion.</div>{notice}</div>
+    </div>
+    <section class="grid split">
+      {''.join(cards)}
+    </section>
+    """
+    return HTMLResponse(_layout("Habilidades", "bots", body))
+
+
+@router.post("/bots/{bot_id}/skills/{skill_type}")
+async def update_bot_skill_page(
+    request: Request,
+    bot_id: int,
+    skill_type: str,
+    config_json: str = Form("{}"),
+    enabled: str | None = Form(None),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    allowed = {item[0] for item in SKILL_TYPES}
+    if skill_type not in allowed:
+        raise HTTPException(status_code=404, detail="Habilidad no soportada")
+    await db.upsert_bot_skill(
+        bot_id=bot_id,
+        skill_type=skill_type,
+        enabled=enabled == "on",
+        config_data=_parse_config_json(config_json),
+    )
+    return RedirectResponse(f"/admin/bots/{bot_id}/skills?saved=1", status_code=302)
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
