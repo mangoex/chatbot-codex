@@ -84,7 +84,13 @@ La primera version del panel multi-bot agrega:
 - `GET /admin/clients`: clientes y usuarios cliente.
 - `GET /admin/bots`: bots disponibles por agencia o cliente.
 - `GET /admin/bots/{bot_id}`: detalle del bot con conversaciones y leads.
+- `GET /admin/bots/{bot_id}/prompt`: editor del prompt activo del bot.
+- `GET /admin/bots/{bot_id}/knowledge`: base de conocimiento del bot.
 - Login de clientes con usuarios guardados en Postgres.
+
+Si un bot tiene prompt o conocimiento activo en Postgres, el runtime lo usa en
+las respuestas de WhatsApp. Si no tiene contenido propio, conserva el fallback
+de `prompts/system.md` y `prompts/knowledge/`.
 
 ## 3. Agenda con Google Calendar
 

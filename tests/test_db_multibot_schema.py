@@ -63,6 +63,22 @@ class MultiBotSchemaTests(unittest.TestCase):
         self.assertIn("bot_id", inspect.signature(db.admin_metrics).parameters)
         self.assertIn("bot_id", inspect.signature(db.crm_counts).parameters)
 
+    def test_bot_content_helpers_exist(self):
+        for name in (
+            "get_active_bot_prompt",
+            "publish_bot_prompt",
+            "list_bot_knowledge",
+            "get_bot_knowledge",
+            "create_bot_knowledge",
+            "update_bot_knowledge",
+            "archive_bot_knowledge",
+        ):
+            self.assertTrue(callable(getattr(db, name)))
+
+        self.assertIn("bot_id", inspect.signature(db.get_active_bot_prompt).parameters)
+        self.assertIn("content", inspect.signature(db.publish_bot_prompt).parameters)
+        self.assertIn("active_only", inspect.signature(db.list_bot_knowledge).parameters)
+
 
 if __name__ == "__main__":
     unittest.main()

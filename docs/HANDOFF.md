@@ -250,6 +250,16 @@ Phase 2 agrega el primer Dashboard Multi-Bot:
 - Las paginas actuales de conversaciones, dashboard y CRM se filtran por bot
   cuando entra un usuario cliente.
 
+Phase 3A agrega configuracion editable del agente por bot:
+
+- `/admin/bots/{bot_id}/prompt` publica el prompt activo en Postgres.
+- `/admin/bots/{bot_id}/knowledge` crea y lista documentos de conocimiento.
+- `/admin/bots/{bot_id}/knowledge/{knowledge_id}` edita o archiva documentos.
+- El runtime usa prompt/conocimiento activo por `bot_id`; si un bot no tiene
+  contenido propio, conserva el fallback de archivos versionados.
+- La agencia y los usuarios `client_admin` pueden editar. `client_viewer` tiene
+  acceso de solo lectura.
+
 ## Prompt Para Continuar En Otra Computadora
 
 Copia este prompt en una nueva sesion de Codex:

@@ -1044,6 +1044,136 @@ async def create_bot(
     return int(bot["id"])
 
 
+async def get_active_bot_prompt(bot_id: int) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT *
+            FROM bot_prompts
+            WHERE bot_id = $1 AND status = 'active'
+            ORDER BY version DESC, published_at DESC NULLS LAST, created_at DESC
+            LIMIT 1
+            """,
+            bot_id,
+        )
+    return dict(row) if row else None
+
+
+async def publish_bot_prompt(bot_id: int, content: str) -> int:
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            version = await conn.fetchval(
+                "SELECT COALESCE(MAX(version), 0) + 1 FROM bot_prompts WHERE bot_id = $1",
+                bot_id,
+            )
+            await conn.execute(
+                """
+                UPDATE bot_prompts
+                SET status = 'archived'
+                WHERE bot_id = $1 AND status = 'active'
+                """,
+                bot_id,
+            )
+            row = await conn.fetchrow(
+                """
+                INSERT INTO bot_prompts(bot_id, version, status, content, published_at)
+                VALUES($1, $2, 'active', $3, now())
+                RETURNING id
+                """,
+                bot_id,
+                int(version or 1),
+                content,
+            )
+    return int(row["id"])
+
+
+async def list_bot_knowledge(
+    bot_id: int,
+    active_only: bool = True,
+) -> list[dict]:
+    query = """
+        SELECT *
+        FROM bot_knowledge
+        WHERE bot_id = $1
+    """
+    if active_only:
+        query += " AND status = 'active'"
+    query += " ORDER BY updated_at DESC, created_at DESC"
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(query, bot_id)
+    return [dict(r) for r in rows]
+
+
+async def get_bot_knowledge(bot_id: int, knowledge_id: int) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT *
+            FROM bot_knowledge
+            WHERE bot_id = $1 AND id = $2
+            """,
+            bot_id,
+            knowledge_id,
+        )
+    return dict(row) if row else None
+
+
+async def create_bot_knowledge(bot_id: int, title: str, content: str) -> int:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO bot_knowledge(bot_id, title, content, status)
+            VALUES($1, $2, $3, 'active')
+            RETURNING id
+            """,
+            bot_id,
+            title,
+            content,
+        )
+    return int(row["id"])
+
+
+async def update_bot_knowledge(
+    bot_id: int,
+    knowledge_id: int,
+    title: str,
+    content: str,
+    status: str = "active",
+) -> bool:
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE bot_knowledge
+            SET title = $3,
+                content = $4,
+                status = $5,
+                updated_at = now()
+            WHERE bot_id = $1 AND id = $2
+            """,
+            bot_id,
+            knowledge_id,
+            title,
+            content,
+            status,
+        )
+    return result.endswith(" 1") if result else False
+
+
+async def archive_bot_knowledge(bot_id: int, knowledge_id: int) -> bool:
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE bot_knowledge
+            SET status = 'archived',
+                updated_at = now()
+            WHERE bot_id = $1 AND id = $2
+            """,
+            bot_id,
+            knowledge_id,
+        )
+    return result.endswith(" 1") if result else False
+
+
 async def list_client_users(client_id: int) -> list[dict]:
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
