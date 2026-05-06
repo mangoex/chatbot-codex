@@ -581,6 +581,7 @@ async def bot_detail(request: Request, bot_id: int):
         <a class="btn secondary" href="/admin/bots/{bot_id}/knowledge">Base de conocimiento</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/integrations">Integraciones</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/skills">Habilidades</a>
+        <a class="btn secondary" href="/admin/calendar-status?bot_id={bot_id}">Probar calendario</a>
       </div>
     </section>
     <section class="grid kpis">
