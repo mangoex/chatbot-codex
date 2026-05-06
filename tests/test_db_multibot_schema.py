@@ -79,6 +79,23 @@ class MultiBotSchemaTests(unittest.TestCase):
         self.assertIn("content", inspect.signature(db.publish_bot_prompt).parameters)
         self.assertIn("active_only", inspect.signature(db.list_bot_knowledge).parameters)
 
+    def test_integration_helpers_exist(self):
+        for name in (
+            "list_bot_integrations",
+            "get_bot_integration",
+            "create_bot_integration",
+            "update_bot_integration",
+            "archive_bot_integration",
+            "list_integration_secrets",
+            "upsert_integration_secret",
+            "delete_integration_secret",
+        ):
+            self.assertTrue(callable(getattr(db, name)))
+
+        self.assertIn("bot_id", inspect.signature(db.list_bot_integrations).parameters)
+        self.assertIn("config_data", inspect.signature(db.create_bot_integration).parameters)
+        self.assertIn("encrypted_value", inspect.signature(db.upsert_integration_secret).parameters)
+
 
 if __name__ == "__main__":
     unittest.main()
