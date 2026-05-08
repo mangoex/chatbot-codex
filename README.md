@@ -73,6 +73,9 @@ prompts/knowledge/
 El sistema guarda el mensaje entrante en el admin antes de llamar al modelo. Si la IA tarda,
 la conversacion aparece de inmediato y la respuesta se agrega cuando esta lista.
 
+Para operar bots por cliente desde el panel, usa el manual paso a paso:
+[docs/MANUAL_AGENTES_WHATSAPP.md](docs/MANUAL_AGENTES_WHATSAPP.md).
+
 ## Multi-bot foundation
 
 La app esta avanzando hacia una arquitectura multi-cliente. El bot actual de
@@ -218,6 +221,61 @@ Guarda como secretos de esa integracion:
 client_secret
 refresh_token
 ```
+
+Tambien puedes activar habilidades por cliente para conectar APIs externas,
+webhooks o CRMs. El flujo es:
+
+1. Crea una integracion en `/admin/bots/{bot_id}/integrations`.
+2. Guarda la configuracion publica en JSON.
+3. Guarda tokens o API keys en `Guardar secreto`.
+4. Activa la habilidad correspondiente en `/admin/bots/{bot_id}/skills`.
+5. Ajusta el prompt del bot para que use la habilidad solo cuando el caso lo
+   requiera.
+
+Ejemplo de integracion `webhook`:
+
+```json
+{
+  "url": "https://hooks.example.com/whatsapp-lead",
+  "headers": {
+    "X-Source": "asistto"
+  },
+  "timeout_seconds": 20
+}
+```
+
+Secretos sugeridos:
+
+```text
+access_token
+api_key
+```
+
+Ejemplo de integracion `external_api`:
+
+```json
+{
+  "base_url": "https://api.example.com",
+  "allowed_methods": ["GET", "POST"],
+  "auth_header": "Authorization",
+  "auth_scheme": "Bearer",
+  "timeout_seconds": 20
+}
+```
+
+El runtime soporta marcadores internos que el modelo agrega al final de su
+respuesta y que nunca se muestran al usuario:
+
+```text
+[[WEBHOOK_POST: {"payload": {"name": "Miguel", "phone": "521..."}}]]
+[[EXTERNAL_API_REQUEST: {"method": "GET", "path": "/clientes", "params": {"phone": "521..."}}]]
+[[EXTERNAL_API_REQUEST: {"method": "POST", "path": "/leads", "json": {"name": "Miguel"}}]]
+[[CRM_LEAD: {"name": "Miguel", "phone": "521...", "status": "new", "notes": "Quiere una cita"}}]]
+```
+
+Por seguridad, las habilidades `webhook`, `external_api` y `crm` nacen apagadas
+en cada bot. Solo ejecutan llamadas si la habilidad esta activa y existe una
+integracion activa del mismo tipo.
 
 Si no existe integracion `google_calendar` para el bot, se conserva el fallback
 global de variables `GOOGLE_*`.

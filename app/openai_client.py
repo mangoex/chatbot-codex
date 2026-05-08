@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 
 import tiktoken
 from openai import AsyncOpenAI
-from app import bot_content, config
+from app import bot_content, config, external_actions
 
 _client: AsyncOpenAI | None = None
 
@@ -56,6 +56,9 @@ def _runtime_context() -> str:
 
 async def _system_prompt(bot_id: int | None = None) -> str:
     prompt = await bot_content.system_prompt_for_bot(bot_id)
+    extra = await external_actions.system_instructions(bot_id)
+    if extra:
+        return f"{prompt}\n\n--- contexto_runtime ---\n{_runtime_context()}\n\n{extra}"
     return f"{prompt}\n\n--- contexto_runtime ---\n{_runtime_context()}"
 
 

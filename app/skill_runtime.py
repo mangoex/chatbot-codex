@@ -26,3 +26,14 @@ async def skill_enabled(
 async def calendar_skill_enabled(bot_id: int | None) -> bool:
     return await skill_enabled(bot_id, "google_calendar", default=True)
 
+
+async def webhook_skill_enabled(bot_id: int | None) -> bool:
+    return await skill_enabled(bot_id, "webhook", default=False)
+
+
+async def external_api_skill_enabled(bot_id: int | None) -> bool:
+    return await skill_enabled(bot_id, "external_api", default=False)
+
+
+async def crm_skill_enabled(bot_id: int | None) -> bool:
+    return await skill_enabled(bot_id, "crm", default=False)
