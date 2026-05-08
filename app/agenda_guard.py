@@ -60,10 +60,17 @@ _NAME_ONLY_RE = re.compile(
     r"([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){1,3})\s*$",
     re.IGNORECASE,
 )
-_ASKED_NAME_RE = re.compile(r"\b(nombre completo|dime tu nombre|tu nombre)\b", re.IGNORECASE)
+_ASKED_NAME_RE = re.compile(
+    r"\b(nombre completo|dime tu nombre|tu nombre|a nombre de qui[eé]n|nombre)\b",
+    re.IGNORECASE,
+)
 _ASKED_DATETIME_RE = re.compile(r"\b(d[ií]a y hora|fecha y hora|qu[eé] d[ií]a|qu[eé] hora)\b", re.IGNORECASE)
 _RESCHEDULE_DATETIME_PROMPT_RE = re.compile(
     r"\b(sin problema|claro|ok|perfecto)\b.*\b(qu[eé] d[ií]a y hora|qu[eé] d[ií]a|qu[eé] hora|te queda)\b",
+    re.IGNORECASE,
+)
+_RESCHEDULE_CONFIRM_RE = re.compile(
+    r"^(?:s[ií]|ok|va|dale|claro|perfecto|se puede|sí se puede)[?!.¡¿\s]*$",
     re.IGNORECASE,
 )
 _SAME_TIME_RE = re.compile(r"\b(misma hora|la misma hora|igual hora|esa hora)\b", re.IGNORECASE)
@@ -185,6 +192,24 @@ def _last_user_start(history: list[dict]) -> datetime | None:
     return None
 
 
+def _last_user_start_after_latest_name_prompt(history: list[dict]) -> datetime | None:
+    seen_name_prompt = False
+    for item in reversed(history[:-1]):
+        role = item.get("role")
+        content = item.get("content", "")
+        if role == "assistant":
+            if not seen_name_prompt and _ASKED_NAME_RE.search(content):
+                seen_name_prompt = True
+                continue
+            if seen_name_prompt:
+                break
+        if role == "user" and seen_name_prompt:
+            start = _extract_start(content)
+            if start:
+                return start
+    return None
+
+
 def _is_cancel_clarification(history: list[dict]) -> bool:
     return bool(_CANCEL_CLARIFY_RE.search(_last_assistant_text(history)))
 
@@ -209,7 +234,7 @@ def _is_reschedule_continuation(user_text: str, history: list[dict]) -> bool:
     if _RESCHEDULE_RE.search(recent) and (_extract_date(user_text) or _SAME_TIME_RE.search(user_text)):
         return True
     if _SCHEDULED_CONFIRMATION_RE.search(recent) and _RESCHEDULE_RE.search(recent):
-        return True
+        return bool(_RESCHEDULE_CONFIRM_RE.match(user_text.strip()))
     return False
 
 
@@ -422,6 +447,11 @@ def _extract_start_with_context(text: str, history: list[dict]) -> datetime | No
     start = _extract_start(text)
     if start:
         return start
+
+    if _ASKED_NAME_RE.search(_last_assistant_text(history)):
+        previous_start = _last_user_start_after_latest_name_prompt(history)
+        if previous_start:
+            return previous_start
 
     date = _extract_date(text)
     if date and _SAME_TIME_RE.search(text):

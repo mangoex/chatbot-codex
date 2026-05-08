@@ -227,6 +227,108 @@ class AgendaGuardTests(unittest.TestCase):
 
         self.assertTrue(agenda_guard._is_reschedule_continuation("se puede?", history))
 
+    def test_new_test_appointment_is_not_trapped_by_old_reschedule_context(self):
+        history = [
+            {
+                "role": "assistant",
+                "content": (
+                    "Listo, Miguel. Quedó agendada tu llamada para el "
+                    "martes 12 de mayo de 2026 a las 12:00."
+                ),
+            },
+            {"role": "user", "content": "ah no disculpa, ese dia no voy a estar, mejor el 13 a las 10"},
+            {"role": "user", "content": "quiero probar haciendo una cita"},
+        ]
+
+        self.assertFalse(
+            agenda_guard._is_reschedule_continuation(
+                "quiero probar haciendo una cita",
+                history,
+            )
+        )
+
+    def test_name_after_time_uses_previous_pending_time(self):
+        async def run():
+            original_now = agenda_guard._now
+            original_process = agenda_guard.calendar_client.process_reply
+            captured = {}
+
+            async def fake_process_reply(wa_id, marker, bot_id=None, replace_existing=False):
+                captured["marker"] = marker
+                captured["replace_existing"] = replace_existing
+                return "Listo, Miguel. Quedó agendada tu llamada.", True
+
+            agenda_guard._now = lambda: datetime(
+                2026, 5, 8, 9, 0, tzinfo=ZoneInfo("America/Chihuahua")
+            )
+            agenda_guard.calendar_client.process_reply = fake_process_reply
+            history = [
+                {"role": "user", "content": "quiero probar haciendo una cita"},
+                {"role": "assistant", "content": "Claro, hagamos una prueba. ¿A nombre de quién la agendo?"},
+                {"role": "user", "content": "el 12 a la 1"},
+                {"role": "assistant", "content": "Claro, hagamos una prueba. ¿A nombre de quién la agendo?"},
+                {"role": "user", "content": "Miguel Gonzalez"},
+            ]
+            try:
+                reply, scheduled = await agenda_guard.maybe_handle(
+                    "5215550000000",
+                    "Miguel Gonzalez",
+                    history,
+                    bot_id=1,
+                )
+            finally:
+                agenda_guard._now = original_now
+                agenda_guard.calendar_client.process_reply = original_process
+
+            self.assertTrue(scheduled)
+            self.assertIn("Quedó agendada", reply)
+            self.assertIn("2026-05-12T13:00:00", captured["marker"])
+            self.assertFalse(captured["replace_existing"])
+
+        import asyncio
+
+        asyncio.run(run())
+
+    def test_a_mi_nombre_uses_known_name_and_previous_pending_time(self):
+        async def run():
+            original_now = agenda_guard._now
+            original_process = agenda_guard.calendar_client.process_reply
+            captured = {}
+
+            async def fake_process_reply(wa_id, marker, bot_id=None, replace_existing=False):
+                captured["marker"] = marker
+                return "Listo, Miguel. Quedó agendada tu llamada.", True
+
+            agenda_guard._now = lambda: datetime(
+                2026, 5, 8, 9, 0, tzinfo=ZoneInfo("America/Chihuahua")
+            )
+            agenda_guard.calendar_client.process_reply = fake_process_reply
+            history = [
+                {"role": "user", "content": "Miguel Gonzalez"},
+                {"role": "assistant", "content": "Gracias, Miguel. ¿Qué día y hora quieres para la llamada?"},
+                {"role": "user", "content": "el 12 a la 1"},
+                {"role": "assistant", "content": "Claro, hagamos una prueba. ¿A nombre de quién la agendo?"},
+                {"role": "user", "content": "A mi nombre"},
+            ]
+            try:
+                reply, scheduled = await agenda_guard.maybe_handle(
+                    "5215550000000",
+                    "A mi nombre",
+                    history,
+                    bot_id=1,
+                )
+            finally:
+                agenda_guard._now = original_now
+                agenda_guard.calendar_client.process_reply = original_process
+
+            self.assertTrue(scheduled)
+            self.assertIn("Miguel", reply)
+            self.assertIn("2026-05-12T13:00:00", captured["marker"])
+
+        import asyncio
+
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()
