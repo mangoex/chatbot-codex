@@ -260,6 +260,41 @@ Phase 3A agrega configuracion editable del agente por bot:
 - La agencia y los usuarios `client_admin` pueden editar. `client_viewer` tiene
   acceso de solo lectura.
 
+Phase 3D agrega runtime para APIs externas, webhooks y CRM:
+
+- Nuevo modulo `app/external_actions.py`.
+- El panel de habilidades ahora incluye:
+  - `webhook`
+  - `external_api`
+  - `crm`
+- Estas habilidades nacen apagadas por seguridad. Se deben activar en
+  `/admin/bots/{bot_id}/skills`.
+- Las llamadas se ejecutan solo si tambien existe una integracion activa del
+  mismo tipo en `/admin/bots/{bot_id}/integrations`.
+- Los secretos siguen cifrados en `integration_secrets`; nombres sugeridos:
+  `access_token`, `api_key`, `bearer_token` o `token`.
+- El modelo puede producir marcadores internos que se limpian antes de enviar
+  la respuesta por WhatsApp:
+
+```text
+[[WEBHOOK_POST: {"payload": {"name": "Miguel", "phone": "521..."}}]]
+[[EXTERNAL_API_REQUEST: {"method": "GET", "path": "/clientes", "params": {"phone": "521..."}}]]
+[[EXTERNAL_API_REQUEST: {"method": "POST", "path": "/leads", "json": {"name": "Miguel"}}]]
+[[CRM_LEAD: {"name": "Miguel", "phone": "521...", "status": "new", "notes": "Quiere una cita"}}]]
+```
+
+Configuracion sugerida para `external_api`:
+
+```json
+{
+  "base_url": "https://api.example.com",
+  "allowed_methods": ["GET", "POST"],
+  "auth_header": "Authorization",
+  "auth_scheme": "Bearer",
+  "timeout_seconds": 20
+}
+```
+
 Phase 3B agrega configuracion de integraciones por bot:
 
 - `/admin/bots/{bot_id}/integrations` lista y crea integraciones.

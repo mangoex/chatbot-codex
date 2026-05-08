@@ -1047,13 +1047,26 @@ async def delete_bot_integration_secret_page(
 
 SKILL_TYPES = (
     ("google_calendar", "Google Calendar"),
+    ("webhook", "Webhook"),
+    ("external_api", "API externa"),
+    ("crm", "CRM"),
 )
 
 
 def _default_skill_config(skill_type: str) -> dict:
     if skill_type == "google_calendar":
         return {"mode": "schedule_and_cancel"}
+    if skill_type == "webhook":
+        return {"mode": "post_marker_payload"}
+    if skill_type == "external_api":
+        return {"mode": "marker_based", "allowed_methods": ["GET", "POST"]}
+    if skill_type == "crm":
+        return {"mode": "lead_sync_marker"}
     return {}
+
+
+def _default_skill_enabled(skill_type: str) -> bool:
+    return skill_type == "google_calendar"
 
 
 @router.get("/bots/{bot_id}/skills", response_class=HTMLResponse)
@@ -1065,7 +1078,7 @@ async def bot_skills_page(request: Request, bot_id: int, saved: str | None = Non
     cards = []
     for skill_type, label in SKILL_TYPES:
         row = rows.get(skill_type)
-        enabled = True if row is None else bool(row.get("enabled"))
+        enabled = _default_skill_enabled(skill_type) if row is None else bool(row.get("enabled"))
         cfg = row.get("config") if row else _default_skill_config(skill_type)
         checked = "checked" if enabled else ""
         disabled = "" if can_edit else "disabled"

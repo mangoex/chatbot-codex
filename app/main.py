@@ -15,6 +15,7 @@ from app import (
     config,
     db,
     escalations,
+    external_actions,
     follow_ups,
     leads,
     openai_client,
@@ -244,8 +245,9 @@ async def _process_message(payload: dict) -> None:
         )
         return
 
+    action_reply = await external_actions.process_reply(wa_id, raw_reply, bot_id=bot.id)
     calendar_reply, scheduled = await calendar_client.process_reply(
-        wa_id, raw_reply, bot_id=bot.id
+        wa_id, action_reply, bot_id=bot.id
     )
     reply = await leads.process_reply(wa_id, calendar_reply, current_history, bot_id=bot.id)
 
