@@ -1,4 +1,5 @@
 """Guardrails deterministicos para el flujo de agenda antes de llamar al modelo."""
+import calendar
 import json
 import re
 import unicodedata
@@ -65,6 +66,7 @@ _RESCHEDULE_DATETIME_PROMPT_RE = re.compile(
     re.IGNORECASE,
 )
 _SAME_TIME_RE = re.compile(r"\b(misma hora|la misma hora|igual hora|esa hora)\b", re.IGNORECASE)
+_TEST_APPOINTMENT_RE = re.compile(r"\b(probar|prueba|simular|simulacion|simulación)\b", re.IGNORECASE)
 _ASSISTANT_NAME_RE = re.compile(
     r"\b(?:gracias|listo),\s+([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){1,3})[.!?,]",
     re.IGNORECASE,
@@ -90,6 +92,10 @@ _EXPLICIT_TIME_RE = re.compile(
     re.IGNORECASE,
 )
 _DATE_NUM_RE = re.compile(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b")
+_DAY_WITH_TIME_RE = re.compile(
+    r"(?:^|\b(?:el|dia|día)\s+)(\d{1,2})(?=\s+(?:a\s+las|a\s+la|alas)\b)",
+    re.IGNORECASE,
+)
 _WEEKDAY_DAY_RE = re.compile(
     r"\b(?:lun|lunes|mar|martes|mie|mi[eé]rcoles|jue|jueves|vie|viernes|sab|s[aá]bado|dom|domingo)\.?\s+(\d{1,2})\b",
     re.IGNORECASE,
@@ -248,6 +254,17 @@ def _direct_name(text: str) -> str | None:
     return None
 
 
+def _first_name(name: str) -> str:
+    clean = (name or "").strip()
+    return clean.split()[0] if clean else ""
+
+
+def _testing_appointment_context(user_text: str, history: list[dict]) -> bool:
+    if _TEST_APPOINTMENT_RE.search(user_text):
+        return True
+    return bool(_TEST_APPOINTMENT_RE.search(_history_text(history, limit=6)))
+
+
 def _extract_name(text: str, history: list[dict]) -> str | None:
     current = _NAME_RE.search(text)
     if current:
@@ -327,6 +344,10 @@ def _extract_date(text: str) -> datetime | None:
             year += 2000
         return base.replace(year=year, month=month, day=day)
 
+    day_with_time_match = _DAY_WITH_TIME_RE.search(lower)
+    if day_with_time_match:
+        return _upcoming_day_of_month(base, int(day_with_time_match.group(1)))
+
     for label, weekday in _WEEKDAYS.items():
         if label in lower:
             days = (weekday - base.weekday()) % 7
@@ -334,6 +355,28 @@ def _extract_date(text: str) -> datetime | None:
                 days = 7
             return base + timedelta(days=days)
 
+    return None
+
+
+def _upcoming_day_of_month(base: datetime, day: int) -> datetime | None:
+    if day < 1 or day > 31:
+        return None
+    year = base.year
+    month = base.month
+    for offset in range(13):
+        candidate_month = month + offset
+        candidate_year = year + (candidate_month - 1) // 12
+        candidate_month = ((candidate_month - 1) % 12) + 1
+        last_day = calendar.monthrange(candidate_year, candidate_month)[1]
+        if day > last_day:
+            continue
+        candidate = base.replace(
+            year=candidate_year,
+            month=candidate_month,
+            day=day,
+        )
+        if candidate.date() >= base.date():
+            return candidate
     return None
 
 
@@ -465,10 +508,13 @@ async def maybe_handle(
     start = _extract_start_with_context(user_text, history)
 
     if not name:
+        if _testing_appointment_context(user_text, history):
+            return "Claro, hagamos una prueba. ¿A nombre de quién la agendo?", False
         return "Claro. Para agendar la llamada, dime tu nombre completo.", False
 
     if not start:
-        return f"Gracias, {name}. ¿Qué día y hora te queda para la llamada?", False
+        display_name = _first_name(name) or name
+        return f"Gracias, {display_name}. ¿Qué día y hora quieres para la llamada?", False
 
     data = {
         "title": f"{config.GOOGLE_APPOINTMENT_SUMMARY_PREFIX} con {name}",

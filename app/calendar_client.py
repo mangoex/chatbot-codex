@@ -17,6 +17,29 @@ log = logging.getLogger("calendar")
 _MARKER_RE = re.compile(r"\[\[CALENDAR_EVENT:\s*(\{.*?\})\s*\]\]", re.DOTALL)
 _TOKEN_URL = "https://oauth2.googleapis.com/token"
 _CALENDAR_API = "https://www.googleapis.com/calendar/v3"
+_WEEKDAY_NAMES = (
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+)
+_MONTH_NAMES = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
 
 
 @dataclass(frozen=True)
@@ -227,7 +250,14 @@ def _parse_start(value: str, runtime: CalendarRuntime | None = None) -> datetime
 
 
 def _format_dt(dt: datetime) -> str:
-    return dt.strftime("%d/%m/%Y a las %H:%M")
+    weekday = _WEEKDAY_NAMES[dt.weekday()]
+    month = _MONTH_NAMES[dt.month - 1]
+    return f"{weekday} {dt.day} de {month} de {dt.year} a las {dt:%H:%M}"
+
+
+def _first_name(name: str) -> str:
+    clean = (name or "").strip()
+    return clean.split()[0] if clean else ""
 
 
 def _event_start(
@@ -584,11 +614,11 @@ async def process_reply(
         )
 
     attendee = str(data.get("attendee_name") or "").strip()
-    who = f", {attendee}" if attendee else ""
+    who = f", {_first_name(attendee)}" if attendee else ""
     if replace_existing and existing_rows:
-        confirmation = f"Listo{who}. Reprograme la llamada para el {_format_dt(start)} y cancele la cita anterior."
+        confirmation = f"Listo{who}. Reprogramé la llamada para el {_format_dt(start)} y cancelé la cita anterior."
     else:
-        confirmation = f"Listo{who}. Quedo agendada la llamada para el {_format_dt(start)}."
+        confirmation = f"Listo{who}. Quedó agendada tu llamada para el {_format_dt(start)}."
     if visible:
         return f"{visible}\n\n{confirmation}", True
     return confirmation, True

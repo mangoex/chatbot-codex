@@ -133,8 +133,11 @@ Agenda:
 - Ejemplos soportados:
   - `mañana a las 5`
   - `pasadomañana a las 9`
+  - `el 11 a las 11`
   - `jueves 7 de mayo a las 10`
   - si un horario esta ocupado, `a las 10` reutiliza el dia anterior.
+- Las confirmaciones de cita usan formato natural, por ejemplo
+  `lunes 11 de mayo de 2026 a las 10:00`.
 
 Cancelacion:
 
