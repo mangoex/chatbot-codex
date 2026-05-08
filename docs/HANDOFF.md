@@ -138,6 +138,9 @@ Agenda:
   - si un horario esta ocupado, `a las 10` reutiliza el dia anterior.
 - Las confirmaciones de cita usan formato natural, por ejemplo
   `lunes 11 de mayo de 2026 a las 10:00`.
+- Reagenda despues de confirmar una cita con frases naturales como
+  `ese dia no voy a estar, mejor el 13 a las 10`; debe crear la nueva cita y
+  cancelar la anterior.
 
 Cancelacion:
 
