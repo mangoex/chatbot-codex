@@ -147,9 +147,15 @@ async def runtime_status(bot_id: int | None = None) -> dict[str, bool | str | in
         "enabled": bool(skill_on and runtime.enabled),
     }
     if bot_id and runtime.integration_id:
+        integration = await db.get_active_bot_integration(bot_id, "google_calendar")
+        cfg = integration.get("config") if integration else {}
         secrets = await db.get_integration_secret_values(runtime.integration_id)
         status.update({
-            "secret_client_id_saved": bool(secrets.get("client_id") or secrets.get("google_client_id")),
+            "secret_client_id_saved": bool(
+                (cfg or {}).get("client_id")
+                or secrets.get("client_id")
+                or secrets.get("google_client_id")
+            ),
             "secret_client_secret_saved": bool(
                 secrets.get("client_secret") or secrets.get("google_client_secret")
             ),
