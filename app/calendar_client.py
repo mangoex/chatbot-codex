@@ -3,7 +3,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
@@ -283,6 +283,38 @@ def _same_slot(
     a = a.astimezone(_tz(runtime))
     b = b.astimezone(_tz(runtime))
     return a.date() == b.date() and abs((a - b).total_seconds()) <= 60 * 75
+
+
+def _row_timestamp(row: dict, key: str) -> float | None:
+    value = row.get(key)
+    if isinstance(value, datetime):
+        dt = value
+    elif isinstance(value, str):
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def _latest_existing_appointment(rows: list[dict]) -> dict | None:
+    if not rows:
+        return None
+    indexed = list(enumerate(rows))
+    _, row = max(
+        indexed,
+        key=lambda item: (
+            _row_timestamp(item[1], "created_at")
+            or _row_timestamp(item[1], "updated_at")
+            or -1,
+            item[0],
+        ),
+    )
+    return row
 
 
 async def _access_token(runtime: CalendarRuntime) -> str:
@@ -591,7 +623,8 @@ async def process_reply(
                 bot_id=bot_id,
             )
             if replace_existing:
-                for row in existing_rows:
+                previous_row = _latest_existing_appointment(existing_rows)
+                for row in [previous_row] if previous_row else []:
                     old_event_id = str(row.get("google_event_id") or "")
                     if not old_event_id or old_event_id == event_id:
                         continue
