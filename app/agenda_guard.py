@@ -22,7 +22,8 @@ _CANCEL_RE = re.compile(
 _RESCHEDULE_RE = re.compile(
     r"\b(cambiar|cambiarla|cambiarlo|mover|moverla|moverlo|reagendar|reagenda|"
     r"reprogramar|reprograma|modificar|modifica|pasar|posponer|no\s+voy\s+a\s+poder|"
-    r"no\s+podre|no\s+podré)\b",
+    r"no\s+voy\s+a\s+estar|no\s+estare|no\s+estar[eé]|no\s+podre|no\s+podré|"
+    r"mejor|ese\s+d[ií]a\s+no|ese\s+dia\s+no|esa\s+fecha\s+no)\b",
     re.IGNORECASE,
 )
 _THANKS_RE = re.compile(
@@ -68,7 +69,7 @@ _RESCHEDULE_DATETIME_PROMPT_RE = re.compile(
 _SAME_TIME_RE = re.compile(r"\b(misma hora|la misma hora|igual hora|esa hora)\b", re.IGNORECASE)
 _TEST_APPOINTMENT_RE = re.compile(r"\b(probar|prueba|simular|simulacion|simulación)\b", re.IGNORECASE)
 _ASSISTANT_NAME_RE = re.compile(
-    r"\b(?:gracias|listo),\s+([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){1,3})[.!?,]",
+    r"\b(?:gracias|listo),\s+([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){0,3})[.!?,]",
     re.IGNORECASE,
 )
 _SERVICE_SCHEDULING_RE = re.compile(
@@ -200,8 +201,14 @@ def _is_reschedule_continuation(user_text: str, history: list[dict]) -> bool:
     last_assistant = _last_assistant_text(history)
     if _RESCHEDULE_DATETIME_PROMPT_RE.search(last_assistant):
         return True
+    if _SCHEDULED_CONFIRMATION_RE.search(last_assistant) and (
+        _RESCHEDULE_RE.search(user_text) or _extract_start_with_context(user_text, history)
+    ):
+        return True
     recent = _history_text(history, limit=8)
     if _RESCHEDULE_RE.search(recent) and (_extract_date(user_text) or _SAME_TIME_RE.search(user_text)):
+        return True
+    if _SCHEDULED_CONFIRMATION_RE.search(recent) and _RESCHEDULE_RE.search(recent):
         return True
     return False
 
