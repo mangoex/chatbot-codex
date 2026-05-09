@@ -19,6 +19,7 @@ from app import (
     follow_ups,
     leads,
     openai_client,
+    reply_safety,
     signature,
     whatsapp_client,
 )
@@ -144,6 +145,7 @@ async def _send_and_track(
     history: list[dict],
     scheduled: bool = False,
 ) -> None:
+    reply = reply_safety.polish(reply, history)
     await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
     await whatsapp_client.send_text(
         wa_id,
