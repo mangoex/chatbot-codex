@@ -60,6 +60,11 @@ _NAME_ONLY_RE = re.compile(
     r"([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){1,3})\s*$",
     re.IGNORECASE,
 )
+_SINGLE_NAME_RE = re.compile(
+    r"^(?:si\s+claro,?\s*|sí\s+claro,?\s*|claro,?\s*)?"
+    r"([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]{2,30})\s*$",
+    re.IGNORECASE,
+)
 _ASKED_NAME_RE = re.compile(
     r"\b(nombre completo|dime tu nombre|tu nombre|a nombre de qui[eé]n|nombre)\b",
     re.IGNORECASE,
@@ -286,6 +291,16 @@ def _direct_name(text: str) -> str | None:
     return None
 
 
+def _direct_name_after_prompt(text: str) -> str | None:
+    direct = _direct_name(text)
+    if direct:
+        return direct
+    single = _SINGLE_NAME_RE.search(text.strip())
+    if single:
+        return _clean_name(single.group(1))
+    return None
+
+
 def _first_name(name: str) -> str:
     clean = (name or "").strip()
     return clean.split()[0] if clean else ""
@@ -303,7 +318,7 @@ def _extract_name(text: str, history: list[dict]) -> str | None:
         return _clean_name(current.group(1))
 
     if _ASKED_NAME_RE.search(_last_assistant_text(history)):
-        direct = _direct_name(text)
+        direct = _direct_name_after_prompt(text)
         if direct:
             return direct
 
@@ -336,7 +351,7 @@ def _extract_name(text: str, history: list[dict]) -> str | None:
             previous_assistant = content
             continue
         if role == "user" and _ASKED_NAME_RE.search(previous_assistant):
-            name = _direct_name(content)
+            name = _direct_name_after_prompt(content)
             if name:
                 return name
 
@@ -546,8 +561,8 @@ async def maybe_handle(
 
     if not name:
         if _testing_appointment_context(user_text, history):
-            return "Claro, hagamos una prueba. ¿A nombre de quién la agendo?", False
-        return "Claro. Para agendar la llamada, dime tu nombre completo.", False
+            return "Claro. ¿A nombre de quién agendo la llamada?", False
+        return "Claro. ¿A nombre de quién agendo la llamada?", False
 
     if not start:
         display_name = _first_name(name) or name
