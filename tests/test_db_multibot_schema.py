@@ -53,6 +53,7 @@ class MultiBotSchemaTests(unittest.TestCase):
             "get_bot",
             "create_bot",
             "list_client_users",
+            "list_users",
             "create_client_user",
             "get_user_login",
         ):

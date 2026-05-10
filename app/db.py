@@ -1475,6 +1475,53 @@ async def list_client_users(client_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+async def list_users(client_id: int | None = None, limit: int = 200) -> list[dict]:
+    async with _pool.acquire() as conn:
+        if client_id:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    users.id,
+                    users.email,
+                    users.name,
+                    users.status,
+                    client_users.role,
+                    client_users.client_id,
+                    clients.name AS client_name,
+                    clients.slug AS client_slug
+                FROM users
+                JOIN client_users ON client_users.user_id = users.id
+                JOIN clients ON clients.id = client_users.client_id
+                WHERE client_users.client_id = $1
+                ORDER BY users.email ASC
+                LIMIT $2
+                """,
+                client_id,
+                limit,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    users.id,
+                    users.email,
+                    users.name,
+                    users.status,
+                    client_users.role,
+                    client_users.client_id,
+                    clients.name AS client_name,
+                    clients.slug AS client_slug
+                FROM users
+                JOIN client_users ON client_users.user_id = users.id
+                JOIN clients ON clients.id = client_users.client_id
+                ORDER BY clients.name ASC, users.email ASC
+                LIMIT $1
+                """,
+                limit,
+            )
+    return [dict(r) for r in rows]
+
+
 async def create_client_user(
     client_id: int,
     email: str,

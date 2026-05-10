@@ -6,7 +6,7 @@ import secrets
 from datetime import datetime
 
 from fastapi import APIRouter, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from app import auth, config, db, secure_store
 
@@ -35,6 +35,13 @@ def _require_agency(request: Request) -> dict:
     if not _is_agency(session):
         raise HTTPException(status_code=403, detail="Solo agencia")
     return session
+
+
+def _require_user_manager(request: Request) -> dict:
+    session = _require_login(request)
+    if _is_agency(session) or session.get("role") == "client_admin":
+        return session
+    raise HTTPException(status_code=403, detail="Solo administradores pueden gestionar usuarios")
 
 
 def _slugify(value: str) -> str:
@@ -107,6 +114,233 @@ def _display_name(name: str | None, wa_id: str) -> str:
     return clean
 
 
+ADMIN_APP_SECTIONS = (
+    {
+        "key": "administracion",
+        "title": "Administracion",
+        "items": (
+            {
+                "label": "Ver clientes",
+                "description": "Alta de clientes, usuarios y primer bot.",
+                "href": "/admin/clients",
+                "kind": "static",
+                "agency_only": True,
+            },
+            {
+                "label": "Control de usuarios",
+                "description": "Accesos, roles y usuarios por cliente.",
+                "href": "/admin/users",
+                "kind": "static",
+                "manager_only": True,
+            },
+            {
+                "label": "Ver bots",
+                "description": "Listado operativo de bots disponibles.",
+                "href": "/admin/bots",
+                "kind": "static",
+            },
+            {
+                "label": "Revisar conversaciones",
+                "description": "Historial guardado por WhatsApp y bot.",
+                "href": "/admin/conversations",
+                "kind": "conversation",
+            },
+        ),
+    },
+    {
+        "key": "configuracion",
+        "title": "Configuracion del bot",
+        "items": (
+            {
+                "label": "Editar prompt",
+                "description": "Identidad, reglas y tono del agente.",
+                "href": "/admin/bots/{bot_id}/prompt",
+                "kind": "bot",
+            },
+            {
+                "label": "Cargar conocimiento",
+                "description": "Servicios, precios, politicas y FAQs.",
+                "href": "/admin/bots/{bot_id}/knowledge",
+                "kind": "bot",
+            },
+            {
+                "label": "Configurar agenda, API, webhook o CRM",
+                "description": "Integraciones por cliente sin exponer secretos.",
+                "href": "/admin/bots/{bot_id}/integrations",
+                "kind": "bot",
+            },
+            {
+                "label": "Activar habilidades",
+                "description": "Calendar, webhook, API externa y CRM.",
+                "href": "/admin/bots/{bot_id}/skills",
+                "kind": "bot",
+            },
+        ),
+    },
+    {
+        "key": "pruebas",
+        "title": "Pruebas y diagnostico",
+        "items": (
+            {
+                "label": "Probar IA",
+                "description": "Proveedor, modelo y respuesta de prueba.",
+                "href": "/admin/ai-status",
+                "kind": "static",
+            },
+            {
+                "label": "Probar Calendar",
+                "description": "Conexion global o del bot seleccionado.",
+                "href": "/admin/calendar-status?bot_id={bot_id}",
+                "kind": "bot",
+            },
+        ),
+    },
+)
+
+
+def _admin_app_href(template: str, bot_id: int | None) -> str:
+    if "{bot_id}" not in template:
+        return template
+    return template.replace("{bot_id}", str(bot_id or 1))
+
+
+def _admin_app_link_cards(
+    bot_id: int | None,
+    is_agency: bool,
+    role: str = "agency_admin",
+) -> str:
+    sections = []
+    can_manage_users = is_agency or role == "client_admin"
+    for section in ADMIN_APP_SECTIONS:
+        cards = []
+        for item in section["items"]:
+            if item.get("agency_only") and not is_agency:
+                continue
+            if item.get("manager_only") and not can_manage_users:
+                continue
+            href = _admin_app_href(item["href"], bot_id)
+            disabled = item["kind"] == "bot" and not bot_id
+            classes = "control-link disabled" if disabled else "control-link"
+            attrs = 'aria-disabled="true"' if disabled else f'href="{html.escape(href)}"'
+            route = html.escape(href)
+            cards.append(
+                f"""
+                <a class="{classes}" data-template="{html.escape(item["href"])}" data-kind="{html.escape(item["kind"])}" {attrs}>
+                  <span class="link-icon" aria-hidden="true"></span>
+                  <span class="link-copy">
+                    <strong>{html.escape(item["label"])}</strong>
+                    <small>{html.escape(item["description"])}</small>
+                    <code>{route}</code>
+                  </span>
+                </a>
+                """
+            )
+        if cards:
+            sections.append(
+                f"""
+                <section class="control-section">
+                  <div class="section-title">
+                    <span>{html.escape(section["title"])}</span>
+                    <small>{len(cards)} accesos</small>
+                  </div>
+                  <div class="control-grid">{''.join(cards)}</div>
+                </section>
+                """
+            )
+    return "".join(sections)
+
+
+def _admin_api_bot(bot: dict) -> dict:
+    phone = bot.get("display_phone_number") or bot.get("phone_number_id") or ""
+    return {
+        "id": int(bot["id"]),
+        "name": bot.get("name") or f"Bot #{bot['id']}",
+        "slug": bot.get("slug") or "",
+        "client_id": bot.get("client_id"),
+        "client_name": bot.get("client_name") or "",
+        "phone": phone,
+        "status": bot.get("status") or "active",
+        "whatsapp_status": bot.get("whatsapp_status") or "",
+        "links": _admin_bot_links(int(bot["id"])),
+    }
+
+
+def _admin_api_client(client: dict) -> dict:
+    return {
+        "id": int(client["id"]),
+        "name": client.get("name") or "",
+        "slug": client.get("slug") or "",
+        "status": client.get("status") or "active",
+        "bot_count": int(client.get("bot_count") or 0),
+        "links": {"detail": f"/admin/clients/{int(client['id'])}"},
+    }
+
+
+def _admin_api_user(user: dict) -> dict:
+    return {
+        "id": int(user["id"]),
+        "email": user.get("email") or "",
+        "name": user.get("name") or "",
+        "status": user.get("status") or "active",
+        "role": user.get("role") or "client_viewer",
+        "client_id": user.get("client_id"),
+        "client_name": user.get("client_name") or "",
+        "client_slug": user.get("client_slug") or "",
+    }
+
+
+def _admin_bot_links(bot_id: int) -> dict:
+    return {
+        "detail": f"/admin/bots/{bot_id}",
+        "prompt": f"/admin/bots/{bot_id}/prompt",
+        "knowledge": f"/admin/bots/{bot_id}/knowledge",
+        "integrations": f"/admin/bots/{bot_id}/integrations",
+        "skills": f"/admin/bots/{bot_id}/skills",
+        "conversations": f"/admin/conversations?bot_id={bot_id}",
+        "calendar_status": f"/admin/calendar-status?bot_id={bot_id}",
+    }
+
+
+def _admin_api_metrics(metrics: dict) -> dict:
+    return {
+        "conversations": int(metrics.get("conversations") or 0),
+        "messages": int(metrics.get("messages") or 0),
+        "leads": int(metrics.get("leads") or 0),
+        "qualified": int(metrics.get("qualified") or 0),
+        "pending_escalations": int(metrics.get("pending_escalations") or 0),
+    }
+
+
+async def _admin_app_state(session: dict, bot_id: int | None = None) -> dict:
+    is_agency = _is_agency(session)
+    client_id = None if is_agency else int(session["client_id"])
+    bots = await db.list_bots(client_id=client_id, limit=100)
+    selected_bot = None
+    if bot_id:
+        selected_bot = await _require_bot_access(session, bot_id)
+    elif bots:
+        selected_bot = bots[0]
+        bot_id = int(selected_bot["id"])
+    metrics = await db.admin_metrics(bot_id=bot_id)
+    clients = await db.list_clients() if is_agency else []
+    users = await db.list_users(client_id=None if is_agency else int(session["client_id"]))
+    return {
+        "user": {
+            "name": session.get("name") or session.get("user") or "",
+            "role": session.get("role") or "agency_admin",
+            "is_agency": is_agency,
+            "client_id": session.get("client_id"),
+        },
+        "selected_bot_id": int(bot_id) if bot_id else None,
+        "selected_bot": _admin_api_bot(selected_bot) if selected_bot else None,
+        "bots": [_admin_api_bot(bot) for bot in bots],
+        "clients": [_admin_api_client(client) for client in clients],
+        "users": [_admin_api_user(user) for user in users],
+        "metrics": _admin_api_metrics(metrics),
+        "links": _admin_bot_links(int(bot_id)) if bot_id else {},
+    }
+
+
 BASE_CSS = """
 <style>
   :root {
@@ -158,6 +392,7 @@ BASE_CSS = """
   }
   .nav a.active, .nav a:hover { background: #e8eee9; color: var(--ink); }
   .nav svg { width: 18px; height: 18px; stroke-width: 2; }
+  .nav-sep { height: 1px; background: var(--line); margin: 10px 8px; }
   .logout { position: absolute; bottom: 18px; left: 16px; right: 16px; }
   .main { padding: 26px 30px 42px; min-width: 0; }
   .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
@@ -218,6 +453,116 @@ BASE_CSS = """
   .btn.secondary { background: white; color: var(--ink); }
   .btn.whatsapp { background: #1f9d61; border-color: #1f9d61; }
   .actions { display: flex; gap: 7px; flex-wrap: wrap; }
+  .control-hero {
+    background: #fbfcfa;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 22px;
+    margin-bottom: 14px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+    gap: 18px;
+    align-items: end;
+  }
+  .control-hero h1 { font-size: 30px; }
+  .control-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+  .sync-status { font-size: 12px; color: var(--muted); margin-top: 10px; min-height: 18px; }
+  .sync-status.ok { color: var(--green); }
+  .sync-status.err { color: var(--red); }
+  .bot-select-card {
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px;
+  }
+  .bot-select-card label { margin-top: 0; }
+  .bot-select-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+  .control-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+    gap: 14px;
+    align-items: start;
+  }
+  .control-section {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 16px;
+    margin-bottom: 14px;
+  }
+  .section-title {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .section-title span { font-weight: 750; }
+  .section-title small { color: var(--muted); font-size: 12px; }
+  .control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .control-link {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 11px;
+    min-height: 118px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fbfcfa;
+    transition: transform .16s ease, border-color .16s ease, background .16s ease;
+  }
+  .control-link:hover { transform: translateY(-1px); border-color: var(--line-strong); background: white; }
+  .control-link.disabled { opacity: .58; pointer-events: none; }
+  .link-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    background: #e8eee9;
+    position: relative;
+  }
+  .link-icon::before,
+  .link-icon::after {
+    content: "";
+    position: absolute;
+    border-radius: 3px;
+    background: var(--primary);
+  }
+  .link-icon::before { width: 16px; height: 2px; left: 11px; top: 14px; }
+  .link-icon::after { width: 16px; height: 2px; left: 11px; top: 21px; }
+  .link-copy { display: grid; gap: 5px; min-width: 0; }
+  .link-copy strong { font-size: 14px; line-height: 1.25; }
+  .link-copy small { color: var(--muted); line-height: 1.35; }
+  .link-copy code {
+    color: #42504a;
+    background: #edf0ec;
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-size: 11px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .route-list { display: grid; gap: 8px; }
+  .route-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    padding: 9px 0;
+    border-bottom: 1px solid #edf0ec;
+  }
+  .route-row:last-child { border-bottom: 0; }
+  .route-row code { overflow-wrap: anywhere; }
+  .mini-stack { display: grid; gap: 10px; }
+  .stack-item {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 11px;
+    background: #fbfcfa;
+  }
+  .stack-item strong { display: block; font-size: 13px; margin-bottom: 4px; }
+  .stack-item span { color: var(--muted); font-size: 12px; }
   .editor textarea { min-height: 520px; line-height: 1.45; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
   .editor textarea.short { min-height: 220px; }
   .knowledge-preview { white-space: pre-wrap; color: var(--muted); font-size: 13px; max-height: 90px; overflow: hidden; }
@@ -258,6 +603,8 @@ BASE_CSS = """
     .logout { position: static; margin-top: 18px; }
     .main { padding: 20px 16px 32px; }
     .kpis, .split { grid-template-columns: 1fr; }
+    .control-hero, .control-layout, .control-grid { grid-template-columns: 1fr; }
+    .bot-select-actions { grid-template-columns: 1fr; }
     .topbar { flex-direction: column; }
     th:nth-child(4), td:nth-child(4) { display: none; }
   }
@@ -278,8 +625,10 @@ ICONS = {
 
 def _nav(active: str) -> str:
     items = [
+        ("app", "Centro de control", "/admin/app", ICONS["dashboard"]),
         ("dashboard", "Dashboard", "/admin/dashboard", ICONS["dashboard"]),
         ("clients", "Clientes", "/admin/clients", ICONS["building"]),
+        ("users", "Usuarios", "/admin/users", ICONS["crm"]),
         ("bots", "Bots", "/admin/bots", ICONS["building"]),
         ("conversations", "Conversaciones", "/admin/conversations", ICONS["chat"]),
         ("crm", "CRM", "/admin/crm", ICONS["crm"]),
@@ -360,7 +709,7 @@ async def login_submit(
         request.session["client_id"] = None
         request.session["user_id"] = None
         request.session["name"] = username
-        return RedirectResponse("/admin/dashboard", status_code=302)
+        return RedirectResponse("/admin/app", status_code=302)
     user = await db.get_user_login(username)
     if user and auth.verify_password(password, user.get("password_hash")):
         request.session["user"] = user["email"]
@@ -368,7 +717,7 @@ async def login_submit(
         request.session["client_id"] = user["client_id"]
         request.session["user_id"] = user["user_id"]
         request.session["name"] = user.get("name") or user["email"]
-        return RedirectResponse("/admin/dashboard", status_code=302)
+        return RedirectResponse("/admin/app", status_code=302)
     return RedirectResponse(
         "/admin/login?error=" + "Usuario+o+contrasena+incorrectos",
         status_code=302,
@@ -383,7 +732,213 @@ async def logout(request: Request):
 
 @router.get("", response_class=HTMLResponse)
 async def root(request: Request):
-    return RedirectResponse("/admin/dashboard", status_code=302)
+    return RedirectResponse("/admin/app", status_code=302)
+
+
+@router.get("/api/panel-state", response_class=JSONResponse)
+async def api_panel_state(request: Request, bot_id: int | None = None):
+    session = _require_login(request)
+    return JSONResponse(await _admin_app_state(session, bot_id=bot_id))
+
+
+@router.get("/api/bots", response_class=JSONResponse)
+async def api_bots(request: Request):
+    session = _require_login(request)
+    client_id = None if _is_agency(session) else int(session["client_id"])
+    bots = await db.list_bots(client_id=client_id, limit=100)
+    return JSONResponse({"bots": [_admin_api_bot(bot) for bot in bots]})
+
+
+@router.get("/api/clients", response_class=JSONResponse)
+async def api_clients(request: Request):
+    session = _require_agency(request)
+    clients = await db.list_clients()
+    return JSONResponse({"clients": [_admin_api_client(client) for client in clients]})
+
+
+@router.get("/api/users", response_class=JSONResponse)
+async def api_users(request: Request):
+    session = _require_user_manager(request)
+    client_id = None if _is_agency(session) else int(session["client_id"])
+    users = await db.list_users(client_id=client_id)
+    return JSONResponse({"users": [_admin_api_user(user) for user in users]})
+
+
+@router.get("/app", response_class=HTMLResponse)
+async def control_app(request: Request, bot_id: int | None = None):
+    session = _require_login(request)
+    state = await _admin_app_state(session, bot_id=bot_id)
+    is_agency = bool(state["user"]["is_agency"])
+    bots = state["bots"]
+    selected_bot = state["selected_bot"]
+    bot_id = state["selected_bot_id"]
+    metrics = state["metrics"]
+    clients = state["clients"]
+    users = state["users"]
+    conversations_href = f"/admin/conversations?bot_id={bot_id}" if bot_id else "/admin/conversations"
+    bot_detail_href = f"/admin/bots/{bot_id}" if bot_id else "/admin/bots"
+    prompt_href = f"/admin/bots/{bot_id}/prompt" if bot_id else "#"
+    calendar_href = f"/admin/calendar-status?bot_id={bot_id}" if bot_id else "#"
+    role_label = {
+        "agency_admin": "Agencia",
+        "client_admin": "Admin cliente",
+        "client_viewer": "Solo lectura",
+    }.get(session.get("role"), session.get("role", "Usuario"))
+    bot_options = "".join(
+        f"""
+        <option value="{int(bot["id"])}" {"selected" if int(bot["id"]) == int(bot_id or 0) else ""}
+          data-name="{html.escape(bot["name"])}"
+          data-client="{html.escape(bot.get("client_name") or "-")}"
+          data-phone="{html.escape(bot.get("phone") or "sin WhatsApp")}"
+          data-status="{html.escape(bot.get("status") or "active")}">
+          #{int(bot["id"])} - {html.escape(bot["name"])}
+        </option>
+        """
+        for bot in bots
+    )
+    bot_name = html.escape((selected_bot or {}).get("name") or "Sin bot seleccionado")
+    bot_client = html.escape((selected_bot or {}).get("client_name") or "-")
+    bot_phone = html.escape((selected_bot or {}).get("phone") or "sin WhatsApp")
+    bot_status = html.escape((selected_bot or {}).get("status") or "sin bot")
+    helper = "Usar bot_id real, por ejemplo 1." if not bot_id else f"Bot activo: {int(bot_id)}."
+
+    route_rows = "".join(
+        f"""
+        <div class="route-row">
+          <code data-template="{html.escape(item["href"])}" data-kind="{html.escape(item["kind"])}">{html.escape(_admin_app_href(item["href"], bot_id))}</code>
+          <a class="btn secondary" data-template="{html.escape(item["href"])}" data-kind="{html.escape(item["kind"])}" href="{html.escape(_admin_app_href(item["href"], bot_id))}">Entrar</a>
+        </div>
+        """
+        for section in ADMIN_APP_SECTIONS
+        for item in section["items"]
+        if not item.get("agency_only") or is_agency
+    )
+    body = f"""
+    <section class="control-hero">
+      <div>
+        <h1>Centro de control</h1>
+        <div class="sub">Una sola entrada para operar clientes, bots, conversaciones, diagnosticos e integraciones.</div>
+        <div class="control-meta">
+          <span class="badge">{html.escape(role_label)}</span>
+          <span class="badge">{html.escape(session.get("name") or session.get("user") or "Usuario")}</span>
+          <span class="badge b-calificado">{html.escape(helper)}</span>
+        </div>
+      </div>
+      <div class="bot-select-card">
+        <label>Bot seleccionado</label>
+        <select id="botSelector" {"disabled" if not bots else ""}>
+          {bot_options or '<option value="">No hay bots disponibles</option>'}
+        </select>
+        <div class="mini-stack" style="margin-top:12px">
+          <div class="stack-item"><strong id="botName">{bot_name}</strong><span id="botClient">{bot_client}</span></div>
+          <div class="stack-item"><strong id="botPhone">{bot_phone}</strong><span id="botStatus">Estado: {bot_status}</span></div>
+        </div>
+        <div class="bot-select-actions">
+          <a id="openBot" class="btn" href="{html.escape(bot_detail_href)}">Abrir bot</a>
+          <a id="testCalendar" class="btn secondary" href="{html.escape(calendar_href)}">Probar Calendar</a>
+        </div>
+        <div id="syncStatus" class="sync-status">Datos listos.</div>
+      </div>
+    </section>
+    <section class="grid kpis" style="margin-bottom:14px">
+      <div class="card"><div class="k">Clientes</div><div class="n" id="kpiClients">{len(clients) if is_agency else 1}</div><div class="trend">Control de acceso activo</div></div>
+      <div class="card"><div class="k">Bots</div><div class="n" id="kpiBots">{len(bots)}</div><div class="trend">Seleccionables desde este panel</div></div>
+      <div class="card"><div class="k">Conversaciones</div><div class="n" id="kpiConversations">{metrics.get("conversations", 0)}</div><div class="trend">Del bot seleccionado</div></div>
+      <div class="card"><div class="k">Usuarios</div><div class="n" id="kpiUsers">{len(users)}</div><div class="trend">Roles por cliente</div></div>
+    </section>
+    <section class="control-layout">
+      <div>{_admin_app_link_cards(bot_id, is_agency, session.get("role", "agency_admin"))}</div>
+      <aside class="panel">
+        <h2>Rutas del manual</h2>
+        <div class="sub" style="margin-bottom:12px">Los accesos reemplazan automaticamente <span class="code">{{bot_id}}</span> por el bot activo.</div>
+        <div class="route-list">{route_rows}</div>
+        <div class="actions" style="margin-top:14px">
+          <a id="openPrompt" class="btn secondary" href="{html.escape(prompt_href)}">Editar prompt</a>
+          <a class="btn secondary" href="/admin/ai-status">Probar IA</a>
+          <a id="openConversations" class="btn secondary" href="{html.escape(conversations_href)}">Conversaciones</a>
+        </div>
+      </aside>
+    </section>
+    <script>
+      (() => {{
+        const selector = document.getElementById("botSelector");
+        const syncStatus = document.getElementById("syncStatus");
+        const replaceBotId = (template, botId) => template.replace("{{bot_id}}", botId || "1");
+        const setText = (id, value) => {{
+          const node = document.getElementById(id);
+          if (node) node.textContent = value;
+        }};
+        const setStatus = (message, className = "") => {{
+          if (!syncStatus) return;
+          syncStatus.className = `sync-status ${{className}}`;
+          syncStatus.textContent = message;
+        }};
+        const setHref = (node, botId) => {{
+          const template = node.dataset.template;
+          if (!template) return;
+          const href = replaceBotId(template, botId);
+          if (node.dataset.kind === "bot" && !botId) {{
+            node.removeAttribute("href");
+            node.setAttribute("aria-disabled", "true");
+            node.classList.add("disabled");
+          }} else {{
+            node.setAttribute("href", href);
+            node.removeAttribute("aria-disabled");
+            node.classList.remove("disabled");
+          }}
+          if (node.tagName === "CODE") node.textContent = href;
+        }};
+        const applyPanelState = (state) => {{
+          const bot = state.selected_bot;
+          if (!bot) return;
+          setText("botName", bot.name || `Bot #${{bot.id}}`);
+          setText("botClient", bot.client_name || "-");
+          setText("botPhone", bot.phone || "sin WhatsApp");
+          setText("botStatus", `Estado: ${{bot.status || "active"}}`);
+          setText("kpiClients", state.user?.is_agency ? String(state.clients?.length || 0) : "1");
+          setText("kpiBots", String(state.bots?.length || 0));
+          setText("kpiConversations", String(state.metrics?.conversations || 0));
+          setText("kpiUsers", String(state.users?.length || 0));
+          document.querySelectorAll("[data-template]").forEach((node) => setHref(node, bot.id));
+          document.getElementById("openBot").href = bot.links.detail;
+          document.getElementById("testCalendar").href = bot.links.calendar_status;
+          document.getElementById("openPrompt").href = bot.links.prompt;
+          document.getElementById("openConversations").href = bot.links.conversations;
+        }};
+        const update = async () => {{
+          const option = selector?.selectedOptions?.[0];
+          const botId = option?.value || "";
+          if (!botId) return;
+          setStatus("Actualizando datos...");
+          setText("botName", option.dataset.name || `Bot #${{botId}}`);
+          setText("botClient", option.dataset.client || "-");
+          setText("botPhone", option.dataset.phone || "sin WhatsApp");
+          setText("botStatus", `Estado: ${{option.dataset.status || "active"}}`);
+          document.querySelectorAll("[data-template]").forEach((node) => setHref(node, botId));
+          document.getElementById("openBot").href = `/admin/bots/${{botId}}`;
+          document.getElementById("testCalendar").href = `/admin/calendar-status?bot_id=${{botId}}`;
+          document.getElementById("openPrompt").href = `/admin/bots/${{botId}}/prompt`;
+          document.getElementById("openConversations").href = `/admin/conversations?bot_id=${{botId}}`;
+          const url = new URL(window.location.href);
+          url.searchParams.set("bot_id", botId);
+          window.history.replaceState(null, "", url);
+          try {{
+            const response = await fetch(`/admin/api/panel-state?bot_id=${{encodeURIComponent(botId)}}`, {{
+              headers: {{ "Accept": "application/json" }},
+            }});
+            if (!response.ok) throw new Error("No se pudo cargar el estado del panel.");
+            const state = await response.json();
+            applyPanelState(state);
+            setStatus("Datos actualizados.", "ok");
+          }} catch (error) {{
+            setStatus("No se pudieron actualizar las metricas; los enlaces siguen listos.", "err");
+          }}
+        }};
+        selector?.addEventListener("change", update);
+      }})();
+    </script>
+    """
+    return HTMLResponse(_layout("Centro de control", "app", body))
 
 
 @router.get("/clients", response_class=HTMLResponse)
@@ -508,6 +1063,91 @@ async def create_client_user_page(
         role,
     )
     return RedirectResponse(f"/admin/clients/{client_id}", status_code=302)
+
+
+@router.get("/users", response_class=HTMLResponse)
+async def users_page(request: Request, saved: str | None = None):
+    session = _require_user_manager(request)
+    is_agency = _is_agency(session)
+    client_id = None if is_agency else int(session["client_id"])
+    users = await db.list_users(client_id=client_id)
+    clients = await db.list_clients() if is_agency else []
+    rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(u.get("name") or u["email"])}</strong><br><span class="muted">{html.escape(u["email"])}</span></td>
+          <td>{html.escape(u.get("client_name") or "-")}<br><span class="muted">{html.escape(u.get("client_slug") or "")}</span></td>
+          <td><span class="badge">{html.escape(u.get("role") or "client_viewer")}</span></td>
+          <td><span class="badge {'b-calificado' if (u.get("status") or "active") == "active" else 'b-descalificado'}">{html.escape(u.get("status") or "active")}</span></td>
+        </tr>
+        """
+        for u in users
+    ) or '<tr><td colspan="4" class="empty">Sin usuarios cliente.</td></tr>'
+    if is_agency:
+        client_options = "".join(
+            f'<option value="{int(c["id"])}">{html.escape(c["name"])} ({html.escape(c["slug"])})</option>'
+            for c in clients
+        )
+        client_field = f"""
+          <label>Cliente</label>
+          <select name="client_id" required>{client_options or '<option value="">Crea un cliente primero</option>'}</select>
+        """
+    else:
+        client_field = f'<input type="hidden" name="client_id" value="{int(session["client_id"])}">'
+    notice = '<div class="trend">Usuario guardado.</div>' if saved else ""
+    body = f"""
+    <div class="topbar">
+      <div><h1>Usuarios</h1><div class="sub">Control de acceso por cliente para admins y usuarios de solo lectura.</div>{notice}</div>
+    </div>
+    <section class="grid split">
+      <div class="table-wrap">
+        <table><thead><tr><th>Usuario</th><th>Cliente</th><th>Rol</th><th>Estado</th></tr></thead><tbody>{rows}</tbody></table>
+      </div>
+      <div class="panel">
+        <h2>Crear o actualizar usuario</h2>
+        <form method="post" action="/admin/users">
+          {client_field}
+          <label>Email</label><input name="email" type="email" required>
+          <label>Nombre</label><input name="name">
+          <label>Contrasena temporal</label><input name="password" type="password" required>
+          <label>Rol</label>
+          <select name="role">
+            <option value="client_admin">Admin cliente</option>
+            <option value="client_viewer">Solo lectura</option>
+          </select>
+          <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Guardar usuario</button></div>
+        </form>
+      </div>
+    </section>
+    """
+    return HTMLResponse(_layout("Usuarios", "users", body))
+
+
+@router.post("/users")
+async def create_user_page(
+    request: Request,
+    client_id: int = Form(...),
+    email: str = Form(...),
+    name: str = Form(""),
+    password: str = Form(...),
+    role: str = Form("client_admin"),
+):
+    session = _require_user_manager(request)
+    target_client_id = int(client_id)
+    if not _is_agency(session):
+        target_client_id = int(session["client_id"])
+    if role not in ("client_admin", "client_viewer"):
+        raise HTTPException(status_code=400, detail="Rol invalido")
+    if not await db.get_client(target_client_id):
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    await db.create_client_user(
+        target_client_id,
+        email,
+        name.strip() or None,
+        auth.hash_password(password),
+        role,
+    )
+    return RedirectResponse("/admin/users?saved=1", status_code=302)
 
 
 @router.get("/bots", response_class=HTMLResponse)
