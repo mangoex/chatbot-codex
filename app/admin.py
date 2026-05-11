@@ -152,8 +152,8 @@ ADMIN_APP_SECTIONS = (
         "title": "Configuracion del bot",
         "items": (
             {
-                "label": "Editar prompt",
-                "description": "Identidad, reglas y tono del agente.",
+                "label": "Prompt + asistente IA",
+                "description": "Crea, corrige y publica instrucciones del agente.",
                 "href": "/admin/bots/{bot_id}/prompt",
                 "kind": "bot",
             },
@@ -565,6 +565,15 @@ BASE_CSS = """
   .stack-item span { color: var(--muted); font-size: 12px; }
   .editor textarea { min-height: 520px; line-height: 1.45; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
   .editor textarea.short { min-height: 220px; }
+  .prompt-workspace { grid-template-columns: minmax(0, 1.1fr) minmax(320px, .9fr); align-items: start; }
+  .prompt-assistant textarea { min-height: 118px; line-height: 1.4; }
+  .prompt-assistant textarea.result {
+    min-height: 300px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+  .prompt-status { font-size: 12px; color: var(--muted); min-height: 18px; margin-top: 10px; }
+  .prompt-status.ok { color: var(--green); }
+  .prompt-status.err { color: var(--red); }
   .knowledge-preview { white-space: pre-wrap; color: var(--muted); font-size: 13px; max-height: 90px; overflow: hidden; }
   .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
   .muted { color: var(--muted); }
@@ -603,7 +612,7 @@ BASE_CSS = """
     .logout { position: static; margin-top: 18px; }
     .main { padding: 20px 16px 32px; }
     .kpis, .split { grid-template-columns: 1fr; }
-    .control-hero, .control-layout, .control-grid { grid-template-columns: 1fr; }
+    .control-hero, .control-layout, .control-grid, .prompt-workspace { grid-template-columns: 1fr; }
     .bot-select-actions { grid-template-columns: 1fr; }
     .topbar { flex-direction: column; }
     th:nth-child(4), td:nth-child(4) { display: none; }
@@ -853,7 +862,7 @@ async def control_app(request: Request, bot_id: int | None = None):
         <div class="sub" style="margin-bottom:12px">Los accesos reemplazan automaticamente <span class="code">{{bot_id}}</span> por el bot activo.</div>
         <div class="route-list">{route_rows}</div>
         <div class="actions" style="margin-top:14px">
-          <a id="openPrompt" class="btn secondary" href="{html.escape(prompt_href)}">Editar prompt</a>
+          <a id="openPrompt" class="btn secondary" href="{html.escape(prompt_href)}">Prompt con IA</a>
           <a class="btn secondary" href="/admin/ai-status">Probar IA</a>
           <a id="openConversations" class="btn secondary" href="{html.escape(conversations_href)}">Conversaciones</a>
         </div>
@@ -1217,7 +1226,7 @@ async def bot_detail(request: Request, bot_id: int):
     <section class="panel" style="margin-bottom:14px">
       <h2>Configuracion del agente</h2>
       <div class="actions">
-        <a class="btn secondary" href="/admin/bots/{bot_id}/prompt">Editar prompt</a>
+        <a class="btn secondary" href="/admin/bots/{bot_id}/prompt">Prompt con IA</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/knowledge">Base de conocimiento</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/integrations">Integraciones</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/skills">Habilidades</a>
@@ -1253,17 +1262,116 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
         '<span class="badge">Solo lectura</span>'
     )
     readonly = "" if can_edit else "readonly"
+    default_provider = (config.PROMPT_ASSISTANT_PROVIDER or "openai_compatible").strip()
+    default_model = config.PROMPT_ASSISTANT_MODEL or config.OPENAI_MODEL
+    assistant_base_url = config.PROMPT_ASSISTANT_BASE_URL
+    base_url_hint = config.PROMPT_ASSISTANT_BASE_URL or config.OPENAI_BASE_URL or "OpenAI directo"
+    has_configured_key = bool(
+        config.PROMPT_ASSISTANT_API_KEY
+        or config.OPENAI_API_KEY
+        or config.ANTHROPIC_API_KEY
+    )
+    key_state = "API configurada" if has_configured_key else "Pega una API key temporal"
+
+    def selected_provider(value: str) -> str:
+        return "selected" if default_provider in {value, value.replace("_", "-")} else ""
+
+    assistant_panel = f"""
+      <aside class="panel prompt-assistant">
+        <h2>Asistente de IA</h2>
+        <div class="sub">{html.escape(key_state)}</div>
+        <form id="promptAssistantForm">
+          <label>Proveedor</label>
+          <select name="provider" id="assistantProvider">
+            <option value="openai_compatible" {selected_provider("openai_compatible")}>OpenAI / compatible</option>
+            <option value="openrouter" {selected_provider("openrouter")}>OpenRouter</option>
+            <option value="anthropic" {selected_provider("anthropic")}>Claude</option>
+          </select>
+          <label>API key temporal</label>
+          <input type="password" name="api_key" autocomplete="off" placeholder="Opcional si ya esta configurada">
+          <label>Base URL</label>
+          <input name="base_url" placeholder="{html.escape(base_url_hint)}" value="{html.escape(assistant_base_url)}">
+          <label>Modelo</label>
+          <input name="model" placeholder="Modelo" value="{html.escape(default_model)}">
+          <label>Que quieres cambiar</label>
+          <textarea name="instruction" required placeholder="Ej. Hazlo para una clinica dental, agenda citas y califica urgencias."></textarea>
+          <div class="actions" style="margin-top:14px">
+            <button class="btn" id="runPromptAssistant" type="submit">Generar con IA</button>
+            <button class="btn secondary" id="applyAssistantResult" type="button" disabled>Usar sugerencia</button>
+          </div>
+          <div id="assistantStatus" class="prompt-status">Listo.</div>
+        </form>
+        <label>Sugerencia generada</label>
+        <textarea id="assistantResult" class="result" readonly></textarea>
+      </aside>
+    """ if can_edit else """
+      <aside class="panel">
+        <h2>Asistente de IA</h2>
+        <div class="sub">Tu usuario tiene acceso de solo lectura.</div>
+      </aside>
+    """
     body = f"""
     <div class="topbar">
       <div><a class="sub" href="/admin/bots/{bot_id}">Volver</a><h1>Prompt</h1><div class="sub">{html.escape(bot["name"])} - origen actual: {source}</div></div>
     </div>
-    <section class="panel editor">
-      <form method="post" action="/admin/bots/{bot_id}/prompt">
-        <label>Instrucciones del agente</label>
-        <textarea name="content" {readonly} required>{html.escape(content)}</textarea>
-        <div class="actions" style="margin-top:14px">{button}{notice}</div>
-      </form>
+    <section class="grid prompt-workspace">
+      <div class="panel editor">
+        <form method="post" action="/admin/bots/{bot_id}/prompt">
+          <label>Instrucciones del agente</label>
+          <textarea id="promptContent" name="content" {readonly} required>{html.escape(content)}</textarea>
+          <div class="actions" style="margin-top:14px">{button}{notice}</div>
+        </form>
+      </div>
+      {assistant_panel}
     </section>
+    <script>
+      (() => {{
+        const form = document.getElementById("promptAssistantForm");
+        const promptContent = document.getElementById("promptContent");
+        const result = document.getElementById("assistantResult");
+        const status = document.getElementById("assistantStatus");
+        const runButton = document.getElementById("runPromptAssistant");
+        const applyButton = document.getElementById("applyAssistantResult");
+        const setStatus = (message, className = "") => {{
+          if (!status) return;
+          status.className = `prompt-status ${{className}}`;
+          status.textContent = message;
+        }};
+        form?.addEventListener("submit", async (event) => {{
+          event.preventDefault();
+          const payload = new FormData(form);
+          payload.set("current_prompt", promptContent?.value || "");
+          setStatus("Generando prompt...");
+          if (runButton) runButton.disabled = true;
+          if (applyButton) applyButton.disabled = true;
+          try {{
+            const response = await fetch("/admin/bots/{bot_id}/prompt/assist", {{
+              method: "POST",
+              headers: {{ "Accept": "application/json" }},
+              body: payload,
+            }});
+            const data = await response.json().catch(() => ({{}}));
+            if (!response.ok || !data.ok) {{
+              throw new Error(data.error || "No se pudo generar el prompt.");
+            }}
+            result.value = data.prompt || "";
+            setStatus(`Listo con ${{data.provider_label || "IA"}}.`, "ok");
+            if (applyButton) applyButton.disabled = !result.value.trim();
+          }} catch (error) {{
+            setStatus(error.message || "No se pudo generar el prompt.", "err");
+          }} finally {{
+            if (runButton) runButton.disabled = false;
+          }}
+        }});
+        applyButton?.addEventListener("click", () => {{
+          const suggestion = result?.value?.trim() || "";
+          if (!suggestion || !promptContent) return;
+          promptContent.value = suggestion;
+          promptContent.focus();
+          setStatus("Sugerencia colocada en el editor. Publica para guardar.", "ok");
+        }});
+      }})();
+    </script>
     """
     return HTMLResponse(_layout("Prompt", "bots", body))
 
@@ -1281,6 +1389,43 @@ async def save_bot_prompt_page(
         raise HTTPException(status_code=400, detail="El prompt no puede estar vacio")
     await db.publish_bot_prompt(bot_id, clean)
     return RedirectResponse(f"/admin/bots/{bot_id}/prompt?saved=1", status_code=302)
+
+
+@router.post("/bots/{bot_id}/prompt/assist", response_class=JSONResponse)
+async def assist_bot_prompt_page(
+    request: Request,
+    bot_id: int,
+    instruction: str = Form(...),
+    current_prompt: str = Form(""),
+    provider: str = Form(""),
+    api_key: str = Form(""),
+    base_url: str = Form(""),
+    model: str = Form(""),
+):
+    from app import prompt_assistant
+
+    session = _require_login(request)
+    bot = await _require_bot_editor(session, bot_id)
+    try:
+        knowledge_docs = await db.list_bot_knowledge(bot_id, active_only=True)
+        result = await prompt_assistant.assist_prompt(
+            bot=bot,
+            current_prompt=current_prompt,
+            instruction=instruction,
+            knowledge_docs=knowledge_docs,
+            provider=provider,
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+        )
+        return JSONResponse(result)
+    except prompt_assistant.PromptAssistantError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    except Exception as exc:
+        return JSONResponse(
+            {"ok": False, "error": prompt_assistant.safe_error(exc)},
+            status_code=502,
+        )
 
 
 @router.get("/bots/{bot_id}/knowledge", response_class=HTMLResponse)

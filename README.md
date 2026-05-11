@@ -58,6 +58,40 @@ modelo especifico, usa un ID con sufijo `:free`, por ejemplo
 `meta-llama/llama-3.2-3b-instruct:free`, siempre revisando que siga disponible en
 OpenRouter.
 
+## Asistente de prompts del panel
+
+El editor `/admin/bots/{bot_id}/prompt` incluye un cuadro de IA para generar,
+corregir o reescribir el prompt del bot antes de publicarlo. Por defecto usa la
+misma configuracion `OPENAI_*` del bot, asi que con OpenRouter basta con tener:
+
+```text
+OPENAI_API_KEY=tu_openrouter_api_key
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+OPENAI_MODEL=openrouter/free
+```
+
+Si quieres separar el modelo del asistente de prompts del modelo que contesta
+WhatsApp, configura:
+
+```text
+PROMPT_ASSISTANT_PROVIDER=openrouter
+PROMPT_ASSISTANT_API_KEY=
+PROMPT_ASSISTANT_BASE_URL=https://openrouter.ai/api/v1
+PROMPT_ASSISTANT_MODEL=openrouter/free
+PROMPT_ASSISTANT_MAX_TOKENS=2500
+```
+
+Tambien puedes usar Claude en ese cuadro:
+
+```text
+PROMPT_ASSISTANT_PROVIDER=anthropic
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL=claude-3-5-sonnet-latest
+```
+
+Las claves pueden vivir en Easypanel o pegarse temporalmente en el formulario;
+no se guardan en GitHub.
+
 ## 2. Personaliza el bot
 
 Edita [prompts/system.md](prompts/system.md). Reemplaza los placeholders con la identidad,
@@ -88,7 +122,8 @@ La primera version del panel multi-bot agrega:
 - `GET /admin/clients`: clientes y usuarios cliente.
 - `GET /admin/bots`: bots disponibles por agencia o cliente.
 - `GET /admin/bots/{bot_id}`: detalle del bot con conversaciones y leads.
-- `GET /admin/bots/{bot_id}/prompt`: editor del prompt activo del bot.
+- `GET /admin/bots/{bot_id}/prompt`: editor del prompt activo del bot con
+  asistente de IA opcional.
 - `GET /admin/bots/{bot_id}/knowledge`: base de conocimiento del bot.
 - `GET /admin/bots/{bot_id}/integrations`: integraciones del bot con APIs,
   calendarios, CRMs o webhooks.

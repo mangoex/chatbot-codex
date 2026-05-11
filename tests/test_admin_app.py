@@ -1,6 +1,7 @@
 import unittest
 import sys
 import types
+import asyncio
 
 
 class _DummyRouter:
@@ -15,8 +16,8 @@ class _DummyRouter:
 
 
 class _DummyResponse:
-    def __init__(self, *args, **kwargs):
-        pass
+    def __init__(self, content="", *args, **kwargs):
+        self.content = content
 
 
 def _dummy_form(default=...):
@@ -131,6 +132,36 @@ class AdminControlAppTests(unittest.TestCase):
         self.assertEqual(user["id"], 12)
         self.assertEqual(user["role"], "client_admin")
         self.assertNotIn("password_hash", user)
+
+    def test_prompt_page_includes_ai_assistant_for_editors(self):
+        class Request:
+            session = {"user": "admin", "role": "agency_admin", "client_id": None}
+
+        async def fake_get_bot(bot_id):
+            return {
+                "id": bot_id,
+                "name": "Bot Demo",
+                "client_id": 1,
+                "client_name": "Cliente Demo",
+                "phone_number_id": "123",
+            }
+
+        async def fake_prompt(bot_id):
+            return {"content": "Prompt actual"}
+
+        original_get_bot = admin.db.get_bot
+        original_get_prompt = admin.db.get_active_bot_prompt
+        try:
+            admin.db.get_bot = fake_get_bot
+            admin.db.get_active_bot_prompt = fake_prompt
+            response = asyncio.run(admin.bot_prompt_page(Request(), 7))
+        finally:
+            admin.db.get_bot = original_get_bot
+            admin.db.get_active_bot_prompt = original_get_prompt
+
+        self.assertIn("promptAssistantForm", response.content)
+        self.assertIn("/admin/bots/7/prompt/assist", response.content)
+        self.assertIn("Prompt actual", response.content)
 
 
 if __name__ == "__main__":

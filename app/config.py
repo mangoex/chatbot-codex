@@ -43,6 +43,19 @@ OPENROUTER_APP_NAME = _env("OPENROUTER_APP_NAME", default="WhatsApp Bot")
 OPENAI_TIMEOUT_SECONDS = _int("OPENAI_TIMEOUT_SECONDS", "45")
 OPENAI_MAX_TOKENS = _int("OPENAI_MAX_TOKENS", "450")
 
+# Asistente opcional del panel para crear/editar prompts. Si se dejan vacias,
+# usa la configuracion global de OpenAI/OpenRouter.
+PROMPT_ASSISTANT_PROVIDER = _env("PROMPT_ASSISTANT_PROVIDER", default="openai_compatible")
+PROMPT_ASSISTANT_API_KEY = os.getenv("PROMPT_ASSISTANT_API_KEY", "")
+PROMPT_ASSISTANT_BASE_URL = _env("PROMPT_ASSISTANT_BASE_URL")
+PROMPT_ASSISTANT_MODEL = os.getenv("PROMPT_ASSISTANT_MODEL", "")
+PROMPT_ASSISTANT_MAX_TOKENS = _int("PROMPT_ASSISTANT_MAX_TOKENS", "2500")
+
+# Claude / Anthropic opcional para el asistente de prompts.
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1").rstrip("/")
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
+
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 HISTORY_WINDOW = _int("HISTORY_WINDOW", "10")

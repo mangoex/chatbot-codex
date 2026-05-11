@@ -234,8 +234,8 @@ la app correcta.
 ```mermaid
 flowchart TD
     A["Abrir prompt del bot"] --> B["Definir identidad"]
-    B --> C["Definir objetivo"]
-    C --> D["Agregar reglas y limites"]
+    B --> C["Pedir ayuda al asistente IA"]
+    C --> D["Revisar y ajustar"]
     D --> E["Publicar"]
     E --> F["Probar 5 mensajes reales"]
 ```
@@ -251,6 +251,11 @@ El prompt define como piensa y responde el agente. Debe decirle:
 - Cuando debe agendar, calificar, escalar o guardar un lead.
 - Que tono debe usar.
 - Que informacion nunca debe inventar.
+
+En el panel puedes escribir el prompt directo o usar el asistente de IA del
+lado derecho. El asistente toma el prompt actual, la base de conocimiento activa
+y tu instruccion; despues coloca una sugerencia que puedes pasar al editor y
+publicar.
 
 Checklist de prompt:
 
