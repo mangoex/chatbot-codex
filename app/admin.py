@@ -3,6 +3,7 @@ import html
 import json
 import re
 import secrets
+from contextvars import ContextVar
 from datetime import datetime
 
 from fastapi import APIRouter, Form, HTTPException, Request
@@ -11,19 +12,32 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from app import auth, config, db, secure_store
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+_current_session: ContextVar[dict | None] = ContextVar("admin_session", default=None)
+
+
+def _empty_metrics() -> dict:
+    return {
+        "conversations": 0,
+        "messages": 0,
+        "leads": 0,
+        "qualified": 0,
+        "pending_escalations": 0,
+    }
 
 
 def _require_login(request: Request) -> dict:
     user = request.session.get("user")
     if not user:
         raise HTTPException(status_code=302, headers={"Location": "/admin/login"})
-    return {
+    session = {
         "user": user,
         "role": request.session.get("role", "agency_admin"),
         "client_id": request.session.get("client_id"),
         "user_id": request.session.get("user_id"),
         "name": request.session.get("name") or user,
     }
+    _current_session.set(session)
+    return session
 
 
 def _is_agency(session: dict) -> bool:
@@ -55,6 +69,16 @@ async def _first_allowed_bot(session: dict) -> dict | None:
         limit=1,
     )
     return bots[0] if bots else None
+
+
+async def _data_scope_bot_id(session: dict) -> tuple[int | None, bool]:
+    """Returns bot_id plus whether this session is allowed to read scoped data."""
+    if _is_agency(session):
+        return None, True
+    bot = await _first_allowed_bot(session)
+    if not bot:
+        return None, False
+    return int(bot["id"]), True
 
 
 async def _require_bot_access(session: dict, bot_id: int) -> dict:
@@ -219,7 +243,9 @@ def _admin_app_link_cards(
             if item.get("manager_only") and not can_manage_users:
                 continue
             href = _admin_app_href(item["href"], bot_id)
-            disabled = item["kind"] == "bot" and not bot_id
+            disabled = (item["kind"] == "bot" and not bot_id) or (
+                item["kind"] == "conversation" and not is_agency and not bot_id
+            )
             classes = "control-link disabled" if disabled else "control-link"
             attrs = 'aria-disabled="true"' if disabled else f'href="{html.escape(href)}"'
             route = html.escape(href)
@@ -321,7 +347,8 @@ async def _admin_app_state(session: dict, bot_id: int | None = None) -> dict:
     elif bots:
         selected_bot = bots[0]
         bot_id = int(selected_bot["id"])
-    metrics = await db.admin_metrics(bot_id=bot_id)
+    has_data_scope = is_agency or bool(bot_id)
+    metrics = await db.admin_metrics(bot_id=bot_id) if has_data_scope else _empty_metrics()
     clients = await db.list_clients() if is_agency else []
     users = await db.list_users(client_id=None if is_agency else int(session["client_id"]))
     return {
@@ -632,20 +659,30 @@ ICONS = {
 }
 
 
-def _nav(active: str) -> str:
+def _nav(active: str, session: dict | None = None) -> str:
+    session = session or _current_session.get() or {"role": "agency_admin"}
+    role = session.get("role") or "agency_admin"
+    is_agency = role == "agency_admin"
+    can_manage_users = is_agency or role == "client_admin"
     items = [
-        ("app", "Centro de control", "/admin/app", ICONS["dashboard"]),
-        ("dashboard", "Dashboard", "/admin/dashboard", ICONS["dashboard"]),
-        ("clients", "Clientes", "/admin/clients", ICONS["building"]),
-        ("users", "Usuarios", "/admin/users", ICONS["crm"]),
-        ("bots", "Bots", "/admin/bots", ICONS["building"]),
-        ("conversations", "Conversaciones", "/admin/conversations", ICONS["chat"]),
-        ("crm", "CRM", "/admin/crm", ICONS["crm"]),
-        ("escalations", "Escalaciones", "/admin/escalations", ICONS["alert"]),
+        ("app", "Centro de control", "/admin/app", ICONS["dashboard"], {}),
+        ("dashboard", "Dashboard", "/admin/dashboard", ICONS["dashboard"], {}),
+        ("clients", "Clientes", "/admin/clients", ICONS["building"], {"agency_only": True}),
+        ("users", "Usuarios", "/admin/users", ICONS["crm"], {"manager_only": True}),
+        ("bots", "Bots", "/admin/bots", ICONS["building"], {}),
+        ("conversations", "Conversaciones", "/admin/conversations", ICONS["chat"], {}),
+        ("crm", "CRM", "/admin/crm", ICONS["crm"], {}),
+        ("escalations", "Escalaciones", "/admin/escalations", ICONS["alert"], {"agency_only": True}),
+    ]
+    visible = [
+        (key, label, href, icon)
+        for key, label, href, icon, rules in items
+        if not (rules.get("agency_only") and not is_agency)
+        and not (rules.get("manager_only") and not can_manage_users)
     ]
     links = "".join(
         f'<a class="{"active" if key == active else ""}" href="{href}">{icon}<span>{label}</span></a>'
-        for key, label, href, icon in items
+        for key, label, href, icon in visible
     )
     return f"""
     <aside class="side">
@@ -661,13 +698,13 @@ def _nav(active: str) -> str:
     """
 
 
-def _layout(title: str, active: str, body: str) -> str:
+def _layout(title: str, active: str, body: str, session: dict | None = None) -> str:
     return f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)} - WhatsApp Bot</title>
 {BASE_CSS}
-</head><body><div class="shell">{_nav(active)}<main class="main">{body}</main></div></body></html>"""
+</head><body><div class="shell">{_nav(active, session)}<main class="main">{body}</main></div></body></html>"""
 
 
 def _login_layout(title: str, body: str) -> str:
@@ -784,6 +821,7 @@ async def control_app(request: Request, bot_id: int | None = None):
     metrics = state["metrics"]
     clients = state["clients"]
     users = state["users"]
+    can_manage_users = is_agency or session.get("role") == "client_admin"
     conversations_href = f"/admin/conversations?bot_id={bot_id}" if bot_id else "/admin/conversations"
     bot_detail_href = f"/admin/bots/{bot_id}" if bot_id else "/admin/bots"
     prompt_href = f"/admin/bots/{bot_id}/prompt" if bot_id else "#"
@@ -821,6 +859,7 @@ async def control_app(request: Request, bot_id: int | None = None):
         for section in ADMIN_APP_SECTIONS
         for item in section["items"]
         if not item.get("agency_only") or is_agency
+        if not item.get("manager_only") or can_manage_users
     )
     body = f"""
     <section class="control-hero">
@@ -1922,13 +1961,24 @@ async def update_bot_skill_page(
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard(request: Request):
     session = _require_login(request)
-    await db.qualify_leads_with_action_link(config.QUALIFIED_CTA_URL)
-    scoped_bot = None if _is_agency(session) else await _first_allowed_bot(session)
-    scoped_bot_id = scoped_bot["id"] if scoped_bot else None
-    metrics = await db.admin_metrics(bot_id=scoped_bot_id)
-    crm_counts = await db.crm_counts(bot_id=scoped_bot_id)
-    escalation_counts = await db.escalation_counts()
-    latest = await db.list_conversation_threads(limit=5, bot_id=scoped_bot_id)
+    scoped_bot_id, has_data_scope = await _data_scope_bot_id(session)
+    if has_data_scope:
+        await db.qualify_leads_with_action_link(
+            config.QUALIFIED_CTA_URL,
+            bot_id=scoped_bot_id,
+        )
+        metrics = await db.admin_metrics(bot_id=scoped_bot_id)
+        crm_counts = await db.crm_counts(bot_id=scoped_bot_id)
+        latest = await db.list_conversation_threads(limit=5, bot_id=scoped_bot_id)
+    else:
+        metrics = _empty_metrics()
+        crm_counts = {}
+        latest = []
+    escalation_counts = (
+        await db.escalation_counts()
+        if _is_agency(session)
+        else {"pendiente": int(metrics.get("pending_escalations") or 0)}
+    )
 
     qualified = int(metrics.get("qualified") or 0)
     leads = int(metrics.get("leads") or 0)
@@ -1950,6 +2000,11 @@ async def dashboard(request: Request):
         """
         for r in latest
     ) or '<tr><td colspan="4" class="empty">Aun no hay conversaciones.</td></tr>'
+    scope_notice = (
+        ""
+        if has_data_scope
+        else '<div class="err">Este usuario todavia no tiene un bot asignado a su cliente.</div>'
+    )
 
     body = f"""
     <div class="topbar">
@@ -1959,6 +2014,7 @@ async def dashboard(request: Request):
       </div>
       <span class="badge demo">Datos demo en graficas</span>
     </div>
+    {scope_notice}
     <section class="grid kpis">
       <div class="card"><div class="k">Conversaciones</div><div class="n">{metrics.get("conversations", 0)}</div><div class="trend">+12% demo vs. semana anterior</div></div>
       <div class="card"><div class="k">Mensajes</div><div class="n">{metrics.get("messages", 0)}</div><div class="trend">Tiempo medio demo: 38s</div></div>
@@ -1992,17 +2048,33 @@ async def dashboard(request: Request):
 @router.get("/conversations", response_class=HTMLResponse)
 async def conversations(request: Request, wa_id: str | None = None, bot_id: int | None = None):
     session = _require_login(request)
-    await db.qualify_leads_with_action_link(config.QUALIFIED_CTA_URL)
+    has_data_scope = True
     if bot_id:
         await _require_bot_access(session, bot_id)
     elif not _is_agency(session):
         bot = await _first_allowed_bot(session)
-        bot_id = bot["id"] if bot else None
-    threads = await db.list_conversation_threads(limit=100, bot_id=bot_id)
+        if bot:
+            bot_id = bot["id"]
+        else:
+            has_data_scope = False
+    if has_data_scope:
+        await db.qualify_leads_with_action_link(
+            config.QUALIFIED_CTA_URL,
+            bot_id=bot_id,
+        )
+    threads = (
+        await db.list_conversation_threads(limit=100, bot_id=bot_id)
+        if has_data_scope else []
+    )
     selected = wa_id or (threads[0]["wa_id"] if threads else None)
     messages = await db.list_conversation_messages(selected, limit=120, bot_id=bot_id) if selected else []
     lead = await db.get_lead(selected, bot_id=bot_id) if selected else None
     bot_qs = f"&bot_id={bot_id}" if bot_id else ""
+    scope_notice = (
+        ""
+        if has_data_scope
+        else '<div class="err">Este usuario todavia no tiene un bot asignado a su cliente.</div>'
+    )
 
     thread_rows = "".join(
         f"""
@@ -2040,6 +2112,7 @@ async def conversations(request: Request, wa_id: str | None = None, bot_id: int 
 
     body = f"""
     <div class="topbar"><div><h1>Conversaciones</h1><div class="sub">Historial real guardado desde WhatsApp.</div></div></div>
+    {scope_notice}
     <section class="grid split">
       <div class="table-wrap"><table><thead><tr><th>Contacto</th><th>Estado</th><th>Ultimo</th><th></th></tr></thead><tbody>{thread_rows}</tbody></table></div>
       <div>
@@ -2054,13 +2127,23 @@ async def conversations(request: Request, wa_id: str | None = None, bot_id: int 
 @router.get("/crm", response_class=HTMLResponse)
 async def crm(request: Request, status: str = "en_progreso"):
     session = _require_login(request)
-    await db.qualify_leads_with_action_link(config.QUALIFIED_CTA_URL)
     if status not in ("en_progreso", "calificado", "descalificado", "todos"):
         status = "en_progreso"
-    scoped_bot = None if _is_agency(session) else await _first_allowed_bot(session)
-    scoped_bot_id = scoped_bot["id"] if scoped_bot else None
-    counts = await db.crm_counts(bot_id=scoped_bot_id)
-    leads = await db.list_leads(None if status == "todos" else status, limit=200, bot_id=scoped_bot_id)
+    scoped_bot_id, has_data_scope = await _data_scope_bot_id(session)
+    if has_data_scope:
+        await db.qualify_leads_with_action_link(
+            config.QUALIFIED_CTA_URL,
+            bot_id=scoped_bot_id,
+        )
+        counts = await db.crm_counts(bot_id=scoped_bot_id)
+        leads = await db.list_leads(
+            None if status == "todos" else status,
+            limit=200,
+            bot_id=scoped_bot_id,
+        )
+    else:
+        counts = {}
+        leads = []
     tabs = [
         ("en_progreso", "No cualificados"),
         ("calificado", "Calificados"),
@@ -2091,6 +2174,7 @@ async def crm(request: Request, status: str = "en_progreso"):
     ) or '<tr><td colspan="5" class="empty">No hay leads en esta etapa.</td></tr>'
     body = f"""
     <div class="topbar"><div><h1>CRM</h1><div class="sub">Mueve prospectos de no cualificados a calificados conforme avanza la venta.</div></div></div>
+    {'' if has_data_scope else '<div class="err">Este usuario todavia no tiene un bot asignado a su cliente.</div>'}
     <div class="tabs">{tabs_html}</div>
     <section class="table-wrap">
       <table><thead><tr><th>Prospecto</th><th>Negocio</th><th>Estado</th><th>Actualizado</th><th>Acciones</th></tr></thead><tbody>{rows}</tbody></table>

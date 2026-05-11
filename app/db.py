@@ -713,7 +713,10 @@ async def admin_metrics(bot_id: int | None = None) -> dict:
     return dict(row)
 
 
-async def qualify_leads_with_action_link(action_url: str | None = None) -> int:
+async def qualify_leads_with_action_link(
+    action_url: str | None = None,
+    bot_id: int | None = None,
+) -> int:
     """Marca como calificados los leads a los que ya se les ofrecio una accion final."""
     async with _pool.acquire() as conn:
         if action_url:
@@ -732,10 +735,21 @@ async def qualify_leads_with_action_link(action_url: str | None = None) -> int:
                         WHERE conversations.wa_id = leads.wa_id
                           AND conversations.role = 'assistant'
                           AND conversations.content ILIKE '%' || $1 || '%'
+                          AND (
+                            $2::bigint IS NULL
+                            OR conversations.bot_id = $2
+                            OR ($2 = 1 AND conversations.bot_id IS NULL)
+                          )
                     )
+                  )
+                  AND (
+                    $2::bigint IS NULL
+                    OR leads.bot_id = $2
+                    OR ($2 = 1 AND leads.bot_id IS NULL)
                   )
                 """,
                 action_url,
+                bot_id,
             )
         else:
             result = await conn.execute(
@@ -747,7 +761,13 @@ async def qualify_leads_with_action_link(action_url: str | None = None) -> int:
                     updated_at = now()
                 WHERE qualification_status <> 'calificado'
                   AND action_link_sent = TRUE
-                """
+                  AND (
+                    $1::bigint IS NULL
+                    OR leads.bot_id = $1
+                    OR ($1 = 1 AND leads.bot_id IS NULL)
+                  )
+                """,
+                bot_id,
             )
     return int(result.split()[-1]) if result else 0
 

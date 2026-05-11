@@ -87,6 +87,18 @@ class AdminControlAppTests(unittest.TestCase):
         self.assertIn('aria-disabled="true"', rendered)
         self.assertIn("/admin/bots/1/prompt", rendered)
 
+    def test_nav_hides_links_by_role(self):
+        agency_html = admin._nav("app", {"role": "agency_admin"})
+        client_admin_html = admin._nav("app", {"role": "client_admin"})
+        viewer_html = admin._nav("app", {"role": "client_viewer"})
+
+        self.assertIn("/admin/clients", agency_html)
+        self.assertIn("/admin/escalations", agency_html)
+        self.assertNotIn("/admin/clients", client_admin_html)
+        self.assertNotIn("/admin/escalations", client_admin_html)
+        self.assertIn("/admin/users", client_admin_html)
+        self.assertNotIn("/admin/users", viewer_html)
+
     def test_admin_api_bot_includes_desktop_app_links(self):
         bot = admin._admin_api_bot(
             {
@@ -162,6 +174,68 @@ class AdminControlAppTests(unittest.TestCase):
         self.assertIn("promptAssistantForm", response.content)
         self.assertIn("/admin/bots/7/prompt/assist", response.content)
         self.assertIn("Prompt actual", response.content)
+
+    def test_client_without_bot_gets_empty_panel_state(self):
+        session = {"user": "rubi@example.com", "role": "client_admin", "client_id": 44}
+
+        async def no_bots(*args, **kwargs):
+            return []
+
+        async def no_users(*args, **kwargs):
+            return []
+
+        async def fail_metrics(*args, **kwargs):
+            raise AssertionError("client without bot must not load global metrics")
+
+        original_list_bots = admin.db.list_bots
+        original_list_users = admin.db.list_users
+        original_admin_metrics = admin.db.admin_metrics
+        try:
+            admin.db.list_bots = no_bots
+            admin.db.list_users = no_users
+            admin.db.admin_metrics = fail_metrics
+            state = asyncio.run(admin._admin_app_state(session))
+        finally:
+            admin.db.list_bots = original_list_bots
+            admin.db.list_users = original_list_users
+            admin.db.admin_metrics = original_admin_metrics
+
+        self.assertIsNone(state["selected_bot_id"])
+        self.assertEqual(state["metrics"]["conversations"], 0)
+        self.assertEqual(state["metrics"]["messages"], 0)
+
+    def test_client_without_bot_conversations_do_not_load_global_threads(self):
+        class Request:
+            session = {
+                "user": "rubi@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+            }
+
+        async def no_bots(*args, **kwargs):
+            return []
+
+        async def fail_qualify(*args, **kwargs):
+            raise AssertionError("client without bot must not mutate global leads")
+
+        async def fail_threads(*args, **kwargs):
+            raise AssertionError("client without bot must not load global threads")
+
+        original_list_bots = admin.db.list_bots
+        original_qualify = admin.db.qualify_leads_with_action_link
+        original_threads = admin.db.list_conversation_threads
+        try:
+            admin.db.list_bots = no_bots
+            admin.db.qualify_leads_with_action_link = fail_qualify
+            admin.db.list_conversation_threads = fail_threads
+            response = asyncio.run(admin.conversations(Request()))
+        finally:
+            admin.db.list_bots = original_list_bots
+            admin.db.qualify_leads_with_action_link = original_qualify
+            admin.db.list_conversation_threads = original_threads
+
+        self.assertIn("todavia no tiene un bot asignado", response.content)
+        self.assertIn("Aun no hay conversaciones", response.content)
 
 
 if __name__ == "__main__":
