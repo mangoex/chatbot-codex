@@ -826,7 +826,9 @@ Para conectar un negocio por el flujo oficial de Meta:
 5. Guarda la conexion cifrada.
 6. Abre `Diagnostico Meta`.
 7. Revisa que no exista `override_callback_uri` heredado.
-8. Abre `Plantillas Meta` y crea o lista una plantilla simple.
+8. Abre `Enviar mensaje de prueba` y manda una plantilla aprobada al numero
+   destino para grabar el video de `whatsapp_business_messaging`.
+9. Abre `Plantillas Meta` y crea o lista una plantilla simple.
 
 El token nuevo de WhatsApp se guarda como secreto cifrado en la integracion
 `whatsapp_cloud`. No lo pegues en JSON, prompt, knowledge ni documentos.

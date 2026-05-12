@@ -60,6 +60,58 @@ class MetaProviderTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_builds_default_template_test_message_payload(self):
+        payload = meta_provider.build_test_message_payload(
+            to_wa_id="5216671234567",
+            message_type="template",
+        )
+
+        self.assertEqual(payload["messaging_product"], "whatsapp")
+        self.assertEqual(payload["to"], "5216671234567")
+        self.assertEqual(payload["type"], "template")
+        self.assertEqual(payload["template"]["name"], "hello_world")
+        self.assertEqual(payload["template"]["language"]["code"], "en_US")
+
+    def test_builds_text_test_message_payload(self):
+        payload = meta_provider.build_test_message_payload(
+            to_wa_id="5216671234567",
+            message_type="text",
+            body_text="Prueba desde Asistto",
+        )
+
+        self.assertEqual(payload["type"], "text")
+        self.assertEqual(payload["text"]["body"], "Prueba desde Asistto")
+
+    def test_send_test_message_uses_whatsapp_cloud_runtime(self):
+        async def run():
+            async def fake_graph_post(path, token, payload):
+                self.assertEqual(path, "pnid-7/messages")
+                self.assertEqual(token, "token-7")
+                self.assertEqual(payload["type"], "template")
+                self.assertEqual(payload["template"]["name"], "hello_world")
+                return {"messages": [{"id": "wamid.test"}]}
+
+            with patch(
+                "app.meta_provider.get_bot_whatsapp_runtime",
+                AsyncMock(
+                    return_value={
+                        "bot": {"id": 7, "phone_number_id": "pnid-7"},
+                        "integration": {"id": 3, "config": {}},
+                        "access_token": "token-7",
+                    }
+                ),
+            ), patch("app.meta_provider.graph_post", fake_graph_post):
+                result = await meta_provider.send_test_message(
+                    7,
+                    to_wa_id="5216671234567",
+                )
+
+            self.assertEqual(result["phone_number_id"], "pnid-7")
+            self.assertEqual(result["message_type"], "template")
+            self.assertEqual(result["response"]["messages"][0]["id"], "wamid.test")
+
+        asyncio.run(run())
+
     def test_diagnostics_detects_override_callback_uri(self):
         async def run():
             async def fake_get(path, token, params=None):

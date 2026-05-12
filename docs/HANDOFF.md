@@ -111,6 +111,8 @@ Se agrego el bloque preparatorio para aplicar como Independent Tech Provider:
 - `/admin/bots/{bot_id}/whatsapp`: lanza Embedded Signup y guarda la conexion.
 - `/admin/bots/{bot_id}/whatsapp/diagnostics`: revisa WABA, numero, token,
   `subscribed_apps` y posible `override_callback_uri`.
+- `/admin/bots/{bot_id}/whatsapp/send-test`: envia un mensaje por Cloud API
+  para el video de `whatsapp_business_messaging`.
 - `/admin/bots/{bot_id}/whatsapp/templates`: lista y crea plantillas simples.
 
 Los nuevos tokens de WhatsApp se guardan cifrados como secreto `access_token`
@@ -134,9 +136,11 @@ Antes de enviar App Review, grabar sin audio:
 2. Abrir `/admin/bots/{bot_id}/whatsapp`.
 3. Conectar WhatsApp con Embedded Signup.
 4. Ver diagnostico del WABA y numero.
-5. Crear/listar una plantilla.
-6. Mostrar mensaje entrante real y respuesta del bot.
-7. Mostrar ruta de escalacion humana o soporte.
+5. Enviar una plantilla aprobada desde `/admin/bots/{bot_id}/whatsapp/send-test`
+   y mostrar WhatsApp Web o movil recibiendo el mensaje.
+6. Crear/listar una plantilla.
+7. Mostrar mensaje entrante real y respuesta del bot.
+8. Mostrar ruta de escalacion humana o soporte.
 
 ## Configuracion Del Agente
 

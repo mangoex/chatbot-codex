@@ -150,6 +150,8 @@ La primera version del panel multi-bot agrega:
 - `GET /admin/bots/{bot_id}/whatsapp`: conexion oficial por Embedded Signup.
 - `GET /admin/bots/{bot_id}/whatsapp/diagnostics`: diagnostico de WABA,
   token, numero, `subscribed_apps` y posibles `override_callback_uri`.
+- `GET /admin/bots/{bot_id}/whatsapp/send-test`: enviar un mensaje real por
+  Cloud API para el video de `whatsapp_business_messaging`.
 - `GET /admin/bots/{bot_id}/whatsapp/templates`: listar y crear plantillas Meta.
 - `GET /admin/tech-provider/review`: checklist de App Review y Access
   Verification.
@@ -262,7 +264,10 @@ Para aplicar como Independent Tech Provider directo en Meta:
 6. En el panel abre `/admin/bots/{bot_id}/whatsapp` y conecta el numero del
    cliente con Embedded Signup.
 7. Verifica `/admin/bots/{bot_id}/whatsapp/diagnostics`.
-8. Usa `/admin/bots/{bot_id}/whatsapp/templates` para listar o crear una
+8. Usa `/admin/bots/{bot_id}/whatsapp/send-test` para enviar una plantilla
+   aprobada al numero de prueba y grabar el video de
+   `whatsapp_business_messaging`.
+9. Usa `/admin/bots/{bot_id}/whatsapp/templates` para listar o crear una
    plantilla simple; esto sirve como evidencia para
    `whatsapp_business_management`.
 

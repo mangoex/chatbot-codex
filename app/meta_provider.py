@@ -199,6 +199,80 @@ async def graph_post(path: str, access_token: str, json_data: dict[str, Any]) ->
         return response.json()
 
 
+def build_test_message_payload(
+    to_wa_id: str,
+    message_type: str,
+    body_text: str = "",
+    template_name: str = "",
+    language_code: str = "",
+) -> dict[str, Any]:
+    to = _clean(to_wa_id)
+    if not to:
+        raise ValueError("Falta el numero destino.")
+    clean_type = (_clean(message_type) or "template").lower()
+    payload: dict[str, Any] = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+    }
+    if clean_type == "text":
+        text = _clean(body_text)
+        if not text:
+            raise ValueError("Falta el texto del mensaje.")
+        payload.update({"type": "text", "text": {"body": text[:4096]}})
+        return payload
+    template = _clean(template_name) or "hello_world"
+    language = _clean(language_code) or "en_US"
+    payload.update(
+        {
+            "type": "template",
+            "template": {
+                "name": template,
+                "language": {"code": language},
+            },
+        }
+    )
+    return payload
+
+
+async def send_test_message(
+    bot_id: int,
+    to_wa_id: str,
+    message_type: str = "template",
+    body_text: str = "",
+    template_name: str = "hello_world",
+    language_code: str = "en_US",
+) -> dict[str, Any]:
+    runtime = await get_bot_whatsapp_runtime(bot_id)
+    bot = runtime["bot"]
+    integration = runtime["integration"]
+    token = runtime["access_token"]
+    if not bot:
+        raise ValueError("Bot no encontrado.")
+    config_data = integration.get("config") if integration else {}
+    phone_number_id = _clean(bot.get("phone_number_id") or config_data.get("phone_number_id"))
+    token = token or _clean(bot.get("whatsapp_access_token")) or _clean(config.WHATSAPP_API_TOKEN)
+    if not phone_number_id:
+        raise ValueError("Falta Phone Number ID para enviar mensajes.")
+    if not token:
+        raise ValueError("Falta access_token cifrado o token global para enviar mensajes.")
+    payload = build_test_message_payload(
+        to_wa_id=to_wa_id,
+        message_type=message_type,
+        body_text=body_text,
+        template_name=template_name,
+        language_code=language_code,
+    )
+    result = await graph_post(f"{phone_number_id}/messages", token, payload)
+    return {
+        "phone_number_id": phone_number_id,
+        "to": _clean(to_wa_id),
+        "message_type": payload["type"],
+        "request": payload,
+        "response": result,
+    }
+
+
 def _find_override_callback_uri(value: Any) -> str:
     if isinstance(value, dict):
         for key, item in value.items():

@@ -48,6 +48,7 @@ los secretos viven en Easypanel, Meta, Google y OpenRouter.
 - El flujo Tech Provider vive en `/admin/tech-provider/review`,
   `/admin/bots/{bot_id}/whatsapp`,
   `/admin/bots/{bot_id}/whatsapp/diagnostics` y
+  `/admin/bots/{bot_id}/whatsapp/send-test` para el video messaging, y
   `/admin/bots/{bot_id}/whatsapp/templates`.
 - Nuevos tokens de WhatsApp deben guardarse cifrados como secreto
   `access_token` en la integracion `whatsapp_cloud`, no en prompts ni docs.

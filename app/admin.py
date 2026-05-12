@@ -230,6 +230,12 @@ ADMIN_APP_SECTIONS = (
                 "kind": "bot",
             },
             {
+                "label": "Enviar mensaje de prueba",
+                "description": "Cloud API para video de whatsapp_business_messaging.",
+                "href": "/admin/bots/{bot_id}/whatsapp/send-test",
+                "kind": "bot",
+            },
+            {
                 "label": "Plantillas Meta",
                 "description": "Listar y crear plantillas de WhatsApp.",
                 "href": "/admin/bots/{bot_id}/whatsapp/templates",
@@ -349,6 +355,7 @@ def _admin_bot_links(bot_id: int) -> dict:
         "skills": f"/admin/bots/{bot_id}/skills",
         "whatsapp": f"/admin/bots/{bot_id}/whatsapp",
         "whatsapp_diagnostics": f"/admin/bots/{bot_id}/whatsapp/diagnostics",
+        "whatsapp_send_test": f"/admin/bots/{bot_id}/whatsapp/send-test",
         "whatsapp_templates": f"/admin/bots/{bot_id}/whatsapp/templates",
         "conversations": f"/admin/conversations?bot_id={bot_id}",
         "calendar_status": f"/admin/calendar-status?bot_id={bot_id}",
@@ -1299,6 +1306,7 @@ async def bot_detail(request: Request, bot_id: int):
         <a class="btn secondary" href="/admin/bots/{bot_id}/integrations">Integraciones</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp">Conectar WhatsApp</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/diagnostics">Diagnostico Meta</a>
+        <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/send-test">Enviar prueba WhatsApp</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/templates">Plantillas Meta</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/skills">Habilidades</a>
         <a class="btn secondary" href="/admin/calendar-status?bot_id={bot_id}">Probar calendario</a>
@@ -1401,6 +1409,7 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
         <div class="actions" style="margin-top:14px">
           <button class="btn whatsapp" type="button" id="launchSignup" {"disabled" if not settings["ready"] else ""}>Abrir Embedded Signup</button>
           <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/diagnostics">Diagnostico</a>
+          <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/send-test">Enviar prueba</a>
           <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/templates">Plantillas</a>
         </div>
         <div id="signupStatus" class="sync-status">Esperando conexion.</div>
@@ -1543,6 +1552,132 @@ async def bot_whatsapp_diagnostics_page(request: Request, bot_id: int):
     </section>
     """
     return HTMLResponse(_layout("Diagnostico Meta", "bots", body, session=session))
+
+
+def _send_test_page_body(
+    bot: dict,
+    bot_id: int,
+    *,
+    can_edit: bool,
+    to_wa_id: str = "",
+    message_type: str = "template",
+    body_text: str = "Prueba de Asistto by Humanio desde WhatsApp Cloud API.",
+    template_name: str = "hello_world",
+    language_code: str = "en_US",
+    result: dict | None = None,
+    error: str = "",
+) -> str:
+    selected_template = "selected" if message_type != "text" else ""
+    selected_text = "selected" if message_type == "text" else ""
+    disabled = "" if can_edit else "disabled"
+    submit = (
+        '<button class="btn whatsapp" type="submit">Enviar mensaje de prueba</button>'
+        if can_edit else
+        '<span class="badge">Solo administradores pueden enviar pruebas</span>'
+    )
+    error_html = f'<div class="err">{html.escape(error)}</div>' if error else ""
+    result_html = ""
+    if result:
+        response_json = html.escape(_pretty_json(result.get("response") or {}))
+        request_json = html.escape(_pretty_json(result.get("request") or {}))
+        result_html = f"""
+        <section class="grid split" style="margin-top:14px">
+          <div class="panel">
+            <h2>Resultado Meta</h2>
+            <p class="sub">Si Meta devolvio un <span class="code">messages[0].id</span>, el envio fue aceptado por Cloud API.</p>
+            <textarea readonly class="short code">{response_json}</textarea>
+          </div>
+          <div class="panel">
+            <h2>Payload enviado</h2>
+            <p class="sub">No se muestran tokens. Esta es la evidencia tecnica para el video.</p>
+            <textarea readonly class="short code">{request_json}</textarea>
+          </div>
+        </section>
+        <section class="panel" style="margin-top:14px">
+          <h2>Siguiente toma del video</h2>
+          <p class="sub">Ahora muestra WhatsApp Web o el telefono destino recibiendo el mensaje enviado desde Asistto.</p>
+        </section>
+        """
+    return f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots/{bot_id}/whatsapp">Volver</a><h1>Enviar mensaje de prueba</h1><div class="sub">{html.escape(bot["name"])} - evidencia para whatsapp_business_messaging.</div></div>
+      <span class="badge">Cloud API</span>
+    </div>
+    {error_html}
+    <section class="grid split">
+      <div class="panel">
+        <h2>Enviar desde Asistto</h2>
+        <form method="post" action="/admin/bots/{bot_id}/whatsapp/send-test">
+          <label>Numero destino en formato WhatsApp</label><input name="to_wa_id" value="{html.escape(to_wa_id)}" placeholder="5216671234567" required {disabled}>
+          <label>Tipo de mensaje</label><select name="message_type" {disabled}><option value="template" {selected_template}>Plantilla aprobada</option><option value="text" {selected_text}>Texto dentro de ventana 24h</option></select>
+          <label>Nombre de plantilla</label><input name="template_name" value="{html.escape(template_name)}" placeholder="hello_world" {disabled}>
+          <label>Idioma de plantilla</label><input name="language_code" value="{html.escape(language_code)}" placeholder="en_US" {disabled}>
+          <label>Texto si usas mensaje libre</label><textarea name="body_text" class="short" {disabled}>{html.escape(body_text)}</textarea>
+          <div class="actions" style="margin-top:14px">{submit}</div>
+        </form>
+      </div>
+      <div class="panel">
+        <h2>Para grabar</h2>
+        <p class="sub">1. Muestra esta pantalla con el bot conectado.</p>
+        <p class="sub">2. Envia una plantilla aprobada, idealmente <span class="code">hello_world</span>, al numero de prueba.</p>
+        <p class="sub">3. Muestra el resultado de Meta y luego WhatsApp recibiendo el mensaje.</p>
+        <div class="actions" style="margin-top:14px">
+          <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/diagnostics">Diagnostico</a>
+          <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/templates">Plantillas</a>
+        </div>
+      </div>
+    </section>
+    {result_html}
+    """
+
+
+@router.get("/bots/{bot_id}/whatsapp/send-test", response_class=HTMLResponse)
+async def bot_whatsapp_send_test_page(request: Request, bot_id: int):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    can_edit = _is_agency(session) or session.get("role") == "client_admin"
+    body = _send_test_page_body(bot, bot_id, can_edit=can_edit)
+    return HTMLResponse(_layout("Enviar prueba WhatsApp", "bots", body, session=session))
+
+
+@router.post("/bots/{bot_id}/whatsapp/send-test", response_class=HTMLResponse)
+async def bot_whatsapp_send_test_submit(
+    request: Request,
+    bot_id: int,
+    to_wa_id: str = Form(...),
+    message_type: str = Form("template"),
+    body_text: str = Form(""),
+    template_name: str = Form("hello_world"),
+    language_code: str = Form("en_US"),
+):
+    session = _require_login(request)
+    bot = await _require_bot_editor(session, bot_id)
+    result: dict | None = None
+    error = ""
+    try:
+        result = await meta_provider.send_test_message(
+            bot_id,
+            to_wa_id=to_wa_id,
+            message_type=message_type,
+            body_text=body_text,
+            template_name=template_name,
+            language_code=language_code,
+        )
+    except Exception as exc:
+        error = str(exc)
+    body = _send_test_page_body(
+        bot,
+        bot_id,
+        can_edit=True,
+        to_wa_id=to_wa_id,
+        message_type=message_type,
+        body_text=body_text,
+        template_name=template_name,
+        language_code=language_code,
+        result=result,
+        error=error,
+    )
+    return HTMLResponse(_layout("Enviar prueba WhatsApp", "bots", body, session=session))
 
 
 @router.get("/bots/{bot_id}/whatsapp/templates", response_class=HTMLResponse)
