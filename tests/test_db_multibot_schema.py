@@ -25,6 +25,14 @@ class MultiBotSchemaTests(unittest.TestCase):
             "integration_secrets",
         ):
             self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        for column in (
+            "business_id TEXT",
+            "waba_id TEXT",
+            "meta_app_id TEXT",
+            "meta_config_id TEXT",
+            "connected_at TIMESTAMPTZ",
+        ):
+            self.assertIn(column, sql)
 
     def test_existing_tables_get_bot_id(self):
         sql = db.SCHEMA_SQL
@@ -92,6 +100,8 @@ class MultiBotSchemaTests(unittest.TestCase):
             "get_integration_secret_values",
             "upsert_integration_secret",
             "delete_integration_secret",
+            "upsert_bot_whatsapp_connection",
+            "update_bot_whatsapp_sync_status",
             "list_bot_skills",
             "get_bot_skill",
             "upsert_bot_skill",

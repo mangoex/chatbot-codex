@@ -20,7 +20,7 @@ def _page(title: str, body: str) -> str:
     return f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)} - WhatsApp Bot</title>
+<title>{html.escape(title)} - Asistto by Humanio</title>
 <style>
   body {{ margin: 0; background: #f4f5f2; color: #151716; font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }}
   main {{ max-width: 720px; margin: 48px auto; padding: 0 20px; }}

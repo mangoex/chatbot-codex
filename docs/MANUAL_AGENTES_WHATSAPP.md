@@ -813,13 +813,42 @@ Estados sugeridos:
 | WABA | WhatsApp Business Account. |
 | Webhook | URL que recibe eventos de WhatsApp o envia datos a otro sistema. |
 
-## 20. Cierre operativo
+## 20. Preparacion Tech Provider
+
+Ruta principal: [`/admin/tech-provider/review`](/admin/tech-provider/review)
+
+Para conectar un negocio por el flujo oficial de Meta:
+
+1. Abre el bot en [`/admin/bots`](/admin/bots).
+2. Entra a `Conectar WhatsApp`.
+3. Abre Embedded Signup.
+4. Confirma `Business ID`, `WABA ID`, `Phone Number ID` y numero visible.
+5. Guarda la conexion cifrada.
+6. Abre `Diagnostico Meta`.
+7. Revisa que no exista `override_callback_uri` heredado.
+8. Abre `Plantillas Meta` y crea o lista una plantilla simple.
+
+El token nuevo de WhatsApp se guarda como secreto cifrado en la integracion
+`whatsapp_cloud`. No lo pegues en JSON, prompt, knowledge ni documentos.
+
+Paginas publicas para revision:
+
+- [`/privacy`](/privacy)
+- [`/terms`](/terms)
+- [`/support`](/support)
+- [`/data-deletion`](/data-deletion)
+- [`/ai-data-policy`](/ai-data-policy)
+
+## 21. Cierre operativo
 
 Antes de entregar un bot al cliente:
 
 - [ ] Cliente creado.
 - [ ] Usuario cliente creado con rol correcto.
 - [ ] Bot creado con `phone_number_id` correcto.
+- [ ] WhatsApp conectado desde [`/admin/bots/{bot_id}/whatsapp`](/admin/bots/1/whatsapp) o configurado manualmente.
+- [ ] Diagnostico Meta revisado.
+- [ ] Plantilla Meta creada o listada si se usara outreach.
 - [ ] Meta conectado al webhook correcto.
 - [ ] Prompt publicado.
 - [ ] Base de conocimiento cargada.

@@ -9,7 +9,7 @@ from datetime import datetime
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from app import auth, config, db, secure_store
+from app import auth, config, db, meta_provider, secure_store
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 _current_session: ContextVar[dict | None] = ContextVar("admin_session", default=None)
@@ -194,6 +194,12 @@ ADMIN_APP_SECTIONS = (
                 "kind": "bot",
             },
             {
+                "label": "Conectar WhatsApp",
+                "description": "Embedded Signup, WABA y numero del cliente.",
+                "href": "/admin/bots/{bot_id}/whatsapp",
+                "kind": "bot",
+            },
+            {
                 "label": "Activar habilidades",
                 "description": "Calendar, webhook, API externa y CRM.",
                 "href": "/admin/bots/{bot_id}/skills",
@@ -216,6 +222,25 @@ ADMIN_APP_SECTIONS = (
                 "description": "Conexion global o del bot seleccionado.",
                 "href": "/admin/calendar-status?bot_id={bot_id}",
                 "kind": "bot",
+            },
+            {
+                "label": "Diagnostico Meta",
+                "description": "WABA, token, subscribed_apps y numero.",
+                "href": "/admin/bots/{bot_id}/whatsapp/diagnostics",
+                "kind": "bot",
+            },
+            {
+                "label": "Plantillas Meta",
+                "description": "Listar y crear plantillas de WhatsApp.",
+                "href": "/admin/bots/{bot_id}/whatsapp/templates",
+                "kind": "bot",
+            },
+            {
+                "label": "Modo revision Meta",
+                "description": "Checklist y guion para App Review.",
+                "href": "/admin/tech-provider/review",
+                "kind": "static",
+                "agency_only": True,
             },
         ),
     },
@@ -322,6 +347,9 @@ def _admin_bot_links(bot_id: int) -> dict:
         "knowledge": f"/admin/bots/{bot_id}/knowledge",
         "integrations": f"/admin/bots/{bot_id}/integrations",
         "skills": f"/admin/bots/{bot_id}/skills",
+        "whatsapp": f"/admin/bots/{bot_id}/whatsapp",
+        "whatsapp_diagnostics": f"/admin/bots/{bot_id}/whatsapp/diagnostics",
+        "whatsapp_templates": f"/admin/bots/{bot_id}/whatsapp/templates",
         "conversations": f"/admin/conversations?bot_id={bot_id}",
         "calendar_status": f"/admin/calendar-status?bot_id={bot_id}",
     }
@@ -670,6 +698,7 @@ def _nav(active: str, session: dict | None = None) -> str:
         ("clients", "Clientes", "/admin/clients", ICONS["building"], {"agency_only": True}),
         ("users", "Usuarios", "/admin/users", ICONS["crm"], {"manager_only": True}),
         ("bots", "Bots", "/admin/bots", ICONS["building"], {}),
+        ("tech-provider", "Tech Provider", "/admin/tech-provider/review", ICONS["wa"], {"agency_only": True}),
         ("conversations", "Conversaciones", "/admin/conversations", ICONS["chat"], {}),
         ("crm", "CRM", "/admin/crm", ICONS["crm"], {}),
         ("escalations", "Escalaciones", "/admin/escalations", ICONS["alert"], {"agency_only": True}),
@@ -687,8 +716,8 @@ def _nav(active: str, session: dict | None = None) -> str:
     return f"""
     <aside class="side">
       <div class="brand">
-        <div class="mark">WA</div>
-        <div><strong>WhatsApp Bot</strong><span>Panel admin</span></div>
+        <div class="mark">AH</div>
+        <div><strong>Asistto</strong><span>by Humanio</span></div>
       </div>
       <nav class="nav">{links}</nav>
       <form method="post" action="/admin/logout" class="logout">
@@ -702,7 +731,7 @@ def _layout(title: str, active: str, body: str, session: dict | None = None) -> 
     return f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)} - WhatsApp Bot</title>
+<title>{html.escape(title)} - Asistto by Humanio</title>
 {BASE_CSS}
 </head><body><div class="shell">{_nav(active, session)}<main class="main">{body}</main></div></body></html>"""
 
@@ -711,7 +740,7 @@ def _login_layout(title: str, body: str) -> str:
     return f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{html.escape(title)} - WhatsApp Bot</title>
+<title>{html.escape(title)} - Asistto by Humanio</title>
 {BASE_CSS}
 </head><body><div class="login">{body}</div></body></html>"""
 
@@ -724,8 +753,8 @@ async def login_page(request: Request, error: str = ""):
     body = f"""
     <section class="card login-card">
       <div class="brand" style="margin-bottom:18px">
-        <div class="mark">WA</div>
-        <div><strong>WhatsApp Bot</strong><span>Panel privado</span></div>
+        <div class="mark">AH</div>
+        <div><strong>Asistto</strong><span>by Humanio</span></div>
       </div>
       <h1>Entrar al panel</h1>
       <div class="sub">Conversaciones, CRM y diagnostico comercial.</div>
@@ -1268,6 +1297,9 @@ async def bot_detail(request: Request, bot_id: int):
         <a class="btn secondary" href="/admin/bots/{bot_id}/prompt">Prompt con IA</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/knowledge">Base de conocimiento</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/integrations">Integraciones</a>
+        <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp">Conectar WhatsApp</a>
+        <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/diagnostics">Diagnostico Meta</a>
+        <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/templates">Plantillas Meta</a>
         <a class="btn secondary" href="/admin/bots/{bot_id}/skills">Habilidades</a>
         <a class="btn secondary" href="/admin/calendar-status?bot_id={bot_id}">Probar calendario</a>
       </div>
@@ -1284,6 +1316,298 @@ async def bot_detail(request: Request, bot_id: int):
     </section>
     """
     return HTMLResponse(_layout("Bot", "bots", body))
+
+
+@router.get("/meta/oauth/callback", response_class=HTMLResponse)
+async def meta_oauth_callback(request: Request, code: str = "", error: str = ""):
+    _require_login(request)
+    message = (
+        "Meta devolvio un codigo. Vuelve a la pantalla Conectar WhatsApp del bot y confirma el guardado."
+        if code else
+        "Meta no devolvio codigo. Revisa la configuracion de Embedded Signup."
+    )
+    if error:
+        message = f"Meta devolvio un error: {html.escape(error)}"
+    body = f"""
+    <div class="topbar"><div><h1>Callback de Meta</h1><div class="sub">{message}</div></div></div>
+    <section class="panel">
+      <label>Codigo recibido</label>
+      <input value="{html.escape(code)}" readonly>
+      <div class="actions" style="margin-top:14px">
+        <a class="btn secondary" href="/admin/app">Volver al centro de control</a>
+      </div>
+    </section>
+    """
+    return HTMLResponse(_layout("Callback Meta", "tech-provider", body))
+
+
+@router.get("/tech-provider/review", response_class=HTMLResponse)
+async def tech_provider_review_page(request: Request):
+    _require_agency(request)
+    settings = meta_provider.embedded_signup_settings()
+    missing = ", ".join(settings["missing"]) if settings["missing"] else "Configuracion base completa"
+    checklist = (
+        ("Business Portfolio", "2FA activo, negocio verificable y documentos listos."),
+        ("App Meta nueva", "Nombre visible Humanio/Asistto, sin marcas Meta ni WhatsApp en el nombre."),
+        ("Permisos", "Solicitar whatsapp_business_messaging y whatsapp_business_management."),
+        ("Video messaging", "Mostrar el panel enviando un mensaje y el telefono recibiendolo."),
+        ("Video management", "Mostrar creacion/listado de una plantilla desde la pantalla Plantillas Meta."),
+        ("Datos", "Declarar que WhatsApp Business Solution Data no entrena modelos generales de IA."),
+        ("Produccion", "Probar health, webhook, bot demo, plantilla, conversacion y escalacion humana."),
+    )
+    rows = "".join(
+        f"<tr><td><strong>{html.escape(name)}</strong></td><td>{html.escape(desc)}</td></tr>"
+        for name, desc in checklist
+    )
+    body = f"""
+    <div class="topbar"><div><h1>Modo revision Meta</h1><div class="sub">Guion interno para preparar App Review y Access Verification.</div></div></div>
+    <section class="grid split">
+      <div class="table-wrap"><table><thead><tr><th>Pieza</th><th>Evidencia</th></tr></thead><tbody>{rows}</tbody></table></div>
+      <div class="panel">
+        <h2>Estado Embedded Signup</h2>
+        <p class="sub">App ID: {html.escape(settings["app_id"] or "-")}</p>
+        <p class="sub">Config ID: {html.escape(settings["config_id"] or "-")}</p>
+        <p class="sub">Redirect URI: {html.escape(settings["redirect_uri"] or "-")}</p>
+        <p class="sub">Graph: {html.escape(settings["graph_version"])}</p>
+        <p><span class="badge {'b-calificado' if settings["ready"] else 'b-pendiente'}">{html.escape(missing)}</span></p>
+        <div class="actions" style="margin-top:14px">
+          <a class="btn secondary" href="/privacy">Privacidad</a>
+          <a class="btn secondary" href="/terms">Terminos</a>
+          <a class="btn secondary" href="/ai-data-policy">IA y datos</a>
+          <a class="btn secondary" href="/data-deletion">Eliminar datos</a>
+        </div>
+      </div>
+    </section>
+    """
+    return HTMLResponse(_layout("Revision Meta", "tech-provider", body))
+
+
+@router.get("/bots/{bot_id}/whatsapp", response_class=HTMLResponse)
+async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | None = None):
+    session = _require_login(request)
+    bot = await _require_bot_editor(session, bot_id)
+    settings = meta_provider.embedded_signup_settings()
+    missing = ", ".join(settings["missing"]) if settings["missing"] else "Listo para abrir Embedded Signup"
+    notice = '<div class="trend">Conexion guardada y token cifrado.</div>' if saved else ""
+    body = f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots/{bot_id}">Volver</a><h1>Conectar WhatsApp</h1><div class="sub">{html.escape(bot["name"])} - Embedded Signup oficial de Meta.</div>{notice}</div>
+      <span class="badge {'b-calificado' if settings["ready"] else 'b-pendiente'}">{html.escape(missing)}</span>
+    </div>
+    <section class="grid split">
+      <div class="panel">
+        <h2>Embedded Signup</h2>
+        <p class="sub">Usa este flujo cuando el cliente conecta su propio WABA/numero. El token se guarda cifrado como integracion <span class="code">whatsapp_cloud</span>.</p>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn whatsapp" type="button" id="launchSignup" {"disabled" if not settings["ready"] else ""}>Abrir Embedded Signup</button>
+          <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/diagnostics">Diagnostico</a>
+          <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/templates">Plantillas</a>
+        </div>
+        <div id="signupStatus" class="sync-status">Esperando conexion.</div>
+      </div>
+      <div class="panel">
+        <h2>Guardar conexion</h2>
+        <form method="post" action="/admin/bots/{bot_id}/whatsapp/connect">
+          <label>Authorization code de Meta</label><input id="authCode" name="authorization_code" autocomplete="off">
+          <label>Access token temporal/manual</label><input name="access_token" type="password" autocomplete="off">
+          <label>Business ID</label><input id="businessId" name="business_id" value="{html.escape(bot.get("business_id") or "")}">
+          <label>WABA ID</label><input id="wabaId" name="waba_id" value="{html.escape(bot.get("waba_id") or "")}">
+          <label>Phone Number ID</label><input id="phoneNumberId" name="phone_number_id" value="{html.escape(bot.get("phone_number_id") or "")}" required>
+          <label>Numero visible</label><input id="displayPhoneNumber" name="display_phone_number" value="{html.escape(bot.get("display_phone_number") or "")}">
+          <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Guardar conexion cifrada</button></div>
+        </form>
+      </div>
+    </section>
+    <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+    <script>
+      (() => {{
+        const settings = {json.dumps(settings)};
+        const status = document.getElementById("signupStatus");
+        const setStatus = (text, cls = "") => {{
+          status.className = `sync-status ${{cls}}`;
+          status.textContent = text;
+        }};
+        window.fbAsyncInit = function() {{
+          if (!settings.app_id) return;
+          FB.init({{ appId: settings.app_id, cookie: true, xfbml: true, version: settings.graph_version }});
+        }};
+        window.addEventListener("message", (event) => {{
+          if (!event.origin.endsWith("facebook.com")) return;
+          let data = event.data;
+          try {{ if (typeof data === "string") data = JSON.parse(data); }} catch (_) {{ return; }}
+          const payload = data?.data || data;
+          if (payload?.phone_number_id) document.getElementById("phoneNumberId").value = payload.phone_number_id;
+          if (payload?.waba_id) document.getElementById("wabaId").value = payload.waba_id;
+          if (payload?.business_id) document.getElementById("businessId").value = payload.business_id;
+          if (payload?.display_phone_number) document.getElementById("displayPhoneNumber").value = payload.display_phone_number;
+          if (payload?.phone_number_id || payload?.waba_id) setStatus("Datos recibidos de Embedded Signup. Revisa y guarda.", "ok");
+        }});
+        document.getElementById("launchSignup")?.addEventListener("click", () => {{
+          if (!window.FB) return setStatus("Facebook SDK no esta listo todavia.", "err");
+          FB.login((response) => {{
+            const code = response?.authResponse?.code;
+            if (code) {{
+              document.getElementById("authCode").value = code;
+              setStatus("Codigo recibido. Revisa los IDs y guarda.", "ok");
+            }} else {{
+              setStatus("Meta no devolvio codigo. Revisa permisos o configuracion.", "err");
+            }}
+          }}, {{
+            config_id: settings.config_id,
+            response_type: "code",
+            override_default_response_type: true,
+            extras: {{ feature: "whatsapp_embedded_signup" }}
+          }});
+        }});
+      }})();
+    </script>
+    """
+    return HTMLResponse(_layout("Conectar WhatsApp", "bots", body, session=session))
+
+
+@router.post("/bots/{bot_id}/whatsapp/connect")
+async def bot_whatsapp_connect_submit(
+    request: Request,
+    bot_id: int,
+    authorization_code: str = Form(""),
+    access_token: str = Form(""),
+    business_id: str = Form(""),
+    waba_id: str = Form(""),
+    phone_number_id: str = Form(...),
+    display_phone_number: str = Form(""),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    try:
+        await meta_provider.connect_bot_from_embedded_signup(
+            meta_provider.MetaConnectionInput(
+                bot_id=bot_id,
+                phone_number_id=phone_number_id,
+                display_phone_number=display_phone_number,
+                waba_id=waba_id,
+                business_id=business_id,
+                authorization_code=authorization_code,
+                access_token=access_token,
+            )
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/admin/bots/{bot_id}/whatsapp?saved=1", status_code=302)
+
+
+@router.get("/bots/{bot_id}/whatsapp/diagnostics", response_class=HTMLResponse)
+async def bot_whatsapp_diagnostics_page(request: Request, bot_id: int):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    diag = await meta_provider.diagnose_bot_connection(bot_id)
+    checks = diag.get("checks", {})
+    rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(key.replace("_", " "))}</strong></td>
+          <td><span class="badge {'b-calificado' if value else 'b-pendiente'}">{'OK' if value else 'Pendiente'}</span></td>
+        </tr>
+        """
+        for key, value in checks.items()
+    )
+    override = diag.get("override_callback_uri") or ""
+    override_html = (
+        f'<div class="err">Hay override_callback_uri heredado: {html.escape(override)}</div>'
+        if override else
+        '<div class="trend">No se detecto override_callback_uri en subscribed_apps.</div>'
+    )
+    error_html = f'<div class="err">{html.escape(diag.get("error") or "")}</div>' if diag.get("error") else ""
+    payload = html.escape(_pretty_json({
+        "subscribed_apps": diag.get("subscribed_apps"),
+        "phone_number": diag.get("phone_number"),
+    }))
+    body = f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots/{bot_id}/whatsapp">Volver</a><h1>Diagnostico Meta</h1><div class="sub">{html.escape(bot["name"])} - WABA, token, webhook y numero.</div></div>
+      <span class="badge {'b-calificado' if diag.get("ok") else 'b-pendiente'}">{'OK' if diag.get("ok") else 'Pendiente'}</span>
+    </div>
+    {error_html}
+    <section class="grid split">
+      <div class="table-wrap"><table><thead><tr><th>Revision</th><th>Estado</th></tr></thead><tbody>{rows}</tbody></table></div>
+      <div class="panel">
+        <h2>Conexion</h2>
+        <p class="sub">WABA: {html.escape(diag.get("waba_id") or "-")}</p>
+        <p class="sub">Phone Number ID: {html.escape(diag.get("phone_number_id") or "-")}</p>
+        <p class="sub">Numero: {html.escape(diag.get("display_phone_number") or "-")}</p>
+        {override_html}
+      </div>
+    </section>
+    <section class="panel" style="margin-top:14px">
+      <h2>Respuesta Meta resumida</h2>
+      <textarea readonly class="short code">{payload}</textarea>
+    </section>
+    """
+    return HTMLResponse(_layout("Diagnostico Meta", "bots", body, session=session))
+
+
+@router.get("/bots/{bot_id}/whatsapp/templates", response_class=HTMLResponse)
+async def bot_whatsapp_templates_page(request: Request, bot_id: int, saved: str | None = None):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    can_edit = _is_agency(session) or session.get("role") == "client_admin"
+    error = ""
+    templates: list[dict] = []
+    try:
+        payload = await meta_provider.list_message_templates(bot_id)
+        templates = payload.get("data") or []
+    except Exception as exc:
+        error = str(exc)
+    rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(t.get("name") or "-")}</strong><br><span class="muted">{html.escape(t.get("language") or "-")}</span></td>
+          <td><span class="badge">{html.escape(t.get("category") or "-")}</span></td>
+          <td><span class="badge {'b-calificado' if (t.get("status") or "").upper() == "APPROVED" else 'b-pendiente'}">{html.escape(t.get("status") or "-")}</span></td>
+        </tr>
+        """
+        for t in templates
+    ) or '<tr><td colspan="3" class="empty">Sin plantillas cargadas desde Meta.</td></tr>'
+    error_html = f'<div class="err">{html.escape(error)}</div>' if error else ""
+    notice = '<div class="trend">Solicitud de plantilla enviada a Meta.</div>' if saved else ""
+    form = f"""
+      <div class="panel">
+        <h2>Crear plantilla simple</h2>
+        <form method="post" action="/admin/bots/{bot_id}/whatsapp/templates">
+          <label>Nombre</label><input name="name" placeholder="asistto_demo_v1" required {'readonly' if not can_edit else ''}>
+          <label>Idioma</label><input name="language" value="es_MX" required {'readonly' if not can_edit else ''}>
+          <label>Categoria</label><select name="category" {'disabled' if not can_edit else ''}><option value="UTILITY">Utility</option><option value="MARKETING">Marketing</option></select>
+          <label>Texto del cuerpo</label><textarea name="body_text" class="short" required {'readonly' if not can_edit else ''}>Hola, soy {{1}} de Asistto by Humanio. Te contacto para continuar con la atencion de {{2}}.</textarea>
+          <div class="actions" style="margin-top:14px">{'<button class="btn" type="submit">Crear plantilla</button>' if can_edit else '<span class="badge">Solo lectura</span>'}</div>
+        </form>
+      </div>
+    """
+    body = f"""
+    <div class="topbar"><div><a class="sub" href="/admin/bots/{bot_id}/whatsapp">Volver</a><h1>Plantillas Meta</h1><div class="sub">{html.escape(bot["name"])} - evidencia para whatsapp_business_management.</div>{notice}</div></div>
+    {error_html}
+    <section class="grid split">
+      <div class="table-wrap"><table><thead><tr><th>Plantilla</th><th>Categoria</th><th>Estado</th></tr></thead><tbody>{rows}</tbody></table></div>
+      {form}
+    </section>
+    """
+    return HTMLResponse(_layout("Plantillas Meta", "bots", body, session=session))
+
+
+@router.post("/bots/{bot_id}/whatsapp/templates")
+async def bot_whatsapp_templates_submit(
+    request: Request,
+    bot_id: int,
+    name: str = Form(...),
+    language: str = Form("es_MX"),
+    category: str = Form("UTILITY"),
+    body_text: str = Form(...),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    try:
+        await meta_provider.create_message_template(bot_id, name, language, category, body_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RedirectResponse(f"/admin/bots/{bot_id}/whatsapp/templates?saved=1", status_code=302)
 
 
 @router.get("/bots/{bot_id}/prompt", response_class=HTMLResponse)

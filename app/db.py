@@ -55,6 +55,13 @@ CREATE TABLE IF NOT EXISTS bot_whatsapp_numbers (
     phone_number_id TEXT UNIQUE NOT NULL,
     display_phone_number TEXT,
     whatsapp_access_token TEXT,
+    business_id TEXT,
+    waba_id TEXT,
+    meta_app_id TEXT,
+    meta_config_id TEXT,
+    connected_at TIMESTAMPTZ,
+    last_sync_status TEXT,
+    last_sync_at TIMESTAMPTZ,
     status TEXT NOT NULL DEFAULT 'active'
         CHECK (status IN ('active','paused','archived')),
     created_at TIMESTAMPTZ DEFAULT now(),
@@ -246,6 +253,18 @@ async def run_migrations() -> None:
         await conn.execute(
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS action_link_sent BOOLEAN NOT NULL DEFAULT FALSE"
         )
+        for column, definition in (
+            ("business_id", "TEXT"),
+            ("waba_id", "TEXT"),
+            ("meta_app_id", "TEXT"),
+            ("meta_config_id", "TEXT"),
+            ("connected_at", "TIMESTAMPTZ"),
+            ("last_sync_status", "TEXT"),
+            ("last_sync_at", "TIMESTAMPTZ"),
+        ):
+            await conn.execute(
+                f"ALTER TABLE bot_whatsapp_numbers ADD COLUMN IF NOT EXISTS {column} {definition}"
+            )
     await ensure_default_bot()
 
 
@@ -906,6 +925,10 @@ async def get_bot_by_phone_number_id(phone_number_id: str) -> dict | None:
                 bot_whatsapp_numbers.phone_number_id,
                 bot_whatsapp_numbers.display_phone_number,
                 bot_whatsapp_numbers.whatsapp_access_token,
+                bot_whatsapp_numbers.business_id,
+                bot_whatsapp_numbers.waba_id,
+                bot_whatsapp_numbers.meta_app_id,
+                bot_whatsapp_numbers.meta_config_id,
                 bots.openai_model
             FROM bot_whatsapp_numbers
             JOIN bots ON bots.id = bot_whatsapp_numbers.bot_id
@@ -971,6 +994,9 @@ async def list_bots(client_id: int | None = None, limit: int = 200) -> list[dict
                     clients.name AS client_name,
                     bot_whatsapp_numbers.phone_number_id,
                     bot_whatsapp_numbers.display_phone_number,
+                    bot_whatsapp_numbers.business_id,
+                    bot_whatsapp_numbers.waba_id,
+                    bot_whatsapp_numbers.connected_at,
                     bot_whatsapp_numbers.status AS whatsapp_status
                 FROM bots
                 LEFT JOIN clients ON clients.id = bots.client_id
@@ -990,6 +1016,9 @@ async def list_bots(client_id: int | None = None, limit: int = 200) -> list[dict
                     clients.name AS client_name,
                     bot_whatsapp_numbers.phone_number_id,
                     bot_whatsapp_numbers.display_phone_number,
+                    bot_whatsapp_numbers.business_id,
+                    bot_whatsapp_numbers.waba_id,
+                    bot_whatsapp_numbers.connected_at,
                     bot_whatsapp_numbers.status AS whatsapp_status
                 FROM bots
                 LEFT JOIN clients ON clients.id = bots.client_id
@@ -1011,6 +1040,13 @@ async def get_bot(bot_id: int) -> dict | None:
                 clients.name AS client_name,
                 bot_whatsapp_numbers.phone_number_id,
                 bot_whatsapp_numbers.display_phone_number,
+                bot_whatsapp_numbers.business_id,
+                bot_whatsapp_numbers.waba_id,
+                bot_whatsapp_numbers.meta_app_id,
+                bot_whatsapp_numbers.meta_config_id,
+                bot_whatsapp_numbers.connected_at,
+                bot_whatsapp_numbers.last_sync_status,
+                bot_whatsapp_numbers.last_sync_at,
                 bot_whatsapp_numbers.status AS whatsapp_status
             FROM bots
             LEFT JOIN clients ON clients.id = bots.client_id
@@ -1064,6 +1100,78 @@ async def create_bot(
                 display_phone_number or "",
             )
     return int(bot["id"])
+
+
+async def upsert_bot_whatsapp_connection(
+    bot_id: int,
+    phone_number_id: str,
+    display_phone_number: str | None = None,
+    business_id: str | None = None,
+    waba_id: str | None = None,
+    meta_app_id: str | None = None,
+    meta_config_id: str | None = None,
+    sync_status: str | None = None,
+) -> int:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            INSERT INTO bot_whatsapp_numbers(
+                bot_id,
+                phone_number_id,
+                display_phone_number,
+                business_id,
+                waba_id,
+                meta_app_id,
+                meta_config_id,
+                connected_at,
+                last_sync_status,
+                last_sync_at
+            )
+            VALUES($1, $2, $3, $4, $5, $6, $7, now(), $8, now())
+            ON CONFLICT (phone_number_id) DO UPDATE SET
+                bot_id = EXCLUDED.bot_id,
+                display_phone_number = COALESCE(NULLIF(EXCLUDED.display_phone_number, ''), bot_whatsapp_numbers.display_phone_number),
+                business_id = COALESCE(NULLIF(EXCLUDED.business_id, ''), bot_whatsapp_numbers.business_id),
+                waba_id = COALESCE(NULLIF(EXCLUDED.waba_id, ''), bot_whatsapp_numbers.waba_id),
+                meta_app_id = COALESCE(NULLIF(EXCLUDED.meta_app_id, ''), bot_whatsapp_numbers.meta_app_id),
+                meta_config_id = COALESCE(NULLIF(EXCLUDED.meta_config_id, ''), bot_whatsapp_numbers.meta_config_id),
+                connected_at = COALESCE(bot_whatsapp_numbers.connected_at, now()),
+                last_sync_status = EXCLUDED.last_sync_status,
+                last_sync_at = now(),
+                status = 'active',
+                updated_at = now()
+            RETURNING id
+            """,
+            bot_id,
+            phone_number_id,
+            display_phone_number or "",
+            business_id or "",
+            waba_id or "",
+            meta_app_id or "",
+            meta_config_id or "",
+            sync_status or "connected",
+        )
+    return int(row["id"])
+
+
+async def update_bot_whatsapp_sync_status(
+    bot_id: int,
+    phone_number_id: str,
+    sync_status: str,
+) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE bot_whatsapp_numbers
+            SET last_sync_status = $3,
+                last_sync_at = now(),
+                updated_at = now()
+            WHERE bot_id = $1 AND phone_number_id = $2
+            """,
+            bot_id,
+            phone_number_id,
+            sync_status,
+        )
 
 
 async def get_active_bot_prompt(bot_id: int) -> dict | None:

@@ -1,6 +1,9 @@
-# WhatsApp Bot Template
+# Asistto by Humanio
 
-Plantilla para crear y desplegar un chatbot de WhatsApp sin n8n:
+Plataforma para crear y desplegar bots de atencion, ventas, agenda e
+integraciones por WhatsApp para negocios. El producto usa IA como capa auxiliar
+para flujos de negocio concretos; no esta planteado como asistente general de
+proposito abierto.
 
 - FastAPI
 - WhatsApp Cloud API de Meta
@@ -10,6 +13,7 @@ Plantilla para crear y desplegar un chatbot de WhatsApp sin n8n:
 - Google Calendar opcional para agendar citas
 - Dockerfile listo para Easypanel
 - Prompt editable por negocio
+- Flujo preparatorio para aplicar como Meta Tech Provider con Embedded Signup
 
 ## 1. Configuracion local
 
@@ -26,6 +30,10 @@ Variables principales:
 - `WHATSAPP_PHONE_NUMBER_ID`: Phone Number ID de tu numero de WhatsApp.
 - `WHATSAPP_VERIFY_TOKEN`: texto secreto inventado por ti para validar el webhook en Meta.
 - `META_APP_SECRET`: App Secret de Meta para validar firmas. Recomendado en produccion.
+- `META_APP_ID`: App ID de la Meta Business App que aplicara como Tech Provider.
+- `META_CONFIG_ID`: Configuration ID de Embedded Signup.
+- `META_GRAPH_API_VERSION`: version Graph API para operaciones de WABA, por ejemplo `v25.0`.
+- `META_REDIRECT_URI`: callback OAuth configurado en Meta; por defecto `/admin/meta/oauth/callback`.
 - `OPENAI_API_KEY`: API key de OpenAI o de OpenRouter.
 - `OPENAI_BASE_URL`: usa `https://openrouter.ai/api/v1` cuando trabajes con OpenRouter.
 - `OPENAI_MODEL`: modelo del agente. Para modelos gratis de OpenRouter puedes usar `openrouter/free`.
@@ -50,7 +58,7 @@ OPENAI_API_KEY=tu_openrouter_api_key
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
 OPENAI_MODEL=openrouter/free
 OPENROUTER_SITE_URL=https://bot.humanio.digital
-OPENROUTER_APP_NAME=Humanio WhatsApp Bot
+OPENROUTER_APP_NAME=Asistto by Humanio
 ```
 
 `openrouter/free` elige automaticamente un modelo gratuito disponible. Si prefieres un
@@ -110,6 +118,17 @@ la conversacion aparece de inmediato y la respuesta se agrega cuando esta lista.
 Para operar bots por cliente desde el panel, usa el manual paso a paso:
 [docs/MANUAL_AGENTES_WHATSAPP.md](docs/MANUAL_AGENTES_WHATSAPP.md).
 
+Paginas publicas para revision de Meta:
+
+- `/privacy`
+- `/terms`
+- `/support`
+- `/data-deletion`
+- `/ai-data-policy`
+
+Estas paginas explican que los datos de WhatsApp se usan para operar el servicio
+del negocio y no para entrenar modelos generales de IA.
+
 ## Multi-bot foundation
 
 La app esta avanzando hacia una arquitectura multi-cliente. El bot actual de
@@ -128,6 +147,12 @@ La primera version del panel multi-bot agrega:
 - `GET /admin/bots/{bot_id}/integrations`: integraciones del bot con APIs,
   calendarios, CRMs o webhooks.
 - `GET /admin/bots/{bot_id}/skills`: habilidades runtime activas para el bot.
+- `GET /admin/bots/{bot_id}/whatsapp`: conexion oficial por Embedded Signup.
+- `GET /admin/bots/{bot_id}/whatsapp/diagnostics`: diagnostico de WABA,
+  token, numero, `subscribed_apps` y posibles `override_callback_uri`.
+- `GET /admin/bots/{bot_id}/whatsapp/templates`: listar y crear plantillas Meta.
+- `GET /admin/tech-provider/review`: checklist de App Review y Access
+  Verification.
 - Login de clientes con usuarios guardados en Postgres.
 
 Si un bot tiene prompt o conocimiento activo en Postgres, el runtime lo usa en
@@ -221,6 +246,29 @@ Cuando el despliegue este listo, configura el webhook en Meta:
 - Webhook field: `messages`
 
 La app tambien acepta `https://bot.humanio.digital/webhook` por compatibilidad.
+
+## 7.1. Preparacion Tech Provider
+
+Para aplicar como Independent Tech Provider directo en Meta:
+
+1. Crea una Meta Business App nueva; no reutilices una app vieja.
+2. Configura nombre visible de producto como `Asistto by Humanio`, sin usar
+   marcas de Meta o WhatsApp en el nombre de la app.
+3. Agrega politica de privacidad, terminos, dominio y correo de contacto.
+4. Activa WhatsApp, inicia `Become a Tech Provider` y obtiene el
+   `META_CONFIG_ID` de Embedded Signup.
+5. En Easypanel configura `META_APP_ID`, `META_APP_SECRET`,
+   `META_CONFIG_ID`, `META_GRAPH_API_VERSION` y `META_REDIRECT_URI`.
+6. En el panel abre `/admin/bots/{bot_id}/whatsapp` y conecta el numero del
+   cliente con Embedded Signup.
+7. Verifica `/admin/bots/{bot_id}/whatsapp/diagnostics`.
+8. Usa `/admin/bots/{bot_id}/whatsapp/templates` para listar o crear una
+   plantilla simple; esto sirve como evidencia para
+   `whatsapp_business_management`.
+
+Los nuevos tokens de WhatsApp se guardan como secreto cifrado en la integracion
+`whatsapp_cloud`. El fallback global `WHATSAPP_ACCESS_TOKEN` sigue existiendo
+para el bot Asistto actual.
 
 ## 8. Panel admin
 

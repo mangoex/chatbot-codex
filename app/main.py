@@ -19,6 +19,7 @@ from app import (
     follow_ups,
     leads,
     openai_client,
+    public_pages,
     signature,
     whatsapp_client,
 )
@@ -55,7 +56,7 @@ async def lifespan(_app: FastAPI):
     await db.close_pool()
 
 
-app = FastAPI(lifespan=lifespan, title="WhatsApp Bot")
+app = FastAPI(lifespan=lifespan, title="Asistto by Humanio")
 
 # Sessions (para /admin). Si SESSION_SECRET está vacío, el panel no funcionará.
 app.add_middleware(
@@ -68,6 +69,7 @@ app.add_middleware(
 
 app.include_router(admin.router)
 app.include_router(admin_tools.router)
+app.include_router(public_pages.router)
 
 
 @app.get("/health")

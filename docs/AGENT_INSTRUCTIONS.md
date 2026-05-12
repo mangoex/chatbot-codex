@@ -42,6 +42,15 @@ los secretos viven en Easypanel, Meta, Google y OpenRouter.
 - El proveedor IA actual es OpenRouter con API compatible con OpenAI.
 - El agente explica el servicio de chatbots de WhatsApp con IA, recomienda
   paquetes y agenda llamadas.
+- Para Meta Tech Provider, posiciona el producto como Asistto by Humanio:
+  automatizacion de atencion, ventas, agenda e integraciones por WhatsApp para
+  negocios. No lo describas como asistente general de IA.
+- El flujo Tech Provider vive en `/admin/tech-provider/review`,
+  `/admin/bots/{bot_id}/whatsapp`,
+  `/admin/bots/{bot_id}/whatsapp/diagnostics` y
+  `/admin/bots/{bot_id}/whatsapp/templates`.
+- Nuevos tokens de WhatsApp deben guardarse cifrados como secreto
+  `access_token` en la integracion `whatsapp_cloud`, no en prompts ni docs.
 - La agenda con Google Calendar ya crea eventos reales y guarda el
   `google_event_id` en `calendar_appointments`.
 - La cancelacion debe borrar el evento real de Google Calendar, no solo

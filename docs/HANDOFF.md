@@ -1,4 +1,4 @@
-# Asistto WhatsApp Bot Handoff
+# Asistto by Humanio Handoff
 
 Este documento resume el estado operativo para continuar el proyecto desde otra
 computadora usando GitHub como fuente de verdad. No contiene secretos.
@@ -15,6 +15,9 @@ computadora usando GitHub como fuente de verdad. No contiene secretos.
 - Panel admin: `https://bot.humanio.digital/admin`.
 - Producto configurado: Asistto, iniciativa de Humanio para chatbots de
   WhatsApp con IA.
+- Posicionamiento para Meta: Asistto by Humanio, plataforma de automatizacion
+  de atencion, ventas, agenda e integraciones por WhatsApp para negocios. No se
+  debe presentar como asistente general de IA.
 - Proveedor IA actual: OpenRouter usando API compatible con OpenAI.
 - Agenda real con Google Calendar: activa y probada.
 
@@ -41,6 +44,10 @@ WHATSAPP_ACCESS_TOKEN=
 WHATSAPP_PHONE_NUMBER_ID=
 WHATSAPP_VERIFY_TOKEN=
 META_APP_SECRET=
+META_APP_ID=
+META_CONFIG_ID=
+META_GRAPH_API_VERSION=v25.0
+META_REDIRECT_URI=https://bot.humanio.digital/admin/meta/oauth/callback
 OPENAI_API_KEY=
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
 OPENAI_MODEL=openrouter/free
@@ -93,6 +100,43 @@ El webhook debe apuntar a:
 ```text
 https://bot.humanio.digital/webhooks/whatsapp
 ```
+
+### Tech Provider / Embedded Signup
+
+Se agrego el bloque preparatorio para aplicar como Independent Tech Provider:
+
+- `/privacy`, `/terms`, `/support`, `/data-deletion` y `/ai-data-policy`.
+- `/admin/tech-provider/review`: checklist de App Review, videos y Access
+  Verification.
+- `/admin/bots/{bot_id}/whatsapp`: lanza Embedded Signup y guarda la conexion.
+- `/admin/bots/{bot_id}/whatsapp/diagnostics`: revisa WABA, numero, token,
+  `subscribed_apps` y posible `override_callback_uri`.
+- `/admin/bots/{bot_id}/whatsapp/templates`: lista y crea plantillas simples.
+
+Los nuevos tokens de WhatsApp se guardan cifrados como secreto `access_token`
+en una integracion `whatsapp_cloud`. El campo historico
+`bot_whatsapp_numbers.whatsapp_access_token` queda como compatibilidad; no debe
+usarse para nuevas conexiones.
+
+Para completar la solicitud en Meta hacen falta valores reales en Easypanel:
+
+```env
+META_APP_ID=
+META_APP_SECRET=
+META_CONFIG_ID=
+META_GRAPH_API_VERSION=v25.0
+META_REDIRECT_URI=https://bot.humanio.digital/admin/meta/oauth/callback
+```
+
+Antes de enviar App Review, grabar sin audio:
+
+1. Login al panel.
+2. Abrir `/admin/bots/{bot_id}/whatsapp`.
+3. Conectar WhatsApp con Embedded Signup.
+4. Ver diagnostico del WABA y numero.
+5. Crear/listar una plantilla.
+6. Mostrar mensaje entrante real y respuesta del bot.
+7. Mostrar ruta de escalacion humana o soporte.
 
 ## Configuracion Del Agente
 
@@ -378,4 +422,6 @@ Tareas siguientes:
 4. Afinar prompt y base de conocimiento sin tocar secretos.
 5. Preparar el futuro panel creador de agentes multi-cliente con bots,
    knowledge, skills, integraciones y enrutamiento por `phone_number_id`.
+6. Crear la Meta Business App nueva, obtener `META_CONFIG_ID` e iniciar
+   `Become a Tech Provider`.
 ```

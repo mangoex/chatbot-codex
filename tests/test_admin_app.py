@@ -43,6 +43,7 @@ sys.modules.setdefault(
 )
 sys.modules.setdefault("asyncpg", types.SimpleNamespace(Pool=object))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
+sys.modules.setdefault("httpx", types.SimpleNamespace(AsyncClient=object))
 sys.modules.setdefault(
     "cryptography.fernet",
     types.SimpleNamespace(Fernet=object, InvalidToken=Exception),

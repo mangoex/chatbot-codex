@@ -38,6 +38,11 @@ class ConfigAliasTests(unittest.TestCase):
         self.assertEqual(config.OPENAI_BASE_URL, "https://openrouter.ai/api/v1")
         self.assertEqual(config.OPENROUTER_SITE_URL, "https://bot.humanio.digital")
         self.assertEqual(config.OPENROUTER_APP_NAME, "Humanio WhatsApp Bot")
+        self.assertEqual(
+            config.META_REDIRECT_URI,
+            "https://bot.humanio.digital/admin/meta/oauth/callback",
+        )
+        self.assertEqual(config.META_GRAPH_API_VERSION, "v25.0")
         self.assertEqual(config.validate(), ["WHATSAPP_PHONE_NUMBER_ID"])
 
     def test_existing_variable_names_still_take_precedence(self):
