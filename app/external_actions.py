@@ -91,6 +91,29 @@ def _request_url(config_data: dict, action_payload: dict) -> str:
     return urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
 
 
+def _operation_config(config_data: dict, operation_name: str | None) -> dict:
+    if not operation_name:
+        return {}
+    operations = config_data.get("operations") or []
+    if not isinstance(operations, list):
+        return {}
+    for operation in operations:
+        if not isinstance(operation, dict):
+            continue
+        if str(operation.get("name") or "").strip() == operation_name:
+            return operation
+    return {}
+
+
+def _merge_dict(base: Any, override: Any) -> dict | None:
+    merged = {}
+    if isinstance(base, dict):
+        merged.update(base)
+    if isinstance(override, dict):
+        merged.update(override)
+    return merged or None
+
+
 def build_request(
     action: dict[str, Any],
     integration: dict[str, Any],
@@ -99,6 +122,7 @@ def build_request(
     action_type = action.get("action_type")
     payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
     config_data = integration.get("config") or {}
+    operation = _operation_config(config_data, str(payload.get("operation") or "").strip())
 
     if action_type == "webhook_post":
         method = str(config_data.get("method") or "POST").upper()
@@ -107,15 +131,21 @@ def build_request(
         method = str(config_data.get("method") or "POST").upper()
         request_json = payload
     else:
-        method = str(payload.get("method") or config_data.get("method") or "GET").upper()
-        request_json = payload.get("json") if isinstance(payload.get("json"), dict) else None
+        method = str(
+            payload.get("method")
+            or operation.get("method")
+            or config_data.get("method")
+            or "GET"
+        ).upper()
+        request_json = _merge_dict(operation.get("json"), payload.get("json"))
 
     allowed_methods = {str(item).upper() for item in config_data.get("allowed_methods", ["GET", "POST"])}
     if method not in allowed_methods:
         log.warning("Metodo no permitido para accion externa: %s", method)
         return None
 
-    url = _request_url(config_data, payload)
+    request_payload = {**operation, **payload} if operation else payload
+    url = _request_url(config_data, request_payload)
     if not url:
         log.warning("Accion externa sin URL configurada: %s", action_type)
         return None
@@ -125,15 +155,36 @@ def build_request(
         "url": url,
         "headers": _headers(config_data, secrets),
     }
-    params = payload.get("params")
-    if isinstance(params, dict):
+    params = _merge_dict(operation.get("params"), payload.get("params"))
+    if params:
         request_data["params"] = params
     if request_json is not None:
         request_data["json"] = request_json
-    data = payload.get("data")
-    if isinstance(data, dict) and request_json is None:
+    data = _merge_dict(operation.get("data"), payload.get("data"))
+    if data and request_json is None:
         request_data["data"] = data
     return request_data
+
+
+def _operation_instruction_lines(config_data: dict) -> list[str]:
+    operations = config_data.get("operations") or []
+    if not isinstance(operations, list):
+        return []
+    lines = []
+    for operation in operations[:8]:
+        if not isinstance(operation, dict):
+            continue
+        name = str(operation.get("name") or "").strip()
+        path = str(operation.get("path") or operation.get("url") or "").strip()
+        method = str(operation.get("method") or config_data.get("method") or "GET").upper()
+        description = str(operation.get("description") or "").strip()
+        if not name or not path:
+            continue
+        label = f"{name}: {method} {path}"
+        if description:
+            label += f" - {description}"
+        lines.append(label)
+    return lines
 
 
 def _decrypt_secrets(encrypted_values: dict[str, str]) -> dict[str, str]:
@@ -211,10 +262,17 @@ async def system_instructions(bot_id: int | None = None) -> str:
             'agrega al final [[WEBHOOK_POST: {"payload": {"campo": "valor"}}]].'
         )
     if await skill_runtime.external_api_skill_enabled(bot_id):
+        detail = ""
+        integration = await db.get_active_bot_integration(bot_id, "external_api")
+        if integration:
+            operation_lines = _operation_instruction_lines(integration.get("config") or {})
+            if operation_lines:
+                detail = "\nOperaciones disponibles:\n" + "\n".join(f"  - {line}" for line in operation_lines)
         parts.append(
             "- API externa: cuando debas consultar o enviar datos a una API configurada, "
             'agrega [[EXTERNAL_API_REQUEST: {"method": "GET", "path": "/ruta", "params": {}}]] '
-            'o [[EXTERNAL_API_REQUEST: {"method": "POST", "path": "/ruta", "json": {}}]].'
+            'o [[EXTERNAL_API_REQUEST: {"operation": "nombre_operacion", "params": {}, "json": {}}]].'
+            + detail
         )
     if await skill_runtime.crm_skill_enabled(bot_id):
         parts.append(

@@ -114,6 +114,53 @@ class ExternalActionsTests(unittest.TestCase):
         self.assertEqual(request_data["headers"]["X-Source"], "whatsapp")
         self.assertEqual(request_data["headers"]["Authorization"], "Bearer dummy-value")
 
+    def test_builds_named_operation_request(self):
+        action = {
+            "action_type": "external_api_request",
+            "payload": {
+                "operation": "buscar_cliente",
+                "params": {"phone": "521555"},
+            },
+        }
+        integration = {
+            "config": {
+                "base_url": "https://api.example.com",
+                "operations": [
+                    {
+                        "name": "buscar_cliente",
+                        "method": "GET",
+                        "path": "/clients/search",
+                        "params": {"source": "whatsapp"},
+                    }
+                ],
+            }
+        }
+
+        request_data = external_actions.build_request(action, integration, {})
+
+        self.assertEqual(request_data["method"], "GET")
+        self.assertEqual(request_data["url"], "https://api.example.com/clients/search")
+        self.assertEqual(
+            request_data["params"],
+            {"source": "whatsapp", "phone": "521555"},
+        )
+
+    def test_operation_lines_expose_available_api_actions(self):
+        lines = external_actions._operation_instruction_lines(
+            {
+                "operations": [
+                    {
+                        "name": "crear_cita",
+                        "method": "POST",
+                        "path": "/appointments",
+                        "description": "Crea una cita en el sistema del cliente",
+                    }
+                ]
+            }
+        )
+
+        self.assertIn("crear_cita: POST /appointments", lines[0])
+
     def test_process_reply_executes_enabled_webhook_and_removes_marker(self):
         async def run():
             original_client = external_actions.httpx.AsyncClient

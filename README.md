@@ -291,12 +291,41 @@ Ejemplo de integracion `external_api`:
 ```json
 {
   "base_url": "https://api.example.com",
+  "method": "GET",
   "allowed_methods": ["GET", "POST"],
+  "headers": {
+    "Accept": "application/json"
+  },
   "auth_header": "Authorization",
   "auth_scheme": "Bearer",
-  "timeout_seconds": 20
+  "timeout_seconds": 20,
+  "test": {
+    "method": "GET",
+    "path": "/health",
+    "params": {}
+  },
+  "operations": [
+    {
+      "name": "buscar_cliente",
+      "description": "Busca cliente por telefono.",
+      "method": "GET",
+      "path": "/clientes",
+      "params": {"phone": "{{telefono}}"}
+    },
+    {
+      "name": "crear_lead",
+      "description": "Registra prospecto calificado.",
+      "method": "POST",
+      "path": "/leads",
+      "json": {"name": "{{nombre}}", "phone": "{{telefono}}"}
+    }
+  ]
 }
 ```
+
+Para `external_api`, la pagina de la integracion tambien muestra un constructor
+visual con Base URL, autenticacion, prueba segura `GET/HEAD` y operaciones que
+el bot puede invocar por nombre.
 
 El runtime soporta marcadores internos que el modelo agrega al final de su
 respuesta y que nunca se muestran al usuario:
@@ -304,6 +333,7 @@ respuesta y que nunca se muestran al usuario:
 ```text
 [[WEBHOOK_POST: {"payload": {"name": "Miguel", "phone": "521..."}}]]
 [[EXTERNAL_API_REQUEST: {"method": "GET", "path": "/clientes", "params": {"phone": "521..."}}]]
+[[EXTERNAL_API_REQUEST: {"operation": "buscar_cliente", "params": {"phone": "521..."}}]]
 [[EXTERNAL_API_REQUEST: {"method": "POST", "path": "/leads", "json": {"name": "Miguel"}}]]
 [[CRM_LEAD: {"name": "Miguel", "phone": "521...", "status": "new", "notes": "Quiere una cita"}}]]
 ```

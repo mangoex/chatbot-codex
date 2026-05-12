@@ -1628,6 +1628,277 @@ def _integration_type_options(selected: str = "external_api") -> str:
     )
 
 
+def _default_integration_config(integration_type: str) -> dict:
+    if integration_type == "external_api":
+        return {
+            "base_url": "",
+            "method": "GET",
+            "allowed_methods": ["GET", "POST"],
+            "headers": {"Accept": "application/json"},
+            "auth_header": "Authorization",
+            "auth_scheme": "Bearer",
+            "timeout_seconds": 20,
+            "test": {"method": "GET", "path": "/health", "params": {}},
+            "operations": [
+                {
+                    "name": "buscar_cliente",
+                    "description": "Busca un cliente por telefono o correo.",
+                    "method": "GET",
+                    "path": "/clientes",
+                    "params": {"phone": "{{telefono}}"},
+                },
+                {
+                    "name": "crear_lead",
+                    "description": "Registra un prospecto calificado.",
+                    "method": "POST",
+                    "path": "/leads",
+                    "json": {"name": "{{nombre}}", "phone": "{{telefono}}"},
+                },
+            ],
+        }
+    if integration_type == "webhook":
+        return {
+            "url": "",
+            "method": "POST",
+            "allowed_methods": ["POST"],
+            "headers": {"Content-Type": "application/json"},
+            "auth_header": "Authorization",
+            "auth_scheme": "Bearer",
+            "timeout_seconds": 20,
+        }
+    if integration_type == "google_calendar":
+        return {"calendar_id": "primary", "timezone": "America/Chihuahua"}
+    return {}
+
+
+def _parse_json_list(value: str, field_name: str) -> list:
+    clean = (value or "").strip()
+    if not clean:
+        return []
+    try:
+        parsed = json.loads(clean)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"{field_name} invalido: {exc.msg}") from exc
+    if not isinstance(parsed, list):
+        raise HTTPException(status_code=400, detail=f"{field_name} debe ser una lista.")
+    return parsed
+
+
+def _clean_methods(value: str | list | None) -> list[str]:
+    if isinstance(value, list):
+        raw = value
+    else:
+        raw = re.split(r"[,\s]+", value or "")
+    methods = []
+    for item in raw:
+        method = str(item or "").strip().upper()
+        if method and method not in methods:
+            methods.append(method)
+    return methods or ["GET", "POST"]
+
+
+def _safe_int(value, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(number, maximum))
+
+
+def _clean_operations(value: str) -> list[dict]:
+    operations = []
+    for item in _parse_json_list(value, "Operaciones JSON"):
+        if not isinstance(item, dict):
+            raise HTTPException(status_code=400, detail="Cada operacion debe ser un objeto.")
+        name = str(item.get("name") or "").strip()
+        path = str(item.get("path") or item.get("url") or "").strip()
+        if not name or not path:
+            raise HTTPException(status_code=400, detail="Cada operacion necesita name y path/url.")
+        operation = {
+            "name": name,
+            "description": str(item.get("description") or "").strip(),
+            "method": str(item.get("method") or "GET").strip().upper(),
+        }
+        if item.get("url"):
+            operation["url"] = str(item.get("url")).strip()
+        else:
+            operation["path"] = path
+        for key in ("params", "json", "data"):
+            if item.get(key) is not None:
+                if not isinstance(item.get(key), dict):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{key} de {name} debe ser un objeto.",
+                    )
+                operation[key] = item[key]
+        operations.append(operation)
+    return operations
+
+
+def _external_api_config_from_form(
+    *,
+    base_url: str,
+    method: str,
+    default_path: str,
+    allowed_methods: str,
+    headers_json: str,
+    auth_header: str,
+    auth_scheme: str,
+    timeout_seconds: int,
+    test_method: str,
+    test_path: str,
+    test_params_json: str,
+    operations_json: str,
+) -> dict:
+    headers = _parse_config_json(headers_json)
+    test_params = _parse_config_json(test_params_json)
+    clean_timeout = _safe_int(timeout_seconds, 20, 3, 60)
+    return {
+        "base_url": base_url.strip().rstrip("/"),
+        "method": (method or "GET").strip().upper(),
+        "path": default_path.strip(),
+        "allowed_methods": _clean_methods(allowed_methods),
+        "headers": headers,
+        "auth_header": (auth_header or "Authorization").strip(),
+        "auth_scheme": (auth_scheme or "Bearer").strip(),
+        "timeout_seconds": clean_timeout,
+        "test": {
+            "method": (test_method or "GET").strip().upper(),
+            "path": test_path.strip() or default_path.strip() or "/",
+            "params": test_params,
+        },
+        "operations": _clean_operations(operations_json),
+    }
+
+
+def _external_api_operations_rows(operations: list) -> str:
+    rows = []
+    for operation in operations or []:
+        if not isinstance(operation, dict):
+            continue
+        rows.append(
+            f"""
+            <tr>
+              <td><strong>{html.escape(str(operation.get("name") or ""))}</strong><br><span class="muted">{html.escape(str(operation.get("description") or ""))}</span></td>
+              <td><span class="badge">{html.escape(str(operation.get("method") or "GET").upper())}</span></td>
+              <td><span class="code">{html.escape(str(operation.get("path") or operation.get("url") or ""))}</span></td>
+            </tr>
+            """
+        )
+    return "".join(rows) or '<tr><td colspan="3" class="empty">Sin operaciones configuradas.</td></tr>'
+
+
+def _external_api_builder_panel(
+    bot_id: int,
+    integration_id: int,
+    integration: dict,
+    can_edit: bool,
+) -> str:
+    if integration.get("integration_type") != "external_api":
+        return ""
+    cfg = integration.get("config") or {}
+    test_cfg = cfg.get("test") if isinstance(cfg.get("test"), dict) else {}
+    readonly = "" if can_edit else "readonly"
+    disabled = "" if can_edit else "disabled"
+    headers_json = _pretty_json(cfg.get("headers") if isinstance(cfg.get("headers"), dict) else {})
+    test_params_json = _pretty_json(test_cfg.get("params") if isinstance(test_cfg.get("params"), dict) else {})
+    operations = cfg.get("operations") if isinstance(cfg.get("operations"), list) else []
+    operations_json = json.dumps(
+        operations or _default_integration_config("external_api")["operations"],
+        ensure_ascii=True,
+        indent=2,
+    )
+    methods = ", ".join(_clean_methods(cfg.get("allowed_methods") or ["GET", "POST"]))
+    operations_rows = _external_api_operations_rows(operations)
+    test_button = (
+        '<button class="btn secondary" id="testExternalApi" type="button">Probar conexion</button>'
+        if can_edit else ""
+    )
+    return f"""
+    <section class="grid split" style="margin-top:14px">
+      <div class="panel editor">
+        <h2>Constructor API externa</h2>
+        <form method="post" action="/admin/bots/{bot_id}/integrations/{integration_id}/external-api">
+          <label>Base URL</label>
+          <input name="base_url" value="{html.escape(str(cfg.get("base_url") or ""))}" placeholder="https://api.cliente.com" {readonly} required>
+          <label>Metodo por defecto</label>
+          <select name="method" {disabled}>
+            {''.join(f'<option value="{m}" {"selected" if str(cfg.get("method") or "GET").upper() == m else ""}>{m}</option>' for m in ("GET", "POST", "PUT", "PATCH"))}
+          </select>
+          <label>Ruta por defecto</label>
+          <input name="default_path" value="{html.escape(str(cfg.get("path") or ""))}" placeholder="/clientes" {readonly}>
+          <label>Metodos permitidos</label>
+          <input name="allowed_methods" value="{html.escape(methods)}" placeholder="GET, POST" {readonly}>
+          <label>Headers sin secretos</label>
+          <textarea class="short" name="headers_json" {readonly}>{html.escape(headers_json)}</textarea>
+          <label>Autenticacion</label>
+          <div class="control-grid">
+            <input name="auth_header" value="{html.escape(str(cfg.get("auth_header") or "Authorization"))}" placeholder="Authorization" {readonly}>
+            <input name="auth_scheme" value="{html.escape(str(cfg.get("auth_scheme") or "Bearer"))}" placeholder="Bearer" {readonly}>
+          </div>
+          <label>Timeout segundos</label>
+          <input name="timeout_seconds" type="number" min="3" max="60" value="{_safe_int(cfg.get("timeout_seconds"), 20, 3, 60)}" {readonly}>
+          <label>Prueba segura</label>
+          <div class="control-grid">
+            <select name="test_method" id="apiTestMethod" {disabled}>
+              {''.join(f'<option value="{m}" {"selected" if str(test_cfg.get("method") or "GET").upper() == m else ""}>{m}</option>' for m in ("GET", "HEAD"))}
+            </select>
+            <input name="test_path" id="apiTestPath" value="{html.escape(str(test_cfg.get("path") or "/health"))}" placeholder="/health" {readonly}>
+          </div>
+          <label>Parametros de prueba</label>
+          <textarea class="short" name="test_params_json" id="apiTestParams" {readonly}>{html.escape(test_params_json)}</textarea>
+          <label>Operaciones que puede usar el bot</label>
+          <textarea class="short" name="operations_json" {readonly}>{html.escape(operations_json)}</textarea>
+          <div class="actions" style="margin-top:14px">
+            {'<button class="btn" type="submit">Guardar API</button>' if can_edit else '<span class="badge">Solo lectura</span>'}
+            {test_button}
+          </div>
+          <div id="apiTestStatus" class="sync-status">Guarda cambios antes de probar. La prueba solo usa GET o HEAD.</div>
+        </form>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Operacion</th><th>Metodo</th><th>Ruta</th></tr></thead>
+          <tbody>{operations_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    <script>
+      (() => {{
+        const btn = document.getElementById("testExternalApi");
+        const status = document.getElementById("apiTestStatus");
+        const setStatus = (message, className = "") => {{
+          if (!status) return;
+          status.className = `sync-status ${{className}}`;
+          status.textContent = message;
+        }};
+        btn?.addEventListener("click", async () => {{
+          const payload = new FormData();
+          payload.set("method", document.getElementById("apiTestMethod")?.value || "GET");
+          payload.set("path", document.getElementById("apiTestPath")?.value || "/");
+          payload.set("params_json", document.getElementById("apiTestParams")?.value || "{{}}");
+          btn.disabled = true;
+          setStatus("Probando conexion...");
+          try {{
+            const response = await fetch("/admin/bots/{bot_id}/integrations/{integration_id}/test", {{
+              method: "POST",
+              headers: {{ "Accept": "application/json" }},
+              body: payload,
+            }});
+            const data = await response.json().catch(() => ({{}}));
+            if (!response.ok || !data.ok) throw new Error(data.error || "La API no respondio correctamente.");
+            setStatus(`OK HTTP ${{data.status_code}} en ${{data.elapsed_ms}} ms`, "ok");
+          }} catch (error) {{
+            setStatus(error.message || "No se pudo probar la API.", "err");
+          }} finally {{
+            btn.disabled = false;
+          }}
+        }});
+      }})();
+    </script>
+    """
+
+
 @router.get("/bots/{bot_id}/integrations", response_class=HTMLResponse)
 async def bot_integrations_page(request: Request, bot_id: int, saved: str | None = None):
     session = _require_login(request)
@@ -1654,7 +1925,7 @@ async def bot_integrations_page(request: Request, bot_id: int, saved: str | None
           <form method="post" action="/admin/bots/{bot_id}/integrations">
             <label>Nombre</label><input name="name" placeholder="Agenda principal, CRM ventas, API cliente..." required>
             <label>Tipo</label><select name="integration_type">{_integration_type_options()}</select>
-            <label>Config JSON sin secretos</label><textarea class="short" name="config_json" required>{html.escape(_pretty_json({"base_url": "", "calendar_id": "primary", "timezone": "America/Chihuahua"}))}</textarea>
+            <label>Config JSON sin secretos</label><textarea class="short" name="config_json" required>{html.escape(_pretty_json(_default_integration_config("external_api")))}</textarea>
             <label><input type="checkbox" name="enabled" checked style="width:auto"> Activa</label>
             <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Crear integracion</button></div>
           </form>
@@ -1688,6 +1959,8 @@ async def create_bot_integration_page(
     if not clean_name:
         raise HTTPException(status_code=400, detail="El nombre es obligatorio")
     config_data = _parse_config_json(config_json)
+    if not config_data:
+        config_data = _default_integration_config(integration_type.strip() or "custom")
     integration_id = await db.create_bot_integration(
         bot_id=bot_id,
         integration_type=integration_type.strip() or "custom",
@@ -1756,6 +2029,12 @@ async def edit_bot_integration_page(
         """
     notice = '<div class="trend">Cambios guardados.</div>' if saved else ""
     checked = "checked" if integration.get("enabled") else ""
+    external_api_panel = _external_api_builder_panel(
+        bot_id,
+        integration_id,
+        integration,
+        can_edit,
+    )
     body = f"""
     <div class="topbar">
       <div><a class="sub" href="/admin/bots/{bot_id}/integrations">Volver</a><h1>{html.escape(integration["name"])}</h1><div class="sub">{html.escape(bot["name"])} - {html.escape(integration["integration_type"])}</div>{notice}</div>
@@ -1777,6 +2056,7 @@ async def edit_bot_integration_page(
     <section class="table-wrap" style="margin-top:14px">
       <table><thead><tr><th>Secreto</th><th>Actualizado</th><th></th></tr></thead><tbody>{secret_html}</tbody></table>
     </section>
+    {external_api_panel}
     """
     return HTMLResponse(_layout("Integracion", "bots", body))
 
@@ -1811,6 +2091,138 @@ async def update_bot_integration_page(
     return RedirectResponse(
         f"/admin/bots/{bot_id}/integrations/{integration_id}?saved=1",
         status_code=302,
+    )
+
+
+@router.post("/bots/{bot_id}/integrations/{integration_id}/external-api")
+async def update_external_api_builder_page(
+    request: Request,
+    bot_id: int,
+    integration_id: int,
+    base_url: str = Form(...),
+    method: str = Form("GET"),
+    default_path: str = Form(""),
+    allowed_methods: str = Form("GET, POST"),
+    headers_json: str = Form("{}"),
+    auth_header: str = Form("Authorization"),
+    auth_scheme: str = Form("Bearer"),
+    timeout_seconds: int = Form(20),
+    test_method: str = Form("GET"),
+    test_path: str = Form("/health"),
+    test_params_json: str = Form("{}"),
+    operations_json: str = Form("[]"),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    integration = await db.get_bot_integration(bot_id, integration_id)
+    if not integration:
+        raise HTTPException(status_code=404, detail="Integracion no encontrada")
+    if integration.get("integration_type") != "external_api":
+        raise HTTPException(status_code=400, detail="Solo aplica para API externa")
+    config_data = _external_api_config_from_form(
+        base_url=base_url,
+        method=method,
+        default_path=default_path,
+        allowed_methods=allowed_methods,
+        headers_json=headers_json,
+        auth_header=auth_header,
+        auth_scheme=auth_scheme,
+        timeout_seconds=timeout_seconds,
+        test_method=test_method,
+        test_path=test_path,
+        test_params_json=test_params_json,
+        operations_json=operations_json,
+    )
+    await db.update_bot_integration(
+        bot_id=bot_id,
+        integration_id=integration_id,
+        integration_type="external_api",
+        name=integration["name"],
+        config_data=config_data,
+        enabled=bool(integration.get("enabled")),
+    )
+    return RedirectResponse(
+        f"/admin/bots/{bot_id}/integrations/{integration_id}?saved=1",
+        status_code=302,
+    )
+
+
+@router.post("/bots/{bot_id}/integrations/{integration_id}/test", response_class=JSONResponse)
+async def test_external_api_integration_page(
+    request: Request,
+    bot_id: int,
+    integration_id: int,
+    method: str = Form("GET"),
+    path: str = Form("/"),
+    params_json: str = Form("{}"),
+):
+    from time import perf_counter
+    import httpx
+    from app import external_actions
+
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    integration = await db.get_bot_integration(bot_id, integration_id)
+    if not integration:
+        return JSONResponse({"ok": False, "error": "Integracion no encontrada"}, status_code=404)
+    if integration.get("integration_type") != "external_api":
+        return JSONResponse({"ok": False, "error": "Solo aplica para API externa"}, status_code=400)
+    clean_method = (method or "GET").strip().upper()
+    if clean_method not in {"GET", "HEAD"}:
+        return JSONResponse(
+            {"ok": False, "error": "La prueba solo permite GET o HEAD para evitar escrituras."},
+            status_code=400,
+        )
+    params = _parse_config_json(params_json)
+    encrypted = await db.get_integration_secret_values(integration_id)
+    secrets = {}
+    for name, encrypted_value in encrypted.items():
+        value = secure_store.decrypt_secret(encrypted_value)
+        if value:
+            secrets[name] = value
+
+    cfg = dict(integration.get("config") or {})
+    allowed = set(_clean_methods(cfg.get("allowed_methods") or ["GET", "POST"]))
+    allowed.add(clean_method)
+    cfg["allowed_methods"] = sorted(allowed)
+    request_data = external_actions.build_request(
+        {
+            "action_type": "external_api_request",
+            "payload": {"method": clean_method, "path": path, "params": params},
+        },
+        {"config": cfg},
+        secrets,
+    )
+    if not request_data:
+        return JSONResponse(
+            {"ok": False, "error": "No se pudo construir la solicitud. Revisa Base URL y ruta."},
+            status_code=400,
+        )
+    timeout = int(cfg.get("timeout_seconds") or 20)
+    started = perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(
+                request_data.pop("method"),
+                request_data.pop("url"),
+                **request_data,
+            )
+    except Exception as exc:
+        return JSONResponse(
+            {"ok": False, "error": str(exc)[:500]},
+            status_code=502,
+        )
+    elapsed_ms = int((perf_counter() - started) * 1000)
+    ok = response.status_code < 400
+    return JSONResponse(
+        {
+            "ok": ok,
+            "status_code": response.status_code,
+            "elapsed_ms": elapsed_ms,
+            "preview": (response.text or "")[:500],
+            "error": "" if ok else f"HTTP {response.status_code}",
+        },
+        status_code=200 if ok else 502,
     )
 
 

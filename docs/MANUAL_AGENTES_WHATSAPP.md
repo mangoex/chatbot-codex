@@ -402,17 +402,49 @@ api_key
 
 ### API externa
 
-Config JSON sin secretos:
+En integraciones de tipo `external_api`, abre la integracion y usa
+"Constructor API externa" para llenar Base URL, autenticacion, prueba segura y
+operaciones. Tambien puedes editar el JSON si necesitas algo avanzado.
+
+Config JSON sin secretos equivalente:
 
 ```json
 {
   "base_url": "https://api.example.com",
+  "method": "GET",
   "allowed_methods": ["GET", "POST"],
+  "headers": {
+    "Accept": "application/json"
+  },
   "auth_header": "Authorization",
   "auth_scheme": "Bearer",
-  "timeout_seconds": 20
+  "timeout_seconds": 20,
+  "test": {
+    "method": "GET",
+    "path": "/health",
+    "params": {}
+  },
+  "operations": [
+    {
+      "name": "buscar_cliente",
+      "description": "Busca cliente por telefono.",
+      "method": "GET",
+      "path": "/clientes",
+      "params": {"phone": "{{telefono}}"}
+    },
+    {
+      "name": "crear_lead",
+      "description": "Registra prospecto calificado.",
+      "method": "POST",
+      "path": "/leads",
+      "json": {"name": "{{nombre}}", "phone": "{{telefono}}"}
+    }
+  ]
 }
 ```
+
+La prueba de conexion del panel solo usa `GET` o `HEAD` para evitar crear,
+modificar o borrar datos del cliente accidentalmente.
 
 Secretos sugeridos:
 

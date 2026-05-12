@@ -237,6 +237,29 @@ class AdminControlAppTests(unittest.TestCase):
         self.assertIn("todavia no tiene un bot asignado", response.content)
         self.assertIn("Aun no hay conversaciones", response.content)
 
+    def test_external_api_config_builder_parses_visual_fields(self):
+        config = admin._external_api_config_from_form(
+            base_url="https://api.example.com/",
+            method="post",
+            default_path="/leads",
+            allowed_methods="GET, POST",
+            headers_json='{"X-Source": "whatsapp"}',
+            auth_header="Authorization",
+            auth_scheme="Bearer",
+            timeout_seconds=20,
+            test_method="GET",
+            test_path="/health",
+            test_params_json='{"ping": "1"}',
+            operations_json='[{"name":"crear_lead","method":"POST","path":"/leads","json":{"name":"{{nombre}}"}}]',
+        )
+
+        self.assertEqual(config["base_url"], "https://api.example.com")
+        self.assertEqual(config["method"], "POST")
+        self.assertEqual(config["allowed_methods"], ["GET", "POST"])
+        self.assertEqual(config["headers"]["X-Source"], "whatsapp")
+        self.assertEqual(config["test"]["params"], {"ping": "1"})
+        self.assertEqual(config["operations"][0]["name"], "crear_lead")
+
 
 if __name__ == "__main__":
     unittest.main()
