@@ -1,0 +1,52 @@
+"""Final cleanup and safety checks for WhatsApp replies."""
+import re
+
+_REINTRO_RE = re.compile(
+    r"^\s*hola\s*,?\s*soy\s+(?:el\s+asistente\s+integrado\s+de\s+)?asistto(?:\s+de\s+humanio)?[.!:,]?\s*",
+    re.IGNORECASE,
+)
+_MISSING_SPACE_AFTER_COMMA_RE = re.compile(r",(?=\S)")
+_BROKEN_PATTERNS = (
+    re.compile(r"\bAutoObetendr", re.IGNORECASE),
+    re.compile(r"\bessays?-offer\b", re.IGNORECASE),
+    re.compile(r"\bsharepoint\b", re.IGNORECASE),
+    re.compile(r"\bn prodotto\b", re.IGNORECASE),
+    re.compile(r"[\uFFFC\uFFFD]"),
+)
+
+_FALLBACK_REPLY = (
+    "Asistto conecta el WhatsApp de tu negocio con un asistente de IA entrenado con tu información.\n"
+    "El asistente responde dudas, captura prospectos y puede ayudar a agendar citas cuando la integración está activa.\n"
+    "¿Qué tipo de negocio quieres automatizar?"
+)
+
+
+def looks_broken(reply: str) -> bool:
+    clean = reply or ""
+    if any(pattern.search(clean) for pattern in _BROKEN_PATTERNS):
+        return True
+    if clean.endswith((",", ":", ";")):
+        return True
+    words = clean.split()
+    if len(words) > 10:
+        non_ascii_symbols = sum(1 for ch in clean if ord(ch) > 10000)
+        if non_ascii_symbols >= 2:
+            return True
+    return False
+
+
+def polish(reply: str, history: list[dict]) -> str:
+    clean = (reply or "").strip()
+    if looks_broken(clean):
+        clean = _FALLBACK_REPLY
+
+    clean = _MISSING_SPACE_AFTER_COMMA_RE.sub(", ", clean)
+
+    has_prior_assistant = any(item.get("role") == "assistant" for item in history)
+    if has_prior_assistant and _REINTRO_RE.match(clean):
+        clean = _REINTRO_RE.sub("", clean, count=1).lstrip()
+        clean = clean[:1].upper() + clean[1:] if clean else ""
+
+    if clean.endswith(","):
+        clean = clean[:-1].rstrip() + "."
+    return clean
