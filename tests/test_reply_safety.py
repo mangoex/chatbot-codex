@@ -1,0 +1,54 @@
+import unittest
+
+from app import reply_safety
+
+
+class ReplySafetyTests(unittest.TestCase):
+    def test_adds_missing_space_after_comma(self):
+        self.assertEqual(
+            reply_safety.polish("Hola,soy Asistto.", []),
+            "Hola, soy Asistto.",
+        )
+
+    def test_removes_reintroduction_when_conversation_already_started(self):
+        history = [{"role": "assistant", "content": "Hola, soy Asistto de Humanio."}]
+
+        self.assertEqual(
+            reply_safety.polish(
+                "Hola,soy Asistto. Para tu negocio puedo responder dudas.",
+                history,
+            ),
+            "Para tu negocio puedo responder dudas.",
+        )
+
+    def test_removes_integrated_assistant_reintroduction(self):
+        history = [{"role": "assistant", "content": "Hola, soy Asistto de Humanio."}]
+
+        self.assertEqual(
+            reply_safety.polish(
+                "Hola, soy el asistente integrado de Asistto. Conecta WhatsApp con IA.",
+                history,
+            ),
+            "Conecta WhatsApp con IA.",
+        )
+
+    def test_replaces_broken_model_output(self):
+        reply = reply_safety.polish(
+            "Como aparece en la página principal: AutoObetendrá conexión a essays-offer sharepoint",
+            [{"role": "assistant", "content": "Hola"}],
+        )
+
+        self.assertIn("Asistto conecta el WhatsApp", reply)
+        self.assertNotIn("AutoObetendrá", reply)
+
+    def test_closes_dangling_comma(self):
+        self.assertEqual(
+            reply_safety.polish("Puedo responder consultas sobre servicios,", []),
+            "Asistto conecta el WhatsApp de tu negocio con un asistente de IA entrenado con tu información.\n"
+            "El asistente responde dudas, captura prospectos y puede ayudar a agendar citas cuando la integración está activa.\n"
+            "¿Qué tipo de negocio quieres automatizar?",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()

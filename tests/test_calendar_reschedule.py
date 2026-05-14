@@ -108,7 +108,7 @@ class CalendarRescheduleTests(unittest.TestCase):
 
                 reply, scheduled = await calendar_client.process_reply(
                     "5215550000000",
-                    '[[CALENDAR_EVENT: {"title":"Llamada con Miguel","start":"2026-05-13T10:00:00-06:00","duration_minutes":30,"attendee_name":"Miguel Gonzalez","topic":"Prueba"}]]',
+                    '[[CALENDAR_EVENT: {"title":"Llamada con Miguel","start":"2026-05-20T10:00:00-06:00","duration_minutes":30,"attendee_name":"Miguel Gonzalez","topic":"Prueba"}]]',
                     bot_id=1,
                     replace_existing=True,
                 )

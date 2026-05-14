@@ -131,8 +131,32 @@ class AgendaGuardTests(unittest.TestCase):
             )
 
             self.assertFalse(scheduled)
-            self.assertIn("hagamos una prueba", reply.lower())
-            self.assertIn("nombre", reply.lower())
+            self.assertIn("a nombre de quién", reply.lower())
+            self.assertIn("agendo la llamada", reply.lower())
+
+        import asyncio
+
+        asyncio.run(run())
+
+    def test_single_name_after_name_prompt_is_accepted(self):
+        async def run():
+            history = [
+                {"role": "user", "content": "si, una llamada primero"},
+                {"role": "assistant", "content": "Claro. ¿A nombre de quién agendo la llamada?"},
+                {"role": "user", "content": "Ruben"},
+            ]
+
+            reply, scheduled = await agenda_guard.maybe_handle(
+                "5215550000000",
+                "Ruben",
+                history,
+                bot_id=1,
+            )
+
+            self.assertFalse(scheduled)
+            self.assertIn("Gracias, Ruben.", reply)
+            self.assertIn("Qué día y hora", reply)
+            self.assertNotIn("A nombre de quién", reply)
 
         import asyncio
 

@@ -13,6 +13,7 @@ from app import (
     bots,
     calendar_client,
     config,
+    core_replies,
     db,
     escalations,
     external_actions,
@@ -20,6 +21,7 @@ from app import (
     leads,
     openai_client,
     public_pages,
+    reply_safety,
     signature,
     whatsapp_client,
 )
@@ -146,6 +148,7 @@ async def _send_and_track(
     history: list[dict],
     scheduled: bool = False,
 ) -> None:
+    reply = reply_safety.polish(reply, history)
     await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
     await whatsapp_client.send_text(
         wa_id,
@@ -224,6 +227,13 @@ async def _process_message(payload: dict) -> None:
 
     await db.save_message(wa_id, "user", user_text, bot_id=bot.id)
     current_history = history + [{"role": "user", "content": user_text}]
+
+    core_reply = core_replies.maybe_handle(user_text, history)
+    if core_reply:
+        reply = await leads.process_reply(wa_id, core_reply, current_history, bot_id=bot.id)
+        await _send_and_track(bot, wa_id, user_text, reply, history)
+        log.info("Core reply respondio a %s (%d chars)", wa_id, len(reply))
+        return
 
     agenda_reply, scheduled = await agenda_guard.maybe_handle(
         wa_id, user_text, current_history, bot_id=bot.id
