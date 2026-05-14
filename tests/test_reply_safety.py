@@ -21,6 +21,18 @@ class ReplySafetyTests(unittest.TestCase):
             "Para tu negocio puedo responder dudas.",
         )
 
+    def test_keeps_intro_when_current_user_greets_again(self):
+        history = [{"role": "assistant", "content": "Hola, soy Asistto de Humanio."}]
+
+        self.assertEqual(
+            reply_safety.polish(
+                "Hola, soy Asistto de Humanio. Te puedo explicar como funcionan los chatbots.",
+                history,
+                user_text="Hola",
+            ),
+            "Hola, soy Asistto de Humanio. Te puedo explicar como funcionan los chatbots.",
+        )
+
     def test_removes_integrated_assistant_reintroduction(self):
         history = [{"role": "assistant", "content": "Hola, soy Asistto de Humanio."}]
 
