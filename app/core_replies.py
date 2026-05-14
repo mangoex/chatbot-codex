@@ -14,6 +14,16 @@ _UNCLEAR_RE = re.compile(
     r"\b(no entiendo|no entend[ií]|c[oó]mo\??|como\??|me explicas mejor|mas claro|más claro)\b",
     re.IGNORECASE,
 )
+_SERVICES_RE = re.compile(
+    r"\b(servicios?|qu[eé]\s+(?:ofrecen|hacen|incluye)|cu[aá]les\s+son\s+(?:sus|los)\s+servicios|"
+    r"que\s+(?:ofrecen|hacen|incluye)|planes?|paquetes?)\b",
+    re.IGNORECASE,
+)
+_ATTENTION_APPOINTMENTS_RE = re.compile(
+    r"\b(?:atenci[oó]n|clientes?|soporte|dudas|mensajes)\b.{0,50}\b(?:citas?|agenda|calendario)\b"
+    r"|\b(?:citas?|agenda|calendario)\b.{0,50}\b(?:atenci[oó]n|clientes?|soporte|dudas|mensajes)\b",
+    re.IGNORECASE | re.DOTALL,
+)
 _VET_RE = re.compile(r"\b(veterinaria|veterinario|mascota|mascotas|perro|gato)\b", re.IGNORECASE)
 _DENTAL_RE = re.compile(r"\b(dental|dentista|odontolog|cl[ií]nica dental)\b", re.IGNORECASE)
 _BEAUTY_RE = re.compile(r"\b(est[eé]tica|belleza|spa|cosmetolog|medicina est[eé]tica)\b", re.IGNORECASE)
@@ -60,10 +70,32 @@ def maybe_handle(user_text: str, history: list[dict]) -> str | None:
     normalized = _norm(text.strip())
 
     wants_explanation = bool(_HOW_RE.search(text))
+    wants_services = bool(_SERVICES_RE.search(text))
+    wants_attention_and_appointments = bool(_ATTENTION_APPOINTMENTS_RE.search(text))
     asks_for_clarity = bool(_UNCLEAR_RE.search(text)) and any(
         _HOW_RE.search(item.get("content", "")) or "asistto" in _norm(item.get("content", ""))
         for item in history[-6:]
     )
+
+    if wants_services:
+        return (
+            "Asistto puede ayudarte con estos servicios principales:\n"
+            "- Atender mensajes de WhatsApp con IA.\n"
+            "- Responder dudas frecuentes sobre tu negocio.\n"
+            "- Capturar datos de prospectos.\n"
+            "- Calificar leads y detectar oportunidades.\n"
+            "- Agendar citas cuando el calendario está conectado.\n"
+            "- Escalar a una persona cuando el caso lo necesita.\n"
+            "¿Quieres enfocarlo en atención, citas o ambos?"
+        )
+
+    if wants_attention_and_appointments:
+        return (
+            "Perfecto. Para atención y citas, Asistto puede responder dudas frecuentes, "
+            "pedir datos del cliente y crear citas en tu calendario cuando la integración está activa.\n"
+            "Normalmente esto encaja mejor con el paquete PRO.\n"
+            "¿Quieres que te muestre cómo sería una prueba o prefieres agendar una llamada?"
+        )
 
     if not wants_explanation and not asks_for_clarity:
         return None

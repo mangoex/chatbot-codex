@@ -6,6 +6,10 @@ _REINTRO_RE = re.compile(
     re.IGNORECASE,
 )
 _MISSING_SPACE_AFTER_COMMA_RE = re.compile(r",(?=\S)")
+_GREETING_RE = re.compile(
+    r"^(?:si,?\s*)?(?:hola|buenos dias|buenos días|buenas tardes|buenas noches|hey|hello)[!.\s]*$",
+    re.IGNORECASE,
+)
 _BROKEN_PATTERNS = (
     re.compile(r"\bAutoObetendr", re.IGNORECASE),
     re.compile(r"\bessays?-offer\b", re.IGNORECASE),
@@ -35,7 +39,7 @@ def looks_broken(reply: str) -> bool:
     return False
 
 
-def polish(reply: str, history: list[dict]) -> str:
+def polish(reply: str, history: list[dict], user_text: str | None = None) -> str:
     clean = (reply or "").strip()
     if looks_broken(clean):
         clean = _FALLBACK_REPLY
@@ -43,7 +47,8 @@ def polish(reply: str, history: list[dict]) -> str:
     clean = _MISSING_SPACE_AFTER_COMMA_RE.sub(", ", clean)
 
     has_prior_assistant = any(item.get("role") == "assistant" for item in history)
-    if has_prior_assistant and _REINTRO_RE.match(clean):
+    current_message_is_greeting = bool(_GREETING_RE.match((user_text or "").strip()))
+    if has_prior_assistant and not current_message_is_greeting and _REINTRO_RE.match(clean):
         clean = _REINTRO_RE.sub("", clean, count=1).lstrip()
         clean = clean[:1].upper() + clean[1:] if clean else ""
 

@@ -148,7 +148,7 @@ async def _send_and_track(
     history: list[dict],
     scheduled: bool = False,
 ) -> None:
-    reply = reply_safety.polish(reply, history)
+    reply = reply_safety.polish(reply, history, user_text=user_text)
     await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
     await whatsapp_client.send_text(
         wa_id,
