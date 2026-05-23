@@ -2,7 +2,7 @@ import asyncio
 import sys
 import types
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 sys.modules.setdefault("asyncpg", types.SimpleNamespace(Pool=object))
@@ -40,6 +40,12 @@ class CalendarRescheduleTests(unittest.TestCase):
             marked: list[str] = []
             saved: list[str] = []
             tz = ZoneInfo("America/Chihuahua")
+            future_start = (datetime.now(tz) + timedelta(days=7)).replace(
+                hour=10,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
 
             async def fake_skill_enabled(bot_id):
                 return True
@@ -108,7 +114,7 @@ class CalendarRescheduleTests(unittest.TestCase):
 
                 reply, scheduled = await calendar_client.process_reply(
                     "5215550000000",
-                    '[[CALENDAR_EVENT: {"title":"Llamada con Miguel","start":"2026-05-20T10:00:00-06:00","duration_minutes":30,"attendee_name":"Miguel Gonzalez","topic":"Prueba"}]]',
+                    f'[[CALENDAR_EVENT: {{"title":"Llamada con Miguel","start":"{future_start.isoformat()}","duration_minutes":30,"attendee_name":"Miguel Gonzalez","topic":"Prueba"}}]]',
                     bot_id=1,
                     replace_existing=True,
                 )
