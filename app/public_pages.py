@@ -1,5 +1,5 @@
 """Public compliance pages for the Asistto by Humanio Tech Provider app."""
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
 router = APIRouter(tags=["public"])
@@ -18,6 +18,9 @@ PUBLIC_CSS = """
   .lead { font-size:17px; color:#37403b; }
   .panel { background:white; border:1px solid var(--line); border-radius:8px; padding:24px; }
   .brand { font-size:13px; color:var(--muted); margin-bottom:8px; }
+  .meta { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px; margin:18px 0 8px; }
+  .meta div { border:1px solid var(--line); border-radius:8px; padding:12px; background:#fbfcfa; color:#37403b; font-size:14px; line-height:1.5; }
+  .meta strong { display:block; color:var(--ink); margin-bottom:3px; }
   code { background:#edf0ec; padding:2px 5px; border-radius:5px; }
 </style>
 """
@@ -26,8 +29,24 @@ PUBLIC_CSS = """
 PAGES = {
     "/privacy": {
         "title": "Politica de privacidad",
-        "lead": "Asistto by Humanio ayuda a negocios a atender clientes por WhatsApp con automatizacion, agenda e integraciones.",
+        "lead": "Esta politica de privacidad corresponde a Asistto by Humanio, la app web publicada en https://bot.humanio.digital/ y la app de Meta llamada Asistto-chatbot.",
+        "meta": [
+            ("Producto", "Asistto by Humanio"),
+            ("App de Meta", "Asistto-chatbot"),
+            ("Negocio responsable", "Humanio"),
+            ("Dominios oficiales", "humanio.digital y bot.humanio.digital"),
+            ("Contacto de privacidad", "soporte@humanio.digital"),
+            ("Ultima actualizacion", "22 de mayo de 2026"),
+        ],
         "sections": [
+            (
+                "Relacion entre esta politica, la app y el negocio",
+                "Humanio es el negocio responsable de Asistto by Humanio y controla esta politica de privacidad. Asistto by Humanio es una plataforma de automatizacion de atencion, ventas, agenda e integraciones por WhatsApp para negocios. La app de Meta asociada a este producto se llama Asistto-chatbot y usa el dominio publico bot.humanio.digital.",
+            ),
+            (
+                "Responsable de los datos",
+                "Humanio determina los propositos y medios del tratamiento de los datos procesados por Asistto by Humanio para operar la plataforma. Cuando un negocio cliente conecta su WhatsApp Business Account, ese negocio conserva responsabilidad sobre sus conversaciones, avisos, opt-in, plantillas y cumplimiento aplicable frente a sus usuarios.",
+            ),
             (
                 "Datos que procesamos",
                 "Procesamos mensajes de WhatsApp, identificadores tecnicos como wa_id y phone_number_id, datos de contacto que el usuario comparte, registros de conversacion, leads, citas e integraciones configuradas por cada negocio.",
@@ -46,7 +65,7 @@ PAGES = {
             ),
             (
                 "Contacto",
-                "Para solicitudes de privacidad, escribe a soporte@humanio.digital o usa la pagina de soporte publicada por Humanio.",
+                "Para solicitudes de privacidad relacionadas con Asistto by Humanio, la app de Meta Asistto-chatbot o el dominio bot.humanio.digital, escribe a soporte@humanio.digital o usa la pagina de soporte publicada por Humanio.",
             ),
         ],
     },
@@ -143,41 +162,52 @@ def _page(path: str) -> HTMLResponse:
         f"<h2>{title}</h2><p>{body}</p>"
         for title, body in data["sections"]
     )
+    meta_items = "".join(
+        f"<div><strong>{title}</strong>{body}</div>"
+        for title, body in data.get("meta", [])
+    )
+    meta_html = f'<div class="meta">{meta_items}</div>' if meta_items else ""
     html = f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{data["title"]} - Asistto by Humanio</title>{PUBLIC_CSS}</head>
+<title>{data["title"]} - Asistto by Humanio</title>
+<meta name="description" content="{data["lead"]}">
+<meta property="og:site_name" content="Asistto by Humanio">
+<meta property="og:title" content="{data["title"]} - Asistto by Humanio">
+<meta property="og:description" content="{data["lead"]}">
+{PUBLIC_CSS}</head>
 <body><main>
   <div class="brand">Asistto by Humanio</div>
   <nav>{links}</nav>
   <section class="panel">
     <h1>{data["title"]}</h1>
     <p class="lead">{data["lead"]}</p>
+    {meta_html}
     {sections}
   </section>
 </main></body></html>"""
     return HTMLResponse(html)
 
 
-@router.get("/privacy", response_class=HTMLResponse)
-async def privacy_page():
+@router.api_route("/privacy", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def privacy_page(request: Request):
     return _page("/privacy")
 
 
-@router.get("/terms", response_class=HTMLResponse)
-async def terms_page():
+@router.api_route("/terms", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def terms_page(request: Request):
     return _page("/terms")
 
 
-@router.get("/support", response_class=HTMLResponse)
-async def support_page():
+@router.api_route("/support", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def support_page(request: Request):
     return _page("/support")
 
 
-@router.get("/data-deletion", response_class=HTMLResponse)
-async def data_deletion_page():
+@router.api_route("/data-deletion", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def data_deletion_page(request: Request):
     return _page("/data-deletion")
 
 
-@router.get("/ai-data-policy", response_class=HTMLResponse)
-async def ai_data_policy_page():
+@router.api_route("/ai-data-policy", methods=["GET", "HEAD"], response_class=HTMLResponse)
+async def ai_data_policy_page(request: Request):
     return _page("/ai-data-policy")
