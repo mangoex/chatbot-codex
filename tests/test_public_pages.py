@@ -32,7 +32,7 @@ class PublicPagesTests(unittest.TestCase):
         self.assertIn("Asistto-chatbot", content)
         self.assertIn("Humanio es el negocio responsable", content)
         self.assertIn("bot.humanio.digital", content)
-        self.assertIn("soporte@humanio.digital", content)
+        self.assertIn("contacto@humanio.digital", content)
 
     def test_public_pages_accept_head_for_review_tools(self):
         routes = {route["path"]: route["methods"] for route in public_pages.router.routes}

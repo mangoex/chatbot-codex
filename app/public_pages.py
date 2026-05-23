@@ -35,7 +35,7 @@ PAGES = {
             ("App de Meta", "Asistto-chatbot"),
             ("Negocio responsable", "Humanio"),
             ("Dominios oficiales", "humanio.digital y bot.humanio.digital"),
-            ("Contacto de privacidad", "soporte@humanio.digital"),
+            ("Contacto de privacidad", "contacto@humanio.digital"),
             ("Ultima actualizacion", "22 de mayo de 2026"),
         ],
         "sections": [
@@ -65,7 +65,7 @@ PAGES = {
             ),
             (
                 "Contacto",
-                "Para solicitudes de privacidad relacionadas con Asistto by Humanio, la app de Meta Asistto-chatbot o el dominio bot.humanio.digital, escribe a soporte@humanio.digital o usa la pagina de soporte publicada por Humanio.",
+                "Para solicitudes de privacidad relacionadas con Asistto by Humanio, la app de Meta Asistto-chatbot o el dominio bot.humanio.digital, escribe a contacto@humanio.digital o usa la pagina de soporte publicada por Humanio.",
             ),
         ],
     },
@@ -97,7 +97,7 @@ PAGES = {
         "sections": [
             (
                 "Contacto",
-                "Para soporte operativo, escribe a soporte@humanio.digital con el nombre del negocio, numero de WhatsApp conectado y descripcion del problema.",
+                "Para soporte operativo, escribe a contacto@humanio.digital con el nombre del negocio, numero de WhatsApp conectado y descripcion del problema.",
             ),
             (
                 "Casos comunes",
@@ -115,7 +115,7 @@ PAGES = {
         "sections": [
             (
                 "Como solicitarla",
-                "Envia una solicitud a soporte@humanio.digital indicando el negocio, numero de WhatsApp y datos que quieres eliminar.",
+                "Envia una solicitud a contacto@humanio.digital indicando el negocio, numero de WhatsApp y datos que quieres eliminar.",
             ),
             (
                 "Alcance",
