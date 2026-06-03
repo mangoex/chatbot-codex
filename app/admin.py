@@ -1192,8 +1192,8 @@ async def client_detail(request: Request, client_id: int):
           <input type="hidden" name="client_id" value="{client_id}">
           <label>Nombre del bot</label><input name="name" placeholder="Bot Clinica Demo" required>
           <label>Slug</label><input name="slug" placeholder="bot-clinica-demo">
-          <label>Phone Number ID</label><input name="phone_number_id" placeholder="1234567890">
-          <label>Numero visible</label><input name="display_phone_number" placeholder="+52...">
+          <label>Phone Number ID <span style="font-size:11px; font-weight:normal; color:var(--muted);">(Opcional, el cliente puede vincularlo desde su panel)</span></label><input name="phone_number_id" placeholder="1234567890">
+          <label>Numero visible <span style="font-size:11px; font-weight:normal; color:var(--muted);">(Opcional)</span></label><input name="display_phone_number" placeholder="+52...">
           <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Crear bot</button></div>
         </form>
       </div>
