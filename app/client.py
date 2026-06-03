@@ -306,7 +306,7 @@ CLIENT_CSS = """
     color: var(--ink);
     margin: 14px 0 6px;
   }
-  input[type="text"], input[type="password"], input[type="email"], select, textarea {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="hidden"]), select, textarea {
     width: 100%;
     border: 1px solid var(--line-strong);
     border-radius: 8px;
@@ -316,7 +316,7 @@ CLIENT_CSS = """
     transition: var(--transition);
     outline: none;
   }
-  input:focus, select:focus, textarea:focus {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="hidden"]):focus, select:focus, textarea:focus {
     border-color: var(--primary);
     box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
   }
