@@ -338,7 +338,93 @@ class AdminControlAppTests(unittest.TestCase):
             admin.db.get_user_login = original_get_user_login
             admin.db.delete_user = original_delete_user
 
+    def test_delete_client_route_success(self):
+        class Request:
+            session = {
+                "user": "admin@example.com",
+                "role": "agency_admin",
+                "client_id": None,
+            }
+
+        async def fake_delete_client(client_id):
+            return True
+
+        original_delete_client = admin.db.delete_client
+        admin.db.delete_client = fake_delete_client
+        try:
+            resp = asyncio.run(admin.delete_client_route(Request(), 12))
+            self.assertIsNotNone(resp)
+            if hasattr(resp, "headers") and "location" in resp.headers:
+                self.assertEqual(resp.headers["location"], "/admin/clients?saved=1")
+            elif hasattr(resp, "content"):
+                self.assertEqual(resp.content, "/admin/clients?saved=1")
+        finally:
+            admin.db.delete_client = original_delete_client
+
+    def test_delete_client_route_forbidden_for_clients(self):
+        class Request:
+            session = {
+                "user": "client@example.com",
+                "role": "client_admin",
+                "client_id": 5,
+            }
+
+        try:
+            with self.assertRaises(Exception) as ctx:
+                asyncio.run(admin.delete_client_route(Request(), 12))
+            if hasattr(ctx.exception, "status_code"):
+                self.assertEqual(ctx.exception.status_code, 403)
+        finally:
+            pass
+
+    def test_delete_bot_route_success(self):
+        class Request:
+            session = {
+                "user": "admin@example.com",
+                "role": "agency_admin",
+                "client_id": None,
+            }
+
+        async def fake_delete_bot(bot_id):
+            return True
+
+        original_delete_bot = admin.db.delete_bot
+        admin.db.delete_bot = fake_delete_bot
+        try:
+            resp = asyncio.run(admin.delete_bot_route(Request(), 14))
+            self.assertIsNotNone(resp)
+            if hasattr(resp, "headers") and "location" in resp.headers:
+                self.assertEqual(resp.headers["location"], "/admin/bots?saved=1")
+            elif hasattr(resp, "content"):
+                self.assertEqual(resp.content, "/admin/bots?saved=1")
+        finally:
+            admin.db.delete_bot = original_delete_bot
+
+    def test_delete_bot_route_redirect_to_client(self):
+        class Request:
+            session = {
+                "user": "admin@example.com",
+                "role": "agency_admin",
+                "client_id": None,
+            }
+
+        async def fake_delete_bot(bot_id):
+            return True
+
+        original_delete_bot = admin.db.delete_bot
+        admin.db.delete_bot = fake_delete_bot
+        try:
+            resp = asyncio.run(admin.delete_bot_route(Request(), 14, redirect_to_client=3))
+            self.assertIsNotNone(resp)
+            if hasattr(resp, "headers") and "location" in resp.headers:
+                self.assertEqual(resp.headers["location"], "/admin/clients/3?saved=1")
+            elif hasattr(resp, "content"):
+                self.assertEqual(resp.content, "/admin/clients/3?saved=1")
+        finally:
+            admin.db.delete_bot = original_delete_bot
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

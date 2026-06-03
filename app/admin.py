@@ -1116,7 +1116,14 @@ async def clients_page(request: Request):
           <td><strong>{html.escape(c["name"])}</strong><br><span class="muted">{html.escape(c["slug"])}</span></td>
           <td><span class="badge b-calificado">{int(c.get("bot_count") or 0)} bots</span></td>
           <td><span class="badge">{html.escape(c.get("status") or "active")}</span></td>
-          <td><a class="btn secondary" href="/admin/clients/{c["id"]}">Ver</a></td>
+          <td style="text-align: right; vertical-align: middle;">
+            <a class="btn secondary" href="/admin/clients/{c["id"]}" style="margin-right: 6px;">Ver</a>
+            <form method="post" action="/admin/clients/{int(c["id"])}/delete" onsubmit="return confirm('¿Estás seguro de que deseas eliminar este cliente? Se borrarán todos sus bots, usuarios y configuraciones asociadas.');" class="inline">
+              <button type="submit" class="btn secondary" style="padding: 5px; min-height: 28px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--red); cursor: pointer;" title="Eliminar cliente">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; display: block;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+            </form>
+          </td>
         </tr>
         """
         for c in clients
@@ -1160,7 +1167,14 @@ async def client_detail(request: Request, client_id: int):
           <td><strong>{html.escape(b["name"])}</strong><br><span class="muted">{html.escape(b["slug"])}</span></td>
           <td>{html.escape(b.get("display_phone_number") or b.get("phone_number_id") or "-")}</td>
           <td><span class="badge">{html.escape(b.get("status") or "active")}</span></td>
-          <td><a class="btn secondary" href="/admin/bots/{b["id"]}">Abrir</a></td>
+          <td style="text-align: right; vertical-align: middle;">
+            <a class="btn secondary" href="/admin/bots/{b["id"]}" style="margin-right: 6px;">Abrir</a>
+            <form method="post" action="/admin/bots/{int(b["id"])}/delete?redirect_to_client={client_id}" onsubmit="return confirm('¿Estás seguro de que deseas eliminar este bot? Se borrarán todos sus prompts, conocimientos e integraciones asociadas.');" class="inline">
+              <button type="submit" class="btn secondary" style="padding: 5px; min-height: 28px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--red); cursor: pointer;" title="Eliminar bot">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; display: block;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+            </form>
+          </td>
         </tr>
         """
         for b in bots
@@ -1352,6 +1366,35 @@ async def delete_user_page(
     return RedirectResponse("/admin/users?saved=1", status_code=302)
 
 
+@router.post("/clients/{client_id}/delete")
+async def delete_client_route(
+    request: Request,
+    client_id: int,
+):
+    _require_agency(request)
+    deleted = await db.delete_client(client_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado")
+    return RedirectResponse("/admin/clients?saved=1", status_code=302)
+
+
+@router.post("/bots/{bot_id}/delete")
+async def delete_bot_route(
+    request: Request,
+    bot_id: int,
+    redirect_to_client: int | None = None,
+):
+    _require_agency(request)
+    deleted = await db.delete_bot(bot_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Bot no encontrado")
+        
+    if redirect_to_client:
+        return RedirectResponse(f"/admin/clients/{redirect_to_client}?saved=1", status_code=302)
+    return RedirectResponse("/admin/bots?saved=1", status_code=302)
+
+
+
 @router.get("/bots", response_class=HTMLResponse)
 async def bots_page(request: Request):
     session = _require_login(request)
@@ -1364,7 +1407,16 @@ async def bots_page(request: Request):
           <td>{html.escape(b.get("client_name") or "-")}</td>
           <td>{html.escape(b.get("display_phone_number") or b.get("phone_number_id") or "-")}</td>
           <td><span class="badge">{html.escape(b.get("status") or "active")}</span></td>
-          <td><a class="btn secondary" href="/admin/bots/{b["id"]}">Abrir</a></td>
+          <td style="text-align: right; vertical-align: middle;">
+            <a class="btn secondary" href="/admin/bots/{b["id"]}">Abrir</a>
+            {f'''
+            <form method="post" action="/admin/bots/{int(b["id"])}/delete" onsubmit="return confirm('¿Estás seguro de que deseas eliminar este bot? Se borrarán todos sus prompts, conocimientos e integraciones asociadas.');" class="inline" style="margin-left: 6px;">
+              <button type="submit" class="btn secondary" style="padding: 5px; min-height: 28px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--red); cursor: pointer;" title="Eliminar bot">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; display: block;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+            </form>
+            ''' if _is_agency(session) else ""}
+          </td>
         </tr>
         """
         for b in bots

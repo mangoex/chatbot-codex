@@ -1,0 +1,41 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Portada del manual de cliente Asistto</title>
+  <desc id="desc">Composición elegante con tarjetas de WhatsApp, métricas, calendario, CRM y panel de control.</desc>
+  <rect width="1600" height="900" fill="#F4F5F2"/>
+  <rect x="72" y="68" width="1456" height="764" rx="34" fill="#FBFCFA" stroke="#DDE2DC" stroke-width="2"/>
+  <circle cx="1360" cy="214" r="124" fill="#E8F1ED"/>
+  <circle cx="1254" cy="682" r="78" fill="#E8EEF5"/>
+  <rect x="130" y="138" width="610" height="624" rx="30" fill="#151716"/>
+  <text x="178" y="214" fill="#F4F5F2" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">Asistto by Humanio</text>
+  <text x="178" y="304" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="70" font-weight="700">Manual de</text>
+  <text x="178" y="388" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="70" font-weight="700">Operación</text>
+  <text x="178" y="470" fill="#CFE3DB" font-family="Arial, Helvetica, sans-serif" font-size="30">Panel de cliente final para operar,</text>
+  <text x="178" y="512" fill="#CFE3DB" font-family="Arial, Helvetica, sans-serif" font-size="30">entrenar y monitorear tu asistente</text>
+  <text x="178" y="554" fill="#CFE3DB" font-family="Arial, Helvetica, sans-serif" font-size="30">virtual de WhatsApp.</text>
+  <rect x="178" y="632" width="210" height="52" rx="26" fill="#E8F1ED"/>
+  <text x="212" y="666" fill="#176B5B" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Cliente final</text>
+  <rect x="410" y="632" width="176" height="52" rx="26" fill="#26312D"/>
+  <text x="444" y="666" fill="#F4F5F2" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">WhatsApp</text>
+  <rect x="812" y="146" width="508" height="316" rx="28" fill="#FFFFFF" stroke="#DDE2DC" stroke-width="2"/>
+  <text x="858" y="206" fill="#151716" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="700">Panel de control</text>
+  <rect x="858" y="246" width="178" height="92" rx="18" fill="#E8F1ED"/>
+  <text x="888" y="282" fill="#176B5B" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700">Conversaciones</text>
+  <text x="888" y="318" fill="#151716" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700">128</text>
+  <rect x="1062" y="246" width="98" height="92" rx="18" fill="#E8EEF5"/>
+  <text x="1088" y="282" fill="#315F9F" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700">Leads</text>
+  <text x="1088" y="318" fill="#151716" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700">34</text>
+  <rect x="1186" y="246" width="88" height="92" rx="18" fill="#FFF2DE"/>
+  <text x="1209" y="282" fill="#AD6500" font-family="Arial, Helvetica, sans-serif" font-size="21" font-weight="700">Casos</text>
+  <text x="1210" y="318" fill="#151716" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="700">6</text>
+  <rect x="858" y="372" width="416" height="16" rx="8" fill="#DDE2DC"/>
+  <rect x="858" y="400" width="316" height="16" rx="8" fill="#DDE2DC"/>
+  <rect x="812" y="510" width="322" height="208" rx="28" fill="#FFFFFF" stroke="#DDE2DC" stroke-width="2"/>
+  <text x="858" y="568" fill="#151716" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="700">Rutina díaria</text>
+  <text x="858" y="620" fill="#68706C" font-family="Arial, Helvetica, sans-serif" font-size="24">Revisar conversaciónes</text>
+  <text x="858" y="660" fill="#68706C" font-family="Arial, Helvetica, sans-serif" font-size="24">Atender escalaciones</text>
+  <text x="858" y="700" fill="#68706C" font-family="Arial, Helvetica, sans-serif" font-size="24">Actualizar conocimiento</text>
+  <rect x="1180" y="510" width="210" height="208" rx="28" fill="#176B5B"/>
+  <text x="1223" y="588" fill="#FFFFFF" font-family="Arial, Helvetica, sans-serif" font-size="60" font-weight="700">WA</text>
+  <text x="1218" y="638" fill="#DDEFE8" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700">Asistente</text>
+  <text x="1227" y="676" fill="#DDEFE8" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="700">activo</text>
+</svg>

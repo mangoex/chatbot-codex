@@ -1742,3 +1742,16 @@ async def delete_user(user_id: int, client_id: int | None = None) -> bool:
         else:
             result = await conn.execute("DELETE FROM users WHERE id = $1", user_id)
         return result != "DELETE 0"
+
+
+async def delete_client(client_id: int) -> bool:
+    async with _pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM clients WHERE id = $1", client_id)
+        return result != "DELETE 0"
+
+
+async def delete_bot(bot_id: int) -> bool:
+    async with _pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM bots WHERE id = $1", bot_id)
+        return result != "DELETE 0"
+
