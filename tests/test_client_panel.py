@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 # Mock asyncpg and cryptography before imports
 import sys
 import types
+sys.modules.pop("fastapi", None)
+sys.modules.pop("fastapi.responses", None)
 sys.modules.setdefault("asyncpg", types.SimpleNamespace(Pool=object))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
 sys.modules.setdefault("httpx", types.SimpleNamespace(HTTPStatusError=Exception, AsyncClient=object))
@@ -97,3 +99,47 @@ class TestClientPanelFeatures:
         reason = await escalations.detect_reason("", "", "image", bot_id=1)
         assert reason is not None
         assert reason[0] == "media_recibida"
+
+    @pytest.mark.asyncio
+    @patch("app.db.list_bots")
+    @patch("app.db.get_bot_whatsapp_number")
+    @patch("app.db.get_active_bot_prompt")
+    @patch("app.db.get_bot_skill")
+    @patch("app.db.list_bot_knowledge")
+    @patch("app.db.get_active_bot_integration")
+    @patch("app.db.admin_metrics")
+    @patch("app.db.list_conversation_threads")
+    async def test_client_app_view(
+        self,
+        mock_threads,
+        mock_metrics,
+        mock_integration,
+        mock_knowledge,
+        mock_skill,
+        mock_prompt,
+        mock_wa_num,
+        mock_list_bots
+    ):
+        from app import client
+        
+        class Request:
+            session = {
+                "user": "client@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+                "user_id": 5,
+            }
+            
+        mock_list_bots.return_value = [{"id": 1, "name": "Bot 1", "status": "active"}]
+        mock_wa_num.return_value = {"phone_number_id": "123", "display_phone_number": "+521"}
+        mock_prompt.return_value = {"content": "Prompt text"}
+        mock_skill.return_value = {"enabled": True, "config": {}}
+        mock_knowledge.return_value = []
+        mock_integration.return_value = None
+        mock_metrics.return_value = {}
+        mock_threads.return_value = []
+        
+        response = await client.client_app(Request(), bot_id=1)
+        assert response is not None
+        assert "Bot 1" in response.body.decode("utf-8")
+

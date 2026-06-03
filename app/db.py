@@ -956,6 +956,33 @@ async def get_bot_by_phone_number_id(phone_number_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+async def get_bot_whatsapp_number(bot_id: int) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                phone_number_id,
+                display_phone_number,
+                whatsapp_access_token,
+                business_id,
+                waba_id,
+                meta_app_id,
+                meta_config_id,
+                connected_at,
+                last_sync_status,
+                last_sync_at,
+                status
+            FROM bot_whatsapp_numbers
+            WHERE bot_id = $1
+              AND status = 'active'
+            LIMIT 1
+            """,
+            bot_id,
+        )
+    return dict(row) if row else None
+
+
+
 async def list_clients(limit: int = 200) -> list[dict]:
     async with _pool.acquire() as conn:
         rows = await conn.fetch(

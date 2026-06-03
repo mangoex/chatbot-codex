@@ -22,6 +22,10 @@ sys.modules["fastapi.responses"] = types.SimpleNamespace(HTMLResponse=_DummyResp
 
 from app import public_pages
 
+# Restore sys.modules so other test files can load the real fastapi
+sys.modules.pop("fastapi", None)
+sys.modules.pop("fastapi.responses", None)
+
 
 class PublicPagesTests(unittest.TestCase):
     def test_privacy_page_identifies_app_and_business_owner(self):

@@ -867,7 +867,7 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
       <script>
         (() => {{
           const app_id = "{config.META_APP_ID or ""}";
-          const config_id = "{config.META_EMBEDDED_SIGNUP_CONFIG_ID or ""}";
+          const config_id = "{config.META_CONFIG_ID or ""}";
           const status = document.getElementById("metaSignupStatus");
           
           window.fbAsyncInit = function() {{

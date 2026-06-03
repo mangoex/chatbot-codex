@@ -51,6 +51,12 @@ sys.modules.setdefault(
 
 from app import admin
 
+# Restore sys.modules so other test files can load the real fastapi/cryptography
+sys.modules.pop("fastapi", None)
+sys.modules.pop("fastapi.responses", None)
+sys.modules.pop("cryptography", None)
+sys.modules.pop("cryptography.fernet", None)
+
 
 class AdminControlAppTests(unittest.TestCase):
     def test_admin_app_href_replaces_bot_id(self):
