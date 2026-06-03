@@ -261,6 +261,84 @@ class AdminControlAppTests(unittest.TestCase):
         self.assertEqual(config["test"]["params"], {"ping": "1"})
         self.assertEqual(config["operations"][0]["name"], "crear_lead")
 
+    def test_delete_user_page_success(self):
+        class Request:
+            session = {
+                "user": "admin@example.com",
+                "role": "agency_admin",
+                "client_id": None,
+            }
+
+        async def fake_get_user_login(email):
+            return {"user_id": 7, "email": "admin@example.com"}
+
+        async def fake_delete_user(user_id, client_id=None):
+            return True
+
+        original_get_user_login = admin.db.get_user_login
+        original_delete_user = admin.db.delete_user
+        admin.db.get_user_login = fake_get_user_login
+        admin.db.delete_user = fake_delete_user
+        try:
+            resp = asyncio.run(admin.delete_user_page(Request(), 8))
+            self.assertIsNotNone(resp)
+            if hasattr(resp, "headers") and "location" in resp.headers:
+                self.assertEqual(resp.headers["location"], "/admin/users?saved=1")
+            elif hasattr(resp, "content"):
+                self.assertEqual(resp.content, "/admin/users?saved=1")
+        finally:
+            admin.db.get_user_login = original_get_user_login
+            admin.db.delete_user = original_delete_user
+
+    def test_delete_user_page_self_deletion(self):
+        class Request:
+            session = {
+                "user": "admin@example.com",
+                "role": "agency_admin",
+                "client_id": None,
+            }
+
+        async def fake_get_user_login(email):
+            return {"user_id": 7, "email": "admin@example.com"}
+
+        original_get_user_login = admin.db.get_user_login
+        admin.db.get_user_login = fake_get_user_login
+        try:
+            with self.assertRaises(Exception) as ctx:
+                asyncio.run(admin.delete_user_page(Request(), 7))
+            if hasattr(ctx.exception, "status_code"):
+                self.assertEqual(ctx.exception.status_code, 400)
+        finally:
+            admin.db.get_user_login = original_get_user_login
+
+    def test_delete_user_page_not_found(self):
+        class Request:
+            session = {
+                "user": "admin@example.com",
+                "role": "agency_admin",
+                "client_id": None,
+            }
+
+        async def fake_get_user_login(email):
+            return {"user_id": 7, "email": "admin@example.com"}
+
+        async def fake_delete_user(user_id, client_id=None):
+            return False
+
+        original_get_user_login = admin.db.get_user_login
+        original_delete_user = admin.db.delete_user
+        admin.db.get_user_login = fake_get_user_login
+        admin.db.delete_user = fake_delete_user
+        try:
+            with self.assertRaises(Exception) as ctx:
+                asyncio.run(admin.delete_user_page(Request(), 8))
+            if hasattr(ctx.exception, "status_code"):
+                self.assertEqual(ctx.exception.status_code, 404)
+        finally:
+            admin.db.get_user_login = original_get_user_login
+            admin.db.delete_user = original_delete_user
+
 
 if __name__ == "__main__":
     unittest.main()
+

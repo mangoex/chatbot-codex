@@ -227,6 +227,17 @@ async def close_pool() -> None:
         await _pool.close()
 
 
+async def check_health() -> bool:
+    if not _pool:
+        return False
+    try:
+        async with _pool.acquire() as conn:
+            await conn.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
 async def run_migrations() -> None:
     async with _pool.acquire() as conn:
         # Existing deployments may already have these tables without bot_id.
@@ -417,8 +428,8 @@ async def create_escalation(data: dict) -> int:
             INSERT INTO escalations(
                 wa_id, customer_name, city, product, purchase_date,
                 issue_summary, reason, reason_detail, media_count,
-                last_media_type, conversation_excerpt
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+                last_media_type, conversation_excerpt, bot_id
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
             RETURNING id
             """,
             data.get("wa_id"),
@@ -432,6 +443,7 @@ async def create_escalation(data: dict) -> int:
             data.get("media_count", 0),
             data.get("last_media_type"),
             data.get("conversation_excerpt"),
+            data.get("bot_id"),
         )
     return row["id"]
 
@@ -452,6 +464,7 @@ async def bump_escalation(escalation_id: int, data: dict) -> None:
                 media_count = media_count + $9,
                 last_media_type = COALESCE($10, last_media_type),
                 conversation_excerpt = COALESCE($11, conversation_excerpt),
+                bot_id = COALESCE($12, bot_id),
                 updated_at = now()
             WHERE id = $1
             """,
@@ -466,6 +479,7 @@ async def bump_escalation(escalation_id: int, data: dict) -> None:
             int(data.get("media_count_delta", 0)),
             data.get("last_media_type"),
             data.get("conversation_excerpt"),
+            data.get("bot_id"),
         )
 
 
@@ -1707,3 +1721,24 @@ async def get_user_login(email: str) -> dict | None:
             email.lower().strip(),
         )
     return dict(row) if row else None
+
+
+async def delete_user(user_id: int, client_id: int | None = None) -> bool:
+    async with _pool.acquire() as conn:
+        if client_id:
+            result = await conn.execute(
+                """
+                DELETE FROM users
+                WHERE id = $1
+                  AND EXISTS (
+                      SELECT 1 FROM client_users
+                      WHERE client_users.user_id = users.id
+                        AND client_users.client_id = $2
+                  )
+                """,
+                user_id,
+                client_id,
+            )
+        else:
+            result = await conn.execute("DELETE FROM users WHERE id = $1", user_id)
+        return result != "DELETE 0"

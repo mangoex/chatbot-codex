@@ -405,138 +405,177 @@ async def _admin_app_state(session: dict, bot_id: int | None = None) -> dict:
 
 BASE_CSS = """
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
+
   :root {
-    --bg: #f4f5f2;
-    --panel: #ffffff;
-    --ink: #151716;
-    --muted: #68706c;
-    --line: #dde2dc;
-    --line-strong: #c9d0c8;
-    --primary: #176b5b;
-    --primary-ink: #ffffff;
-    --amber: #ad6500;
-    --red: #a83b35;
-    --blue: #315f9f;
-    --green: #20724d;
-    --shadow: 0 18px 45px rgba(24, 31, 27, .08);
+    --bg: #f8fafc;               /* Slate 50 */
+    --panel: #ffffff;            /* Blanco */
+    --ink: #0f172a;              /* Slate 900 */
+    --muted: #64748b;            /* Slate 500 */
+    --line: #e2e8f0;             /* Slate 200 */
+    --line-strong: #cbd5e1;      /* Slate 300 */
+    --primary: #0d9488;          /* Teal 600 */
+    --primary-dark: #0f766e;     /* Teal 700 */
+    --primary-light: #ccfbf1;    /* Teal 100 */
+    --amber: #d97706;            /* Amber 600 */
+    --red: #e11d48;              /* Rose 600 */
+    --blue: #2563eb;             /* Blue 600 */
+    --green: #059669;            /* Emerald 600 */
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05), 0 10px 15px -3px rgba(0, 0, 0, 0.03);
+    --shadow-hover: 0 10px 25px -5px rgba(13, 148, 136, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.05);
+    --font: 'Inter', system-ui, sans-serif;
+    --font-display: 'Outfit', sans-serif;
+    --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--ink);
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
-  a { color: inherit; text-decoration: none; }
+  a { color: inherit; text-decoration: none; transition: var(--transition); }
   button, input, textarea, select { font: inherit; }
   .shell { min-height: 100vh; display: grid; grid-template-columns: 248px 1fr; }
   .side {
-    border-right: 1px solid var(--line);
-    background: #fbfcfa;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+    background: #0f172a; /* Slate 900 */
+    color: rgba(255, 255, 255, 0.8);
     padding: 22px 16px;
     position: sticky;
     top: 0;
     height: 100vh;
+    display: flex;
+    flex-direction: column;
+    z-index: 50;
   }
   .brand { display: flex; gap: 10px; align-items: center; margin-bottom: 26px; }
   .mark {
     width: 36px; height: 36px; border-radius: 8px;
-    background: var(--ink); color: white; display: grid; place-items: center;
-    font-weight: 800; letter-spacing: 0;
+    background: var(--primary); color: white; display: grid; place-items: center;
+    font-weight: 800; font-family: var(--font-display); font-size: 15px;
+    box-shadow: 0 4px 10px rgba(13, 148, 136, 0.3);
   }
-  .brand strong { display: block; font-size: 15px; }
-  .brand span { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .brand strong { display: block; font-size: 15px; font-family: var(--font-display); font-weight: 700; color: white; }
+  .brand span { display: block; font-size: 12px; color: #94a3b8; margin-top: 2px; }
   .nav { display: grid; gap: 6px; }
   .nav a {
     display: flex; align-items: center; gap: 10px;
-    padding: 10px 12px; border-radius: 8px; color: #37403b;
-    font-size: 14px;
+    padding: 10px 12px; border-radius: 8px; color: #cbd5e1;
+    font-size: 14px; font-weight: 500;
   }
-  .nav a.active, .nav a:hover { background: #e8eee9; color: var(--ink); }
-  .nav svg { width: 18px; height: 18px; stroke-width: 2; }
-  .nav-sep { height: 1px; background: var(--line); margin: 10px 8px; }
+  .nav a:hover { background: rgba(255, 255, 255, 0.05); color: white; }
+  .nav a.active { background: var(--primary); color: white; font-weight: 600; box-shadow: 0 4px 12px rgba(13, 148, 136, 0.2); }
+  .nav svg { width: 18px; height: 18px; stroke-width: 2.2; }
+  .nav-sep { height: 1px; background: rgba(255, 255, 255, 0.08); margin: 10px 8px; }
   .logout { position: absolute; bottom: 18px; left: 16px; right: 16px; }
+  .side .btn.secondary {
+    background: rgba(255, 255, 255, 0.05);
+    color: white;
+    border-color: rgba(255, 255, 255, 0.1);
+    width: 100%;
+    justify-content: center;
+  }
+  .side .btn.secondary:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
   .main { padding: 26px 30px 42px; min-width: 0; }
   .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
-  h1 { font-size: 28px; line-height: 1.1; margin: 0 0 7px; letter-spacing: 0; }
+  h1 { font-family: var(--font-display); font-size: 28px; font-weight: 800; line-height: 1.1; margin: 0 0 7px; letter-spacing: -0.01em; }
   .sub { color: var(--muted); font-size: 14px; }
   .grid { display: grid; gap: 14px; }
   .kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .card, .table-wrap, .panel {
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 12px;
     box-shadow: var(--shadow);
+    transition: var(--transition);
   }
-  .card { padding: 16px; min-height: 112px; }
-  .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
-  .n { font-size: 31px; font-weight: 750; margin-top: 13px; letter-spacing: 0; }
-  .trend { margin-top: 8px; font-size: 12px; color: var(--green); }
+  .card { padding: 18px; min-height: 112px; position: relative; overflow: hidden; }
+  .card:hover { transform: translateY(-1px); box-shadow: var(--shadow-hover); border-color: rgba(13, 148, 136, 0.2); }
+  .k { color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
+  .n { font-family: var(--font-display); font-size: 31px; font-weight: 800; margin-top: 13px; letter-spacing: -0.01em; color: var(--ink); }
+  .trend { margin-top: 8px; font-size: 12px; font-weight: 500; color: var(--green); display: inline-flex; align-items: center; gap: 4px; }
   .demo { color: var(--amber); }
   .split { grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr); margin-top: 14px; }
-  .panel { padding: 18px; }
-  .panel h2 { font-size: 16px; margin: 0 0 14px; }
+  .panel { padding: 20px; }
+  .panel h2 { font-family: var(--font-display); font-size: 17px; font-weight: 700; margin: 0 0 14px; color: var(--ink); }
   .bars { display: grid; gap: 12px; }
   .bar-row { display: grid; gap: 7px; }
-  .bar-label { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; }
-  .bar-track { height: 9px; border-radius: 999px; background: #edf0ec; overflow: hidden; }
+  .bar-label { display: flex; justify-content: space-between; color: var(--muted); font-size: 13px; font-weight: 500; }
+  .bar-track { height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
   .bar-fill { height: 100%; background: var(--primary); border-radius: 999px; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { padding: 13px 14px; border-bottom: 1px solid #edf0ec; text-align: left; vertical-align: top; font-size: 13px; }
-  th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; background: #fafbf9; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0; }
+  th, td { padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 13px; }
+  th { color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; background: #f8fafc; }
+  th:first-child { border-top-left-radius: 10px; }
+  th:last-child { border-top-right-radius: 10px; }
   tr:last-child td { border-bottom: 0; }
-  .table-wrap { overflow: hidden; }
+  tr:hover td { background: rgba(13, 148, 136, 0.01); }
+  .table-wrap { overflow: hidden; border-radius: 12px; }
   .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
   .tabs a {
     border: 1px solid var(--line);
     background: white;
     border-radius: 8px;
-    padding: 8px 11px;
+    padding: 8px 12px;
     font-size: 13px;
-    color: #3f4743;
+    font-weight: 500;
+    color: var(--muted);
   }
-  .tabs a.active { background: var(--ink); border-color: var(--ink); color: white; }
+  .tabs a:hover { border-color: var(--line-strong); color: var(--ink); }
+  .tabs a.active { background: var(--ink); border-color: var(--ink); color: white; font-weight: 600; }
   .badge {
     display: inline-flex; align-items: center; min-height: 24px;
-    padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 650;
+    padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600;
     background: #edf0ec; color: #46504a; white-space: nowrap;
+    text-transform: uppercase; letter-spacing: 0.02em;
   }
-  .b-en_progreso, .b-pendiente { background: #fff1cf; color: #845000; }
-  .b-calificado, .b-resuelto { background: #dff4e8; color: #17643e; }
-  .b-descalificado, .b-urgente { background: #f8dfdc; color: #95322d; }
-  .b-en_proceso, .b-media { background: #dfeafd; color: #264f8c; }
-  .b-hardware { background: #ffe7c2; color: #875000; }
+  .b-en_progreso, .b-pendiente { background: #fef3c7; color: #b45309; }
+  .b-calificado, .b-resuelto { background: #d1fae5; color: #065f46; }
+  .b-descalificado, .b-urgente { background: #ffe4e6; color: #9f1239; }
+  .b-en_proceso, .b-media { background: #dbeafe; color: #1e40af; }
+  .b-hardware { background: #ffedd5; color: #c2410c; }
   .btn {
     border: 1px solid var(--ink); background: var(--ink); color: white;
-    border-radius: 8px; padding: 8px 11px; cursor: pointer; font-size: 13px;
-    display: inline-flex; align-items: center; gap: 7px; min-height: 36px;
+    border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 13px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 8px; min-height: 38px;
+    justify-content: center; transition: var(--transition);
   }
+  .btn:hover { background: #1e293b; border-color: #1e293b; transform: translateY(-1px); box-shadow: 0 4px 6px -1px rgba(0,0,0,0.08); }
+  .btn:active { transform: translateY(0); }
   .btn svg { width: 16px; height: 16px; }
-  .btn.secondary { background: white; color: var(--ink); }
-  .btn.whatsapp { background: #1f9d61; border-color: #1f9d61; }
+  .btn.secondary { background: white; color: var(--ink); border-color: var(--line); }
+  .btn.secondary:hover { background: #f8fafc; border-color: var(--line-strong); }
+  .btn.whatsapp { background: #128c7e; border-color: #128c7e; box-shadow: 0 4px 10px rgba(18, 140, 126, 0.25); }
+  .btn.whatsapp:hover { background: #075e54; border-color: #075e54; }
   .actions { display: flex; gap: 7px; flex-wrap: wrap; }
   .control-hero {
-    background: #fbfcfa;
+    background: white;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 12px;
     box-shadow: var(--shadow);
-    padding: 22px;
+    padding: 24px;
     margin-bottom: 14px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
     gap: 18px;
     align-items: end;
   }
-  .control-hero h1 { font-size: 30px; }
+  .control-hero h1 { font-size: 30px; font-weight: 800; }
   .control-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-  .sync-status { font-size: 12px; color: var(--muted); margin-top: 10px; min-height: 18px; }
+  .sync-status { font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 10px; min-height: 18px; display: flex; align-items: center; gap: 6px; }
   .sync-status.ok { color: var(--green); }
   .sync-status.err { color: var(--red); }
   .bot-select-card {
-    background: white;
+    background: #f8fafc;
     border: 1px solid var(--line);
     border-radius: 8px;
-    padding: 14px;
+    padding: 16px;
   }
   .bot-select-card label { margin-top: 0; }
   .bot-select-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
@@ -549,9 +588,9 @@ BASE_CSS = """
   .control-section {
     background: var(--panel);
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 12px;
     box-shadow: var(--shadow);
-    padding: 16px;
+    padding: 20px;
     margin-bottom: 14px;
   }
   .section-title {
@@ -561,28 +600,32 @@ BASE_CSS = """
     align-items: center;
     margin-bottom: 12px;
   }
-  .section-title span { font-weight: 750; }
+  .section-title span { font-weight: 750; font-family: var(--font-display); font-size: 16px; color: var(--ink); }
   .section-title small { color: var(--muted); font-size: 12px; }
-  .control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .control-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .control-link {
     display: grid;
-    grid-template-columns: 38px minmax(0, 1fr);
-    gap: 11px;
+    grid-template-columns: 40px minmax(0, 1fr);
+    gap: 12px;
     min-height: 118px;
-    padding: 12px;
+    padding: 16px;
     border: 1px solid var(--line);
-    border-radius: 8px;
-    background: #fbfcfa;
-    transition: transform .16s ease, border-color .16s ease, background .16s ease;
+    border-radius: 10px;
+    background: #f8fafc;
+    transition: var(--transition);
   }
-  .control-link:hover { transform: translateY(-1px); border-color: var(--line-strong); background: white; }
-  .control-link.disabled { opacity: .58; pointer-events: none; }
+  .control-link:hover { transform: translateY(-2px); border-color: rgba(13, 148, 136, 0.25); background: white; box-shadow: var(--shadow); }
+  .control-link.disabled { opacity: .5; pointer-events: none; }
   .link-icon {
-    width: 38px;
-    height: 38px;
+    width: 40px;
+    height: 40px;
     border-radius: 8px;
-    background: #e8eee9;
+    background: var(--primary-light);
+    border: 1px solid rgba(13, 148, 136, 0.1);
     position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .link-icon::before,
   .link-icon::after {
@@ -591,19 +634,20 @@ BASE_CSS = """
     border-radius: 3px;
     background: var(--primary);
   }
-  .link-icon::before { width: 16px; height: 2px; left: 11px; top: 14px; }
-  .link-icon::after { width: 16px; height: 2px; left: 11px; top: 21px; }
+  .link-icon::before { width: 16px; height: 2px; left: 12px; top: 15px; }
+  .link-icon::after { width: 16px; height: 2px; left: 12px; top: 21px; }
   .link-copy { display: grid; gap: 5px; min-width: 0; }
-  .link-copy strong { font-size: 14px; line-height: 1.25; }
-  .link-copy small { color: var(--muted); line-height: 1.35; }
+  .link-copy strong { font-size: 14px; line-height: 1.25; color: var(--ink); }
+  .link-copy small { color: var(--muted); line-height: 1.35; font-size: 12px; }
   .link-copy code {
-    color: #42504a;
-    background: #edf0ec;
+    color: var(--primary-dark);
+    background: var(--primary-light);
     border-radius: 6px;
     padding: 4px 6px;
     font-size: 11px;
     white-space: normal;
     overflow-wrap: anywhere;
+    border: 1px solid rgba(13, 148, 136, 0.1);
   }
   .route-list { display: grid; gap: 8px; }
   .route-row {
@@ -611,8 +655,8 @@ BASE_CSS = """
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px;
     align-items: center;
-    padding: 9px 0;
-    border-bottom: 1px solid #edf0ec;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
   }
   .route-row:last-child { border-bottom: 0; }
   .route-row code { overflow-wrap: anywhere; }
@@ -620,24 +664,34 @@ BASE_CSS = """
   .stack-item {
     border: 1px solid var(--line);
     border-radius: 8px;
-    padding: 11px;
-    background: #fbfcfa;
+    padding: 12px;
+    background: #f8fafc;
+    transition: var(--transition);
   }
-  .stack-item strong { display: block; font-size: 13px; margin-bottom: 4px; }
+  .stack-item:hover { border-color: var(--line-strong); background: white; }
+  .stack-item strong { display: block; font-size: 14px; margin-bottom: 4px; color: var(--ink); }
   .stack-item span { color: var(--muted); font-size: 12px; }
-  .editor textarea { min-height: 520px; line-height: 1.45; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+  .editor textarea { min-height: 520px; line-height: 1.5; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 13px; }
   .editor textarea.short { min-height: 220px; }
-  .prompt-workspace { grid-template-columns: minmax(0, 1.1fr) minmax(320px, .9fr); align-items: start; }
-  .prompt-assistant textarea { min-height: 118px; line-height: 1.4; }
+  .prompt-workspace { grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr); align-items: start; }
+  .prompt-assistant textarea { min-height: 118px; line-height: 1.45; }
   .prompt-assistant textarea.result {
     min-height: 300px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 13px;
+    background: #0f172a;
+    color: #f8fafc;
+    border-color: #1e293b;
+  }
+  .prompt-assistant textarea.result:focus {
+    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.3);
+    border-color: var(--primary);
   }
   .prompt-status { font-size: 12px; color: var(--muted); min-height: 18px; margin-top: 10px; }
   .prompt-status.ok { color: var(--green); }
   .prompt-status.err { color: var(--red); }
-  .knowledge-preview { white-space: pre-wrap; color: var(--muted); font-size: 13px; max-height: 90px; overflow: hidden; }
-  .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
+  .knowledge-preview { white-space: pre-wrap; color: var(--muted); font-size: 13px; max-height: 90px; overflow: hidden; line-height: 1.4; }
+  .code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
   .muted { color: var(--muted); }
   .empty { padding: 40px; text-align: center; color: var(--muted); }
   .messages { display: grid; gap: 10px; }
@@ -646,31 +700,50 @@ BASE_CSS = """
     min-height: 420px;
     overflow-y: auto;
     overscroll-behavior: contain;
+    padding: 16px;
+    background: #f1f5f9;
+    border-radius: 12px;
+    border: 1px solid var(--line);
   }
   .bubble {
-    max-width: min(720px, 88%);
-    padding: 11px 13px;
-    border-radius: 8px;
+    max-width: min(720px, 85%);
+    padding: 12px 14px;
+    border-radius: 12px;
     border: 1px solid var(--line);
     background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
   }
-  .bubble.assistant { margin-left: auto; background: #e8f1ed; border-color: #cfe1d8; }
-  .bubble .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .bubble.assistant { margin-left: auto; background: #ccfbf1; border-color: #99f6e4; color: var(--primary-dark); }
+  .bubble .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; }
+  
+  /* Scrollbar styling */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
   .login {
     min-height: 100vh; display: grid; place-items: center; padding: 24px;
-    background: radial-gradient(circle at 15% 0%, #dfeade, transparent 30%), var(--bg);
+    background: radial-gradient(circle at 10% 20%, rgba(13, 148, 136, 0.06) 0%, transparent 45%),
+                radial-gradient(circle at 90% 80%, rgba(37, 99, 235, 0.04) 0%, transparent 45%),
+                #f8fafc;
   }
-  .login-card { width: min(420px, 100%); padding: 24px; }
-  label { display: block; font-size: 13px; color: var(--muted); margin: 14px 0 6px; }
-  input, textarea, select {
+  .login-card { width: min(420px, 100%); padding: 32px; border-radius: 16px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04); }
+  label { display: block; font-size: 13px; font-weight: 600; color: var(--ink); margin: 14px 0 6px; }
+  input:not([type="checkbox"]):not([type="radio"]), textarea, select {
     width: 100%; border: 1px solid var(--line-strong); border-radius: 8px;
-    padding: 10px 11px; background: white; color: var(--ink);
+    padding: 10px 12px; background: white; color: var(--ink);
+    transition: var(--transition); outline: none;
   }
-  .err { background: #f8dfdc; color: #95322d; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin: 14px 0; }
+  input:not([type="checkbox"]):not([type="radio"]):focus, textarea:focus, select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
+  }
+  .err { background: #ffe4e6; color: #9f1239; border: 1px solid #fecdd3; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin: 14px 0; font-weight: 500; }
   form.inline { display: inline; }
   @media (max-width: 860px) {
     .shell { grid-template-columns: 1fr; }
-    .side { position: relative; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+    .side { position: relative; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 16px; }
     .logout { position: static; margin-top: 18px; }
     .main { padding: 20px 16px 32px; }
     .kpis, .split { grid-template-columns: 1fr; }
@@ -755,7 +828,10 @@ def _login_layout(title: str, body: str) -> str:
 @router.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: str = ""):
     if request.session.get("user"):
-        return RedirectResponse("/admin/dashboard", status_code=302)
+        if request.session.get("role") == "agency_admin":
+            return RedirectResponse("/admin/app", status_code=302)
+        else:
+            return RedirectResponse("/client/app", status_code=302)
     err_html = f'<div class="err">{html.escape(error)}</div>' if error else ""
     body = f"""
     <section class="card login-card">
@@ -799,7 +875,10 @@ async def login_submit(
         request.session["client_id"] = user["client_id"]
         request.session["user_id"] = user["user_id"]
         request.session["name"] = user.get("name") or user["email"]
-        return RedirectResponse("/admin/app", status_code=302)
+        if user["role"] == "agency_admin":
+            return RedirectResponse("/admin/app", status_code=302)
+        else:
+            return RedirectResponse("/client/app", status_code=302)
     return RedirectResponse(
         "/admin/login?error=" + "Usuario+o+contrasena+incorrectos",
         status_code=302,
@@ -814,6 +893,8 @@ async def logout(request: Request):
 
 @router.get("", response_class=HTMLResponse)
 async def root(request: Request):
+    if request.session.get("user") and request.session.get("role") != "agency_admin":
+        return RedirectResponse("/client/app", status_code=302)
     return RedirectResponse("/admin/app", status_code=302)
 
 
@@ -1090,10 +1171,17 @@ async def client_detail(request: Request, client_id: int):
           <td><strong>{html.escape(u.get("name") or u["email"])}</strong><br><span class="muted">{html.escape(u["email"])}</span></td>
           <td><span class="badge">{html.escape(u["role"])}</span></td>
           <td>{html.escape(u.get("status") or "active")}</td>
+          <td style="text-align: right; vertical-align: middle;">
+            <form method="post" action="/admin/users/{int(u["id"])}/delete?redirect_to_client={client_id}" onsubmit="return confirm('¿Estás seguro de que deseas eliminar este usuario?');" class="inline">
+              <button type="submit" class="btn secondary" style="padding: 5px; min-height: 28px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--red); cursor: pointer;" title="Eliminar usuario">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; display: block;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+            </form>
+          </td>
         </tr>
         """
         for u in users
-    ) or '<tr><td colspan="3" class="empty">Sin usuarios cliente.</td></tr>'
+    ) or '<tr><td colspan="4" class="empty">Sin usuarios cliente.</td></tr>'
     body = f"""
     <div class="topbar"><div><a class="sub" href="/admin/clients">Volver</a><h1>{html.escape(client["name"])}</h1><div class="sub">{html.escape(client["slug"])}</div></div></div>
     <section class="grid split">
@@ -1111,7 +1199,7 @@ async def client_detail(request: Request, client_id: int):
       </div>
     </section>
     <section class="grid split" style="margin-top:14px">
-      <div class="table-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th></tr></thead><tbody>{user_rows}</tbody></table></div>
+      <div class="table-wrap"><table><thead><tr><th>Usuario</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody>{user_rows}</tbody></table></div>
       <div class="panel">
         <h2>Crear usuario cliente</h2>
         <form method="post" action="/admin/clients/{client_id}/users">
@@ -1163,10 +1251,17 @@ async def users_page(request: Request, saved: str | None = None):
           <td>{html.escape(u.get("client_name") or "-")}<br><span class="muted">{html.escape(u.get("client_slug") or "")}</span></td>
           <td><span class="badge">{html.escape(u.get("role") or "client_viewer")}</span></td>
           <td><span class="badge {'b-calificado' if (u.get("status") or "active") == "active" else 'b-descalificado'}">{html.escape(u.get("status") or "active")}</span></td>
+          <td style="text-align: right; vertical-align: middle;">
+            <form method="post" action="/admin/users/{int(u["id"])}/delete" onsubmit="return confirm('¿Estás seguro de que deseas eliminar este usuario?');" class="inline">
+              <button type="submit" class="btn secondary" style="padding: 5px; min-height: 28px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--red); cursor: pointer;" title="Eliminar usuario">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 14px; height: 14px; display: block;"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+              </button>
+            </form>
+          </td>
         </tr>
         """
         for u in users
-    ) or '<tr><td colspan="4" class="empty">Sin usuarios cliente.</td></tr>'
+    ) or '<tr><td colspan="5" class="empty">Sin usuarios cliente.</td></tr>'
     if is_agency:
         client_options = "".join(
             f'<option value="{int(c["id"])}">{html.escape(c["name"])} ({html.escape(c["slug"])})</option>'
@@ -1185,7 +1280,7 @@ async def users_page(request: Request, saved: str | None = None):
     </div>
     <section class="grid split">
       <div class="table-wrap">
-        <table><thead><tr><th>Usuario</th><th>Cliente</th><th>Rol</th><th>Estado</th></tr></thead><tbody>{rows}</tbody></table>
+        <table><thead><tr><th>Usuario</th><th>Cliente</th><th>Rol</th><th>Estado</th><th></th></tr></thead><tbody>{rows}</tbody></table>
       </div>
       <div class="panel">
         <h2>Crear o actualizar usuario</h2>
@@ -1231,6 +1326,29 @@ async def create_user_page(
         auth.hash_password(password),
         role,
     )
+    return RedirectResponse("/admin/users?saved=1", status_code=302)
+
+
+@router.post("/users/{user_id}/delete")
+async def delete_user_page(
+    request: Request,
+    user_id: int,
+    redirect_to_client: int | None = None,
+):
+    session = _require_user_manager(request)
+    client_id = None if _is_agency(session) else int(session["client_id"])
+    
+    current_user_email = session.get("user")
+    user_to_delete = await db.get_user_login(current_user_email)
+    if user_to_delete and int(user_to_delete.get("user_id", 0)) == int(user_id):
+        raise HTTPException(status_code=400, detail="No puedes eliminar tu propio usuario activo")
+        
+    deleted = await db.delete_user(user_id, client_id=client_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        
+    if redirect_to_client:
+        return RedirectResponse(f"/admin/clients/{redirect_to_client}?saved=1", status_code=302)
     return RedirectResponse("/admin/users?saved=1", status_code=302)
 
 

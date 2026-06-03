@@ -47,10 +47,11 @@ def _match(patterns: list[str], text: str) -> bool:
     return any(re.search(p, text, re.IGNORECASE) for p in patterns)
 
 
-def detect_reason(
+async def detect_reason(
     user_text: str,
     bot_reply: str,
     message_type: str,
+    bot_id: int | None = None,
 ) -> tuple[str, str] | None:
     """
     Devuelve (reason_code, reason_detail) o None si no hay que escalar.
@@ -63,10 +64,35 @@ def detect_reason(
 
     # Media entrante tiene prioridad (el bot no la procesa)
     if message_type and message_type != "text":
-        return (
-            "media_recibida",
-            f"El cliente envió un mensaje de tipo '{message_type}' que el bot no puede procesar.",
-        )
+        escalate_on_media = True
+        if bot_id:
+            try:
+                skill = await db.get_bot_skill(bot_id, "escalation")
+                if skill and skill.get("enabled", True):
+                    escalate_on_media = skill.get("config", {}).get("escalate_on_media", True)
+            except Exception:
+                pass
+        if escalate_on_media:
+            return (
+                "media_recibida",
+                f"El cliente envió un mensaje de tipo '{message_type}' que el bot no puede procesar.",
+            )
+
+    # Buscar palabras clave de escalación personalizadas del cliente
+    if bot_id:
+        try:
+            skill = await db.get_bot_skill(bot_id, "escalation")
+            if skill and skill.get("enabled", True):
+                keywords = skill.get("config", {}).get("keywords", [])
+                if keywords:
+                    escaped_keywords = [r"\b" + re.escape(w.strip()) + r"\b" for w in keywords if w.strip()]
+                    if escaped_keywords and _match(escaped_keywords, ut):
+                        return (
+                            "cliente_solicito_humano",
+                            "Cliente activó palabra clave personalizada de escalado.",
+                        )
+        except Exception:
+            log.exception("Error comprobando reglas de escalado personalizadas del bot %s", bot_id)
 
     if _match(URGENT_PATTERNS, ut):
         return (
@@ -136,12 +162,13 @@ async def record_if_escalated(
     message_type: str,
     media_type: str | None,
     history: list[dict],
+    bot_id: int | None = None,
 ) -> int | None:
     """
     Si el turno actual requiere escalamiento, crea o actualiza la escalation
     pendiente para ese wa_id. Devuelve el id o None.
     """
-    detected = detect_reason(user_text, bot_reply, message_type)
+    detected = await detect_reason(user_text, bot_reply, message_type, bot_id)
     if not detected:
         return None
 
@@ -152,6 +179,7 @@ async def record_if_escalated(
 
     data = {
         "wa_id": wa_id,
+        "bot_id": bot_id,
         **customer,
         "issue_summary": summary,
         "reason": reason_code,

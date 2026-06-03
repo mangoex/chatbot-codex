@@ -553,6 +553,56 @@ async def cancel_appointment(
     )
 
 
+async def _is_within_business_hours(bot_id: int | None, dt: datetime) -> tuple[bool, str]:
+    """
+    Valida si el datetime proporcionado está dentro de los horarios de atención del bot.
+    """
+    if not bot_id:
+        return True, ""
+    try:
+        skill = await db.get_bot_skill(bot_id, "business_hours")
+    except Exception:
+        log.exception("Error consultando horarios para bot %s", bot_id)
+        return True, "" # Fail open
+    if not skill or not skill.get("enabled", True):
+        return True, ""
+    cfg = skill.get("config") or {}
+    if not cfg:
+        return True, ""
+    
+    # 0 = lunes, 6 = domingo
+    weekday_map = {
+        0: "lunes",
+        1: "martes",
+        2: "miercoles",
+        3: "jueves",
+        4: "viernes",
+        5: "sabado",
+        6: "domingo"
+    }
+    day_name = weekday_map.get(dt.weekday())
+    day_cfg = cfg.get(day_name)
+    if not day_cfg:
+        return True, ""
+    if not day_cfg.get("open", True):
+        return False, f"Lo siento, no laboramos los días {day_name.capitalize()}. ¿Podrías elegir otro día?"
+        
+    start_str = day_cfg.get("start", "09:00")
+    end_str = day_cfg.get("end", "18:00")
+    try:
+        sh, sm = map(int, start_str.split(":"))
+        eh, em = map(int, end_str.split(":"))
+    except Exception:
+        return True, "" # Formato inválido, fail open
+        
+    slot_time = dt.hour * 60 + dt.minute
+    start_time = sh * 60 + sm
+    end_time = eh * 60 + em
+    if slot_time < start_time or slot_time > end_time:
+        return False, f"Ese horario está fuera de nuestra jornada de atención ({start_str} a {end_str}). ¿Podrías elegir otra hora?"
+    return True, ""
+
+
 async def process_reply(
     wa_id: str,
     reply: str,
@@ -597,6 +647,11 @@ async def process_reply(
 
     if start < datetime.now(_tz(runtime)) + timedelta(minutes=2):
         return "Ese horario ya paso o esta demasiado cerca. Dime otro dia y hora, por favor.", False
+
+    # Validar horarios del cliente
+    in_hours, err_msg = await _is_within_business_hours(bot_id, start)
+    if not in_hours:
+        return err_msg, False
 
     existing_rows = []
     if replace_existing:

@@ -36,9 +36,19 @@ class PublicPagesTests(unittest.TestCase):
 
     def test_public_pages_accept_head_for_review_tools(self):
         routes = {route["path"]: route["methods"] for route in public_pages.router.routes}
-        for path in ("/privacy", "/terms", "/support", "/data-deletion", "/ai-data-policy"):
+        for path in ("/", "/privacy", "/terms", "/support", "/data-deletion", "/ai-data-policy"):
             with self.subTest(path=path):
                 self.assertEqual(routes[path], ("GET", "HEAD"))
+
+    def test_landing_page_content(self):
+        # We can call the landing_page endpoint directly by passing a dummy request
+        class DummyRequest:
+            pass
+        import asyncio
+        response = asyncio.run(public_pages.landing_page(DummyRequest()))
+        self.assertIn("Asistto", response.content)
+        self.assertIn("Meta Tech Provider", response.content)
+        self.assertIn("Google Calendar", response.content)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,9 @@
 import httpx
 from app import config
 
-GRAPH_VERSION = "v21.0"
+def _graph_version() -> str:
+    version = (config.META_GRAPH_API_VERSION or "v25.0").strip()
+    return version if version.startswith("v") else f"v{version}"
 
 
 async def send_text(
@@ -13,8 +15,9 @@ async def send_text(
 ) -> dict:
     sender_phone_number_id = phone_number_id or config.WHATSAPP_PHONE_NUMBER_ID
     token = access_token or config.WHATSAPP_API_TOKEN
+    version = _graph_version()
     url = (
-        f"https://graph.facebook.com/{GRAPH_VERSION}/"
+        f"https://graph.facebook.com/{version}/"
         f"{sender_phone_number_id}/messages"
     )
     headers = {

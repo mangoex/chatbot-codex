@@ -1,0 +1,925 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Arquitectura interactiva de agentes WhatsApp</title>
+  <style>
+    :root {
+      --bg: #f7f8f5;
+      --ink: #141714;
+      --muted: #5f675f;
+      --line: #d9ded6;
+      --panel: #ffffff;
+      --green: #2f7d55;
+      --green-soft: #e6f2eb;
+      --blue: #316b9f;
+      --blue-soft: #e8f0f7;
+      --amber: #a66f17;
+      --amber-soft: #fff2d8;
+      --red: #a33f3f;
+      --red-soft: #f8e7e7;
+      --shadow: 0 14px 38px rgba(25, 31, 24, .08);
+      --radius: 8px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    .shell {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 24px 0 42px;
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.08fr) minmax(280px, .92fr);
+      gap: 22px;
+      align-items: stretch;
+      margin-bottom: 18px;
+    }
+
+    .hero-main,
+    .hero-side,
+    .section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+
+    .hero-main {
+      padding: 28px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--green);
+      background: var(--green-soft);
+      border: 1px solid #cce4d5;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 7px 10px;
+      margin-bottom: 14px;
+    }
+
+    h1,
+    h2,
+    h3,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(30px, 4vw, 52px);
+      line-height: 1.04;
+      max-width: 820px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      font-size: 22px;
+      line-height: 1.15;
+      margin-bottom: 12px;
+    }
+
+    h3 {
+      font-size: 16px;
+      margin-bottom: 8px;
+    }
+
+    .lead {
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 18px;
+      max-width: 760px;
+    }
+
+    .hero-side {
+      padding: 22px;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .answer-box {
+      border-left: 4px solid var(--green);
+      background: #fbfcfa;
+      padding: 14px 16px;
+      border-radius: 6px;
+    }
+
+    .answer-box strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #f2f4f0;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .section {
+      padding: 22px;
+      margin-top: 18px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(280px, .95fr) minmax(320px, 1.05fr);
+      gap: 18px;
+    }
+
+    .diagram {
+      display: grid;
+      gap: 10px;
+    }
+
+    .node {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 38px 1fr auto;
+      gap: 10px;
+      align-items: center;
+      text-align: left;
+      background: #fbfcfa;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 12px;
+      color: var(--ink);
+      cursor: pointer;
+      transition: border-color .18s ease, transform .18s ease, background .18s ease;
+    }
+
+    .node:hover {
+      transform: translateY(-1px);
+      border-color: #b9c4b6;
+    }
+
+    .node.active {
+      background: var(--green-soft);
+      border-color: #8fc9a6;
+    }
+
+    .icon {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: #eef1eb;
+      border: 1px solid var(--line);
+      font-weight: 900;
+    }
+
+    .node-title {
+      font-weight: 800;
+      margin-bottom: 2px;
+    }
+
+    .node-sub {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .arrow {
+      color: var(--muted);
+      font-weight: 900;
+    }
+
+    .detail {
+      background: #fbfcfa;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 18px;
+      min-height: 100%;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .mini {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 92px;
+    }
+
+    .mini span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 6px;
+    }
+
+    .copy {
+      color: var(--muted);
+      margin-top: 10px;
+    }
+
+    .tabs,
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .tab,
+    .control,
+    .primary {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      min-height: 40px;
+      padding: 9px 12px;
+      cursor: pointer;
+      font-weight: 800;
+      color: var(--ink);
+    }
+
+    .tab.active,
+    .control.active,
+    .primary {
+      background: var(--ink);
+      border-color: var(--ink);
+      color: #fff;
+    }
+
+    .primary:disabled {
+      opacity: .68;
+      cursor: default;
+    }
+
+    .hosting-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .hosting-card {
+      border: 1px solid var(--line);
+      background: #fbfcfa;
+      border-radius: var(--radius);
+      padding: 14px;
+      cursor: pointer;
+    }
+
+    .hosting-card.active {
+      border-color: #8fc9a6;
+      background: var(--green-soft);
+    }
+
+    .hosting-card .tag {
+      display: inline-block;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 8px;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 10px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcfa;
+      padding: 12px;
+      opacity: .55;
+    }
+
+    .step.active {
+      opacity: 1;
+      border-color: #8fc9a6;
+      background: var(--green-soft);
+    }
+
+    .step.done {
+      opacity: 1;
+      background: #fff;
+    }
+
+    .num {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: #eef1eb;
+      border: 1px solid var(--line);
+      font-weight: 900;
+    }
+
+    .payload {
+      background: #101410;
+      color: #e9f0e6;
+      border-radius: 8px;
+      padding: 14px;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      min-height: 196px;
+      white-space: pre-wrap;
+    }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .client-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fbfcfa;
+      padding: 14px;
+    }
+
+    .client-card strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .client-card code,
+    .code {
+      background: #eef1eb;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .94em;
+    }
+
+    .matrix {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border-radius: var(--radius);
+      border: 1px solid var(--line);
+    }
+
+    .matrix th,
+    .matrix td {
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .matrix th {
+      background: #eef1eb;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .matrix tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .ok {
+      color: var(--green);
+      font-weight: 900;
+    }
+
+    .warn {
+      color: var(--amber);
+      font-weight: 900;
+    }
+
+    .quote {
+      border-left: 4px solid var(--blue);
+      background: var(--blue-soft);
+      padding: 14px 16px;
+      border-radius: 6px;
+      color: #173957;
+      font-weight: 800;
+    }
+
+    @media (max-width: 860px) {
+      .hero,
+      .workspace,
+      .two-col,
+      .hosting-grid,
+      .detail-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero-main,
+      .hero-side,
+      .section {
+        padding: 18px;
+      }
+
+      .node {
+        grid-template-columns: 34px 1fr;
+      }
+
+      .arrow {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div class="hero-main">
+        <div class="eyebrow">Agentes WhatsApp con IA · mapa operativo</div>
+        <h1>Donde vive el agente y como se conecta todo</h1>
+        <p class="lead">
+          Una guia interactiva para explicar la diferencia entre canal, infraestructura,
+          inteligencia, memoria e integraciones. Pensada para vender agentes sin sonar
+          tecnico de mas.
+        </p>
+        <div class="pill-row">
+          <span class="pill">WhatsApp es el canal</span>
+          <span class="pill">Easypanel/Railway es la casa</span>
+          <span class="pill">OpenRouter/OpenAI es la inteligencia</span>
+          <span class="pill">Postgres es memoria y configuracion</span>
+        </div>
+      </div>
+      <aside class="hero-side">
+        <div class="answer-box">
+          <strong>Respuesta corta</strong>
+          El agente vive en tu backend. En este proyecto, vive en la app FastAPI
+          desplegada en Easypanel. Si lo mueves a Railway, vive en Railway.
+        </div>
+        <div class="answer-box">
+          <strong>Vivecode, Easypanel y Railway</strong>
+          Vivecode puede ayudar a construir o simplificar una app. Easypanel y Railway
+          son lugares donde corre la app. El agente vive donde este corriendo el webhook
+          y la logica del bot.
+        </div>
+      </aside>
+    </section>
+
+    <section class="section">
+      <h2>Mapa clicable</h2>
+      <div class="workspace">
+        <div class="diagram" id="diagram"></div>
+        <div class="detail">
+          <h3 id="detailTitle"></h3>
+          <p id="detailText" class="copy"></p>
+          <div class="detail-grid">
+            <div class="mini"><span>Vive en</span><strong id="detailLives"></strong></div>
+            <div class="mini"><span>Funcion</span><strong id="detailRole"></strong></div>
+            <div class="mini"><span>Ejemplo</span><strong id="detailExample"></strong></div>
+          </div>
+          <p id="detailWhy" class="copy"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Elige donde vive la app</h2>
+      <div class="hosting-grid" id="hostingGrid"></div>
+      <p class="copy" id="hostingExplanation"></p>
+    </section>
+
+    <section class="section">
+      <div class="two-col">
+        <div>
+          <h2>Simulador de mensaje</h2>
+          <p class="copy">Presiona iniciar para ver que pasa cuando alguien escribe por WhatsApp.</p>
+          <div class="controls">
+            <button class="primary" id="runFlow">Iniciar simulacion</button>
+            <button class="control" id="resetFlow">Reiniciar</button>
+          </div>
+          <div class="flow" id="flow"></div>
+        </div>
+        <div>
+          <h2>Lo que viaja por dentro</h2>
+          <pre class="payload" id="payloadBox">Presiona "Iniciar simulacion".</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Un backend, muchos clientes</h2>
+      <div class="tabs" id="clientTabs"></div>
+      <div class="two-col">
+        <div class="client-card">
+          <strong id="clientName"></strong>
+          <p class="copy" id="clientDescription"></p>
+          <p class="copy"><span class="code">phone_number_id</span>: <span id="clientPhone"></span></p>
+        </div>
+        <div class="client-card">
+          <strong>Configuracion que cambia por cliente</strong>
+          <p class="copy" id="clientConfig"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Constructor vs infraestructura vs agente</h2>
+      <table class="matrix">
+        <thead>
+          <tr>
+            <th>Concepto</th>
+            <th>Que hace</th>
+            <th>Como explicarlo</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Vivecode</strong></td>
+            <td>Puede facilitar crear, editar o desplegar una app si el servicio lo permite.</td>
+            <td><span class="warn">Constructor</span>: ayuda a fabricar o administrar.</td>
+          </tr>
+          <tr>
+            <td><strong>Easypanel / Railway</strong></td>
+            <td>Ejecuta el backend, mantiene variables, dominio, deploy y conexion a Postgres.</td>
+            <td><span class="ok">Casa</span>: aqui vive el agente cuando esta corriendo.</td>
+          </tr>
+          <tr>
+            <td><strong>OpenRouter / OpenAI</strong></td>
+            <td>Recibe contexto y devuelve la respuesta inteligente del modelo.</td>
+            <td><span class="ok">Cerebro linguistico</span>: entiende y redacta.</td>
+          </tr>
+          <tr>
+            <td><strong>SDK</strong></td>
+            <td>Es una libreria para hablar mas comodo con un proveedor.</td>
+            <td><span class="warn">Opcional</span>: no es el agente, solo una forma de conectarse.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <h2>Frase para venderlo</h2>
+      <p class="quote">
+        Creamos agentes de WhatsApp con IA que viven en una infraestructura propia,
+        responden con conocimiento del negocio y pueden ejecutar acciones reales:
+        agendar citas, registrar leads, consultar sistemas o escalar a una persona.
+      </p>
+    </section>
+  </main>
+
+  <script>
+    const nodes = [
+      {
+        id: "whatsapp",
+        icon: "WA",
+        title: "WhatsApp Cloud API",
+        sub: "Canal de entrada y salida",
+        lives: "Meta",
+        role: "Entrega mensajes",
+        example: "/webhooks/whatsapp",
+        text: "WhatsApp no piensa ni decide. Solo recibe el mensaje del usuario y lo manda a tu webhook. Luego entrega la respuesta que genera tu backend.",
+        why: "Si WhatsApp esta bien conectado, los mensajes llegan. Si no llegan, se revisa Meta, el webhook, el phone_number_id y la suscripcion messages."
+      },
+      {
+        id: "backend",
+        icon: "API",
+        title: "Backend del agente",
+        sub: "FastAPI en Easypanel o Railway",
+        lives: "Tu hosting",
+        role: "Orquesta todo",
+        example: "bot.humanio.digital",
+        text: "Aqui vive el agente operativo: recibe mensajes, busca el bot correcto, carga prompt, historial, conocimiento, habilidades e integraciones.",
+        why: "Esta es la parte que vendes como plataforma: un backend que puede manejar varios clientes y varios bots desde una sola instalacion."
+      },
+      {
+        id: "postgres",
+        icon: "DB",
+        title: "Postgres",
+        sub: "Memoria y configuracion",
+        lives: "Base de datos",
+        role: "Guarda estado",
+        example: "bots, prompts, leads",
+        text: "Postgres guarda clientes, bots, prompts, base de conocimiento, conversaciones, leads, citas, integraciones y secretos cifrados.",
+        why: "Sin base de datos, cada bot seria dificil de personalizar. Con Postgres, cada cliente tiene su configuracion sin crear un repo nuevo."
+      },
+      {
+        id: "llm",
+        icon: "IA",
+        title: "Modelo de IA",
+        sub: "OpenRouter, OpenAI u otro",
+        lives: "Proveedor IA",
+        role: "Entiende y redacta",
+        example: "openai/gpt...",
+        text: "El backend le manda al modelo el mensaje del usuario, el prompt, la base de conocimiento y parte del historial. El modelo devuelve una respuesta.",
+        why: "El modelo no es todo el agente. Es el motor linguistico. El agente completo es modelo mas memoria, reglas, habilidades e infraestructura."
+      },
+      {
+        id: "tools",
+        icon: "↗",
+        title: "Habilidades e integraciones",
+        sub: "Calendario, CRM, API, webhook",
+        lives: "Backend + sistemas externos",
+        role: "Ejecuta acciones",
+        example: "Google Calendar",
+        text: "Cuando el bot necesita actuar, el backend ejecuta una habilidad: crear una cita, cancelar una cita, mandar un lead a un webhook o llamar una API.",
+        why: "Aqui el bot deja de ser solo conversacional y se vuelve agente: no solo responde, tambien hace cosas."
+      },
+      {
+        id: "admin",
+        icon: "UI",
+        title: "Panel admin",
+        sub: "Control por cliente",
+        lives: "Tu backend",
+        role: "Configura bots",
+        example: "/admin/bots/1",
+        text: "El panel permite editar prompt, base de conocimiento, habilidades, integraciones y usuarios. Es la capa que vuelve vendible el sistema.",
+        why: "Un cliente no deberia tocar codigo. Debe poder entrar, ver su bot y ajustar lo permitido desde una interfaz privada."
+      }
+    ];
+
+    const hosting = [
+      {
+        id: "easypanel",
+        title: "Easypanel",
+        tag: "Tu caso actual",
+        body: "Tu app corre en una VPS. Controlas dominio, variables, Postgres y deploy desde GitHub.",
+        explanation: "En este proyecto, el agente vive en Easypanel porque ahi esta corriendo FastAPI y ahi recibe el webhook de WhatsApp."
+      },
+      {
+        id: "railway",
+        title: "Railway",
+        tag: "Alternativa simple",
+        body: "Railway tambien puede hospedar backend, base de datos y variables con menos administracion de servidor.",
+        explanation: "Si desplegaras la misma app en Railway y Meta apuntara a esa URL, entonces el agente viviria en Railway."
+      },
+      {
+        id: "vivecode",
+        title: "Vivecode",
+        tag: "Constructor / entorno",
+        body: "Puede ser mas facil para crear o administrar partes del producto, segun como exporte o hospede la app.",
+        explanation: "Vivecode no reemplaza por si solo el concepto de agente. Si ahi corre el webhook y la logica, el agente vive ahi. Si solo ayuda a construir, es una herramienta de creacion."
+      }
+    ];
+
+    const flowSteps = [
+      {
+        title: "Usuario escribe en WhatsApp",
+        body: "Ejemplo: Quiero agendar una cita.",
+        payload: "{\n  \"from\": \"5215550000000\",\n  \"text\": \"Quiero agendar una cita\"\n}"
+      },
+      {
+        title: "Meta manda el evento al webhook",
+        body: "WhatsApp Cloud API llama a tu URL publica.",
+        payload: "POST https://bot.humanio.digital/webhooks/whatsapp\n\nmetadata.phone_number_id = \"123456\""
+      },
+      {
+        title: "El backend identifica el bot",
+        body: "Busca el phone_number_id en Postgres para cargar el bot correcto.",
+        payload: "bot = {\n  id: 1,\n  cliente: \"Asistto\",\n  prompt: \"...\",\n  skills: [\"google_calendar\", \"webhook\"]\n}"
+      },
+      {
+        title: "Se arma el contexto",
+        body: "Prompt, conocimiento, historial y reglas se envian al modelo.",
+        payload: "contexto = prompt + conocimiento + historial + mensaje_actual"
+      },
+      {
+        title: "La IA responde o pide una accion",
+        body: "El modelo redacta y puede incluir un marcador interno para una habilidad.",
+        payload: "respuesta = \"Claro, dime que dia y hora te queda\"\naccion = null"
+      },
+      {
+        title: "El backend ejecuta habilidades",
+        body: "Si hay cita, lead o API, el backend llama Google Calendar, CRM o webhook.",
+        payload: "if accion == \"calendar\": crear_evento()\nif accion == \"webhook\": enviar_lead()"
+      },
+      {
+        title: "WhatsApp entrega la respuesta",
+        body: "El usuario ve solo la respuesta limpia.",
+        payload: "{\n  \"to\": \"5215550000000\",\n  \"text\": \"Listo, quedo agendada tu llamada.\"\n}"
+      }
+    ];
+
+    const clients = [
+      {
+        id: "asistto",
+        label: "Asistto",
+        name: "Asistto by Humanio",
+        phone: "phone_number_id principal",
+        description: "Bot original para vender y demostrar agentes de WhatsApp con IA.",
+        config: "Prompt comercial de Asistto, conocimiento de paquetes, calendario de Humanio y CRM demo."
+      },
+      {
+        id: "clinica",
+        label: "Clinica demo",
+        name: "Bot Clinica Dental Demo",
+        phone: "phone_number_id de la clinica",
+        description: "Bot personalizado para responder servicios, precios orientativos, ubicacion y agendar valoraciones.",
+        config: "Prompt clinico, base de conocimiento de tratamientos, calendario del doctor y webhook de leads."
+      },
+      {
+        id: "legal",
+        label: "Despacho demo",
+        name: "Bot Despacho Legal Demo",
+        phone: "phone_number_id del despacho",
+        description: "Bot para calificar casos, pedir datos iniciales y escalar casos urgentes.",
+        config: "Prompt legal, FAQ del despacho, reglas de escalacion y API del sistema interno."
+      }
+    ];
+
+    const diagram = document.getElementById("diagram");
+    const detailTitle = document.getElementById("detailTitle");
+    const detailText = document.getElementById("detailText");
+    const detailLives = document.getElementById("detailLives");
+    const detailRole = document.getElementById("detailRole");
+    const detailExample = document.getElementById("detailExample");
+    const detailWhy = document.getElementById("detailWhy");
+
+    function renderNodes() {
+      diagram.innerHTML = nodes.map((node, index) => `
+        <button class="node${index === 1 ? " active" : ""}" data-node="${node.id}" type="button">
+          <span class="icon">${node.icon}</span>
+          <span>
+            <span class="node-title">${node.title}</span>
+            <span class="node-sub">${node.sub}</span>
+          </span>
+          <span class="arrow">→</span>
+        </button>
+      `).join("");
+      diagram.querySelectorAll(".node").forEach(button => {
+        button.addEventListener("click", () => selectNode(button.dataset.node));
+      });
+      selectNode("backend");
+    }
+
+    function selectNode(id) {
+      const node = nodes.find(item => item.id === id) || nodes[0];
+      diagram.querySelectorAll(".node").forEach(button => {
+        button.classList.toggle("active", button.dataset.node === id);
+      });
+      detailTitle.textContent = node.title;
+      detailText.textContent = node.text;
+      detailLives.textContent = node.lives;
+      detailRole.textContent = node.role;
+      detailExample.textContent = node.example;
+      detailWhy.textContent = node.why;
+    }
+
+    const hostingGrid = document.getElementById("hostingGrid");
+    const hostingExplanation = document.getElementById("hostingExplanation");
+
+    function renderHosting() {
+      hostingGrid.innerHTML = hosting.map((item, index) => `
+        <button class="hosting-card${index === 0 ? " active" : ""}" data-hosting="${item.id}" type="button">
+          <span class="tag">${item.tag}</span>
+          <h3>${item.title}</h3>
+          <p class="copy">${item.body}</p>
+        </button>
+      `).join("");
+      hostingGrid.querySelectorAll(".hosting-card").forEach(button => {
+        button.addEventListener("click", () => selectHosting(button.dataset.hosting));
+      });
+      selectHosting("easypanel");
+    }
+
+    function selectHosting(id) {
+      const item = hosting.find(host => host.id === id) || hosting[0];
+      hostingGrid.querySelectorAll(".hosting-card").forEach(button => {
+        button.classList.toggle("active", button.dataset.hosting === id);
+      });
+      hostingExplanation.textContent = item.explanation;
+    }
+
+    const flow = document.getElementById("flow");
+    const payloadBox = document.getElementById("payloadBox");
+    const runFlow = document.getElementById("runFlow");
+    const resetFlow = document.getElementById("resetFlow");
+    let flowIndex = -1;
+    let timer = null;
+
+    function renderFlow() {
+      flow.innerHTML = flowSteps.map((step, index) => `
+        <div class="step" data-step="${index}">
+          <span class="num">${index + 1}</span>
+          <span>
+            <strong>${step.title}</strong>
+            <p class="copy">${step.body}</p>
+          </span>
+        </div>
+      `).join("");
+    }
+
+    function setFlowStep(index) {
+      flowIndex = index;
+      flow.querySelectorAll(".step").forEach((item, idx) => {
+        item.classList.toggle("active", idx === index);
+        item.classList.toggle("done", idx < index);
+      });
+      const step = flowSteps[index];
+      payloadBox.textContent = step ? step.payload : "Presiona \"Iniciar simulacion\".";
+      runFlow.disabled = index >= flowSteps.length - 1;
+      runFlow.textContent = index >= flowSteps.length - 1 ? "Simulacion completa" : "Continuar";
+    }
+
+    function nextFlow() {
+      clearTimeout(timer);
+      const next = Math.min(flowIndex + 1, flowSteps.length - 1);
+      setFlowStep(next);
+      if (next < flowSteps.length - 1) {
+        timer = setTimeout(nextFlow, 950);
+      }
+    }
+
+    function resetSimulation() {
+      clearTimeout(timer);
+      flowIndex = -1;
+      setFlowStep(-1);
+      runFlow.disabled = false;
+      runFlow.textContent = "Iniciar simulacion";
+    }
+
+    const clientTabs = document.getElementById("clientTabs");
+    const clientName = document.getElementById("clientName");
+    const clientDescription = document.getElementById("clientDescription");
+    const clientPhone = document.getElementById("clientPhone");
+    const clientConfig = document.getElementById("clientConfig");
+
+    function renderClients() {
+      clientTabs.innerHTML = clients.map((client, index) => `
+        <button class="tab${index === 0 ? " active" : ""}" data-client="${client.id}" type="button">${client.label}</button>
+      `).join("");
+      clientTabs.querySelectorAll(".tab").forEach(button => {
+        button.addEventListener("click", () => selectClient(button.dataset.client));
+      });
+      selectClient("asistto");
+    }
+
+    function selectClient(id) {
+      const client = clients.find(item => item.id === id) || clients[0];
+      clientTabs.querySelectorAll(".tab").forEach(button => {
+        button.classList.toggle("active", button.dataset.client === id);
+      });
+      clientName.textContent = client.name;
+      clientDescription.textContent = client.description;
+      clientPhone.textContent = client.phone;
+      clientConfig.textContent = client.config;
+    }
+
+    renderNodes();
+    renderHosting();
+    renderFlow();
+    renderClients();
+    resetSimulation();
+
+    runFlow.addEventListener("click", nextFlow);
+    resetFlow.addEventListener("click", resetSimulation);
+  </script>
+</body>
+</html>

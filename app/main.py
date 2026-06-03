@@ -12,6 +12,7 @@ from app import (
     agenda_guard,
     bots,
     calendar_client,
+    client,
     config,
     core_replies,
     db,
@@ -71,12 +72,16 @@ app.add_middleware(
 
 app.include_router(admin.router)
 app.include_router(admin_tools.router)
+app.include_router(client.router)
 app.include_router(public_pages.router)
 
 
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+async def health():
+    db_ok = await db.check_health()
+    if not db_ok:
+        raise HTTPException(status_code=503, detail="Database connection failed")
+    return {"status": "ok", "db": "connected"}
 
 
 @app.get("/webhook")
@@ -170,6 +175,7 @@ async def _send_and_track(
         message_type="text",
         media_type=None,
         history=history,
+        bot_id=bot.id,
     )
     lead = await db.get_lead(wa_id, bot_id=bot.id)
     if not lead or lead.get("qualification_status") == "en_progreso":
@@ -216,6 +222,7 @@ async def _process_message(payload: dict) -> None:
             message_type=mtype,
             media_type=media_type,
             history=history,
+            bot_id=bot.id,
         )
         await follow_ups.schedule(wa_id)
         log.info("Media recibida de %s (%s)", wa_id, media_type)
