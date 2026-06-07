@@ -741,6 +741,139 @@ BASE_CSS = """
   }
   .err { background: #ffe4e6; color: #9f1239; border: 1px solid #fecdd3; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin: 14px 0; font-weight: 500; }
   form.inline { display: inline; }
+  
+  /* Chatwoot Layout */
+  .chatwoot-layout {
+    display: grid;
+    grid-template-columns: 300px 1fr 280px;
+    height: calc(100vh - 140px);
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .chat-sidebar {
+    border-right: 1px solid var(--line);
+    background: #f8fafc;
+    display: flex;
+    flex-direction: column;
+  }
+  .chat-sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--line);
+    font-weight: 700;
+    font-size: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .chat-list {
+    overflow-y: auto;
+    flex: 1;
+  }
+  .chat-item {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    transition: var(--transition);
+    text-decoration: none;
+    display: block;
+    color: inherit;
+  }
+  .chat-item:hover { background: rgba(13, 148, 136, 0.05); }
+  .chat-item.active { background: white; border-left: 3px solid var(--primary); }
+  .chat-item-header { display: flex; justify-content: space-between; margin-bottom: 4px; align-items: center; }
+  .chat-item-name { font-weight: 600; color: var(--ink); font-size: 14px; }
+  .chat-item-time { font-size: 11px; color: var(--muted); }
+  .chat-item-preview { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  
+  .chat-main {
+    display: flex;
+    flex-direction: column;
+    background: white;
+  }
+  .chat-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .chat-avatar {
+    width: 36px; height: 36px; border-radius: 50%; background: var(--primary-light); color: var(--primary-dark);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+  }
+  .chat-header-info { display: flex; flex-direction: column; }
+  .chat-header-info strong { font-size: 15px; }
+  .chat-header-info small { color: var(--muted); font-size: 12px; }
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: #f8fafc;
+  }
+  .chat-crm {
+    border-left: 1px solid var(--line);
+    background: white;
+    padding: 20px;
+    overflow-y: auto;
+  }
+  .crm-section { margin-bottom: 24px; }
+  .crm-section h3 { font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 700; margin: 0 0 12px 0; letter-spacing: 0.05em; }
+  
+  /* Chatfuel Builder Layout */
+  .builder-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 16px;
+    margin-top: 16px;
+  }
+  .builder-card {
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: var(--shadow);
+    display: flex;
+    flex-direction: column;
+    text-decoration: none;
+    color: inherit;
+    transition: var(--transition);
+  }
+  .builder-card:hover {
+    transform: translateY(-2px); box-shadow: var(--shadow-hover); border-color: rgba(13, 148, 136, 0.25);
+  }
+  .builder-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--ink);
+  }
+  .builder-card-icon {
+    width: 32px; height: 32px; border-radius: 8px; background: var(--primary-light); color: var(--primary-dark);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .builder-card-icon svg { width: 18px; height: 18px; }
+  .builder-card-body {
+    flex: 1;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 16px;
+    line-height: 1.5;
+  }
+  .builder-card-footer {
+    display: flex;
+    justify-content: flex-end;
+  }
+
   @media (max-width: 860px) {
     .shell { grid-template-columns: 1fr; }
     .side { position: relative; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 16px; }
@@ -764,6 +897,11 @@ ICONS = {
     "building": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v16"/><path d="M9 7h1"/><path d="M14 7h1"/><path d="M9 11h1"/><path d="M14 11h1"/><path d="M9 15h1"/><path d="M14 15h1"/></svg>',
     "out": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>',
     "wa": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 11.5a8 8 0 0 1-11.9 7L4 20l1.5-4A8 8 0 1 1 20 11.5Z"/><path d="M9 8.8c.4 2 1.9 3.5 4.2 4.3l1.3-1.1 1.8.4c.2 1.2-.6 2.3-1.8 2.3-3.5-.1-6.2-2.8-6.5-6.2C8 7.3 9.2 6.6 10.3 7l.4 1.7L9 8.8Z"/></svg>',
+    "prompt": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>',
+    "knowledge": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>',
+    "integrations": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>',
+    "skills": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2v20"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>',
+    "settings": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>',
 }
 
 
@@ -1468,21 +1606,75 @@ async def bot_detail(request: Request, bot_id: int):
       <div><a class="sub" href="/admin/bots">Volver</a><h1>{html.escape(bot["name"])}</h1><div class="sub">{html.escape(bot.get("client_name") or "-")} - {html.escape(bot.get("phone_number_id") or "sin phone_number_id")}</div></div>
       <span class="badge">{html.escape(bot.get("status") or "active")}</span>
     </div>
-    <section class="panel" style="margin-bottom:14px">
-      <h2>Configuracion del agente</h2>
-      <div class="actions">
-        <a class="btn secondary" href="/admin/bots/{bot_id}/prompt">Prompt con IA</a>
-        <a class="btn secondary" href="/admin/bots/{bot_id}/knowledge">Base de conocimiento</a>
-        <a class="btn secondary" href="/admin/bots/{bot_id}/integrations">Integraciones</a>
-        <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp">Conectar WhatsApp</a>
-        <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/diagnostics">Diagnostico Meta</a>
-        <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/send-test">Enviar prueba WhatsApp</a>
-        <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/templates">Plantillas Meta</a>
-        <a class="btn secondary" href="/admin/bots/{bot_id}/skills">Habilidades</a>
-        <a class="btn secondary" href="/admin/calendar-status?bot_id={bot_id}">Probar calendario</a>
-      </div>
-    </section>
-    <section class="grid kpis">
+    
+    <div class="builder-grid">
+      <a href="/admin/bots/{bot_id}/prompt" class="builder-card">
+        <div class="builder-card-header">
+          <div class="builder-card-icon">{ICONS["prompt"]}</div>
+          Prompt con IA
+        </div>
+        <div class="builder-card-body">
+          Edita la personalidad, objetivo y reglas del agente de forma interactiva.
+        </div>
+        <div class="builder-card-footer">
+          <span class="btn secondary">Configurar &rarr;</span>
+        </div>
+      </a>
+      
+      <a href="/admin/bots/{bot_id}/knowledge" class="builder-card">
+        <div class="builder-card-header">
+          <div class="builder-card-icon">{ICONS["knowledge"]}</div>
+          Base de conocimiento
+        </div>
+        <div class="builder-card-body">
+          Sube documentos, preguntas frecuentes y horarios para que el bot tenga contexto del negocio.
+        </div>
+        <div class="builder-card-footer">
+          <span class="btn secondary">Administrar &rarr;</span>
+        </div>
+      </a>
+      
+      <a href="/admin/bots/{bot_id}/integrations" class="builder-card">
+        <div class="builder-card-header">
+          <div class="builder-card-icon">{ICONS["integrations"]}</div>
+          Integraciones
+        </div>
+        <div class="builder-card-body">
+          Conecta APIs externas, Webhooks, CRMs y configura credenciales de Google Calendar.
+        </div>
+        <div class="builder-card-footer">
+          <span class="btn secondary">Conectar &rarr;</span>
+        </div>
+      </a>
+      
+      <a href="/admin/bots/{bot_id}/skills" class="builder-card">
+        <div class="builder-card-header">
+          <div class="builder-card-icon">{ICONS["skills"]}</div>
+          Habilidades
+        </div>
+        <div class="builder-card-body">
+          Activa o desactiva las capacidades del bot (ej. agendar citas, llamar webhooks).
+        </div>
+        <div class="builder-card-footer">
+          <span class="btn secondary">Activar &rarr;</span>
+        </div>
+      </a>
+      
+      <a href="/admin/bots/{bot_id}/whatsapp" class="builder-card">
+        <div class="builder-card-header">
+          <div class="builder-card-icon">{ICONS["wa"]}</div>
+          WhatsApp & Meta
+        </div>
+        <div class="builder-card-body">
+          Vincula el número usando Embedded Signup, envía pruebas y gestiona plantillas.
+        </div>
+        <div class="builder-card-footer">
+          <span class="btn secondary">Gestionar &rarr;</span>
+        </div>
+      </a>
+    </div>
+
+    <section class="grid kpis" style="margin-top:24px">
       <div class="card"><div class="k">Conversaciones</div><div class="n">{metrics.get("conversations", 0)}</div></div>
       <div class="card"><div class="k">Mensajes</div><div class="n">{metrics.get("messages", 0)}</div></div>
       <div class="card"><div class="k">Leads</div><div class="n">{metrics.get("leads", 0)}</div></div>
@@ -3117,17 +3309,19 @@ async def conversations(request: Request, wa_id: str | None = None, bot_id: int 
         else '<div class="err">Este usuario todavia no tiene un bot asignado a su cliente.</div>'
     )
 
-    thread_rows = "".join(
+    thread_items = "".join(
         f"""
-        <tr>
-          <td><strong>{html.escape(_display_name(t.get("nombre"), t["wa_id"]))}</strong><br><span class="muted">{html.escape(_clip(t.get("last_content"), 70))}</span></td>
-          <td><span class="badge b-{html.escape(t.get("qualification_status") or "en_progreso")}">{html.escape((t.get("qualification_status") or "en_progreso").replace("_", " "))}</span></td>
-          <td>{_fmt_dt(t.get("last_message_at"))}</td>
-          <td><a class="btn secondary" href="/admin/conversations?wa_id={html.escape(t["wa_id"])}{bot_qs}">Ver</a></td>
-        </tr>
+        <a class="chat-item {'active' if selected == t['wa_id'] else ''}" href="/admin/conversations?wa_id={html.escape(t["wa_id"])}{bot_qs}">
+          <div class="chat-item-header">
+            <span class="chat-item-name">{html.escape(_display_name(t.get("nombre"), t["wa_id"]))}</span>
+            <span class="chat-item-time">{_fmt_dt(t.get("last_message_at")).split(" ")[-1]}</span>
+          </div>
+          <div class="chat-item-preview">{html.escape(_clip(t.get("last_content"), 60))}</div>
+        </a>
         """
         for t in threads
-    ) or '<tr><td colspan="4" class="empty">Aun no hay conversaciones.</td></tr>'
+    ) or '<div class="empty">Aun no hay conversaciones.</div>'
+    
     bubble_html = "".join(
         f"""
         <div class="bubble {html.escape(m["role"])}">
@@ -3138,29 +3332,65 @@ async def conversations(request: Request, wa_id: str | None = None, bot_id: int 
         for m in messages
     ) or '<div class="empty">Selecciona una conversacion para ver el historial.</div>'
 
-    lead_block = ""
+    chat_header = ""
+    crm_sidebar = ""
     if selected:
         status = (lead or {}).get("qualification_status", "en_progreso")
-        lead_block = f"""
-        <div class="panel" style="margin-bottom:14px">
-          <h2>{html.escape(_display_name((lead or {}).get("nombre"), selected))}</h2>
-          <div class="sub">{html.escape((lead or {}).get("negocio") or "Sin negocio detectado")} - <span class="badge b-{html.escape(status)}">{html.escape(status.replace("_", " "))}</span></div>
-          <div class="actions" style="margin-top:14px">
-            <a class="btn whatsapp" href="{_wa_link(selected)}" target="_blank">{ICONS["wa"]} Abrir WhatsApp</a>
+        name_display = html.escape(_display_name((lead or {}).get("nombre"), selected))
+        initials = name_display[:2].upper() if name_display else "??"
+        
+        chat_header = f"""
+        <div class="chat-header">
+          <div class="chat-avatar">{initials}</div>
+          <div class="chat-header-info">
+            <strong>{name_display}</strong>
+            <small>{html.escape(selected)}</small>
+          </div>
+        </div>
+        """
+        
+        crm_sidebar = f"""
+        <div class="chat-crm">
+          <div class="crm-section">
+            <h3>Detalles del Contacto</h3>
+            <div style="font-weight:600;font-size:15px;margin-bottom:4px;">{name_display}</div>
+            <div style="color:var(--muted);font-size:13px;margin-bottom:12px;">{html.escape((lead or {}).get("negocio") or "Sin negocio")}</div>
+            <a class="btn whatsapp" href="{_wa_link(selected)}" target="_blank" style="width:100%; justify-content:center;">{ICONS["wa"]} Contactar</a>
+          </div>
+          <div class="crm-section">
+            <h3>Estado del Lead</h3>
+            <span class="badge b-{html.escape(status)}">{html.escape(status.replace("_", " "))}</span>
+          </div>
+          <div class="crm-section">
+            <h3>Notas</h3>
+            <div style="font-size:13px;color:var(--muted);background:#f8fafc;padding:10px;border-radius:8px;border:1px solid var(--line);">
+              {html.escape((lead or {}).get("notas") or "Sin notas guardadas.")}
+            </div>
           </div>
         </div>
         """
 
     body = f"""
-    <div class="topbar"><div><h1>Conversaciones</h1><div class="sub">Historial real guardado desde WhatsApp.</div></div></div>
+    <div class="topbar" style="margin-bottom:14px;"><div><h1>Conversaciones</h1><div class="sub">Historial real guardado desde WhatsApp.</div></div></div>
     {scope_notice}
-    <section class="grid split">
-      <div class="table-wrap"><table><thead><tr><th>Contacto</th><th>Estado</th><th>Ultimo</th><th></th></tr></thead><tbody>{thread_rows}</tbody></table></div>
-      <div>
-        {lead_block}
-        <div class="panel chat-widget"><div class="messages">{bubble_html}</div></div>
+    <div class="chatwoot-layout">
+      <div class="chat-sidebar">
+        <div class="chat-sidebar-header">
+          Chats activos
+          <span class="badge">{len(threads)}</span>
+        </div>
+        <div class="chat-list">
+          {thread_items}
+        </div>
       </div>
-    </section>
+      <div class="chat-main">
+        {chat_header}
+        <div class="chat-messages">
+          {bubble_html}
+        </div>
+      </div>
+      {crm_sidebar}
+    </div>
     """
     return HTMLResponse(_layout("Conversaciones", "conversations", body))
 
