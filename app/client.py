@@ -1162,7 +1162,7 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
         <div class="card">
           <div class="card-header">
             <h2>Variables de Entorno (API / Webhook)</h2>
-            <p>Configura variables dinámicas (Ej. <code>MERCADOPAGO_TOKEN</code>) para usarlas en llamadas externas reemplazando su nombre con llaves: <code>{MERCADOPAGO_TOKEN}</code>.</p>
+            <p>Configura variables dinámicas (Ej. <code>MERCADOPAGO_TOKEN</code>) para usarlas en llamadas externas reemplazando su nombre con llaves: <code>{{MERCADOPAGO_TOKEN}}</code>.</p>
           </div>
           
           <form method="post" action="/client/bots/{bot_id}/integrations/api">
@@ -1183,7 +1183,7 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
           </form>
           
           <script>
-            function addEnvVarRow() {
+            function addEnvVarRow() {{
               const container = document.getElementById('envVarsContainer');
               const row = document.createElement('div');
               row.className = 'env-var-row';
@@ -1194,7 +1194,7 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
                 <button type="button" class="btn secondary" style="padding:8px 12px; color:var(--red);" onclick="this.parentElement.remove()">X</button>
               `;
               container.appendChild(row);
-            }
+            }}
           </script>
         </div>
       </div>
