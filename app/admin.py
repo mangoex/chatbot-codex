@@ -1357,7 +1357,7 @@ async def client_detail(request: Request, client_id: int):
         <form method="post" action="/admin/clients/{client_id}/users">
           <label>Email</label><input name="email" type="email" required>
           <label>Nombre</label><input name="name">
-          <label>Contrasena temporal</label><input name="password" type="password" required>
+          <label>Contrasena temporal</label><input name="password" type="password" autocomplete="new-password" required>
           <label>Rol</label><select name="role"><option value="client_admin">Admin cliente</option><option value="client_viewer">Solo lectura</option></select>
           <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Crear usuario</button></div>
         </form>
@@ -1440,7 +1440,7 @@ async def users_page(request: Request, saved: str | None = None):
           {client_field}
           <label>Email</label><input name="email" type="email" required>
           <label>Nombre</label><input name="name">
-          <label>Contrasena temporal</label><input name="password" type="password" required>
+          <label>Contrasena temporal</label><input name="password" type="password" autocomplete="new-password" required>
           <label>Rol</label>
           <select name="role">
             <option value="client_admin">Admin cliente</option>
@@ -1780,7 +1780,7 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
         <h2>Guardar conexion</h2>
         <form method="post" action="/admin/bots/{bot_id}/whatsapp/connect">
           <label>Authorization code de Meta</label><input id="authCode" name="authorization_code" autocomplete="off">
-          <label>Access token temporal/manual</label><input name="access_token" type="password" autocomplete="off">
+          <label>Access token temporal/manual</label><input name="access_token" type="password" autocomplete="new-password">
           <label>Business ID</label><input id="businessId" name="business_id" value="{html.escape(bot.get("business_id") or "")}">
           <label>WABA ID</label><input id="wabaId" name="waba_id" value="{html.escape(bot.get("waba_id") or "")}">
           <label>Phone Number ID</label><input id="phoneNumberId" name="phone_number_id" value="{html.escape(bot.get("phone_number_id") or "")}" required>
@@ -2148,7 +2148,7 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
             <option value="anthropic" {selected_provider("anthropic")}>Claude</option>
           </select>
           <label>API key temporal</label>
-          <input type="password" name="api_key" autocomplete="off" placeholder="Opcional si ya esta configurada">
+          <input type="password" name="api_key" autocomplete="new-password" placeholder="Opcional si ya esta configurada">
           <label>Base URL</label>
           <input name="base_url" placeholder="{html.escape(base_url_hint)}" value="{html.escape(assistant_base_url)}">
           <label>Modelo</label>
@@ -2843,7 +2843,7 @@ async def edit_bot_integration_page(
           <h2>Guardar secreto</h2>
           <form method="post" action="/admin/bots/{bot_id}/integrations/{integration_id}/secrets">
             <label>Nombre del secreto</label><input name="secret_name" placeholder="api_key, access_token, refresh_token" required>
-            <label>Valor</label><input name="secret_value" type="password" required>
+            <label>Valor</label><input name="secret_value" type="password" autocomplete="new-password" required>
             <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Guardar secreto</button></div>
           </form>
         </div>
