@@ -498,6 +498,32 @@ CLIENT_CSS = """
     .sidebar { height: auto; position: static; }
     .grid-2, .grid-cards, .prompt-workspace { grid-template-columns: 1fr; }
   }
+  .password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+  .password-wrapper input {
+    padding-right: 40px !important;
+  }
+  .password-toggle {
+    position: absolute;
+    right: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--muted);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+    z-index: 10;
+  }
+  .password-toggle:hover {
+    color: var(--primary);
+  }
 </style>
 """
 
@@ -577,6 +603,18 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{html.escape(title)} - Asistto</title>
   {CLIENT_CSS}
+  <script>
+    function togglePasswordVisibility(btn) {{
+      const input = btn.previousElementSibling;
+      if (input.type === "password") {{
+        input.type = "text";
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+      }} else {{
+        input.type = "password";
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+      }}
+    }}
+  </script>
 </head>
 <body>
   <div class="layout">
@@ -725,9 +763,14 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
     for sec in api_secrets:
         key_safe = html.escape(sec["secret_name"])
         env_rows_html += f'''
-        <div class="env-var-row" style="display:flex; gap:8px; align-items:center;">
+        <div class="env-var-row" style="display:flex; gap:8px; align-items:center; width:100%;">
           <input name="env_key" placeholder="KEY (Ej. STRIPE_KEY)" value="{key_safe}" style="flex:1; margin:0;" readonly>
-          <input type="password" name="env_val" placeholder="Valor del secreto" value="********" style="flex:2; margin:0;">
+          <div class="password-wrapper" style="flex:2;">
+            <input type="password" name="env_val" placeholder="Valor del secreto" value="********" autocomplete="new-password" style="margin:0;">
+            <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+            </button>
+          </div>
           <button type="button" class="btn secondary" style="padding:8px 12px; color:var(--red);" onclick="this.parentElement.remove()">X</button>
         </div>
         '''
@@ -851,10 +894,15 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
             </div>
             <form method="post" action="/client/bots/{bot_id}/whatsapp/connect">
               <label>Authorization Code de Meta (si aplica)</label>
-              <input id="metaAuthCode" name="authorization_code" placeholder="Llenado automáticamente">
+              <input id="metaAuthCode" name="authorization_code" autocomplete="off" placeholder="Llenado automáticamente">
               
               <label>Access Token (Manual o Temporal)</label>
-              <input type="password" name="access_token" placeholder="EAW..." value="{"" if not wa_info.get("whatsapp_access_token") else "********"}">
+              <div class="password-wrapper">
+                <input type="password" name="access_token" placeholder="EAW..." autocomplete="new-password" value="{"" if not wa_info.get("whatsapp_access_token") else "********"}">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                </button>
+              </div>
               
               <label>Business Portfolio ID</label>
               <input id="metaBusinessId" name="business_id" value="{html.escape(wa_info.get("business_id") or "")}">
@@ -1142,10 +1190,20 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
             <input name="client_id" placeholder="12345-abcde.apps.googleusercontent.com" value="{html.escape(calendar_config.get("client_id") or "")}">
             
             <label>Google Client Secret</label>
-            <input type="password" name="client_secret" placeholder="********" value="{"" if not calendar_status.get("secret_client_secret_saved") else "********"}">
+            <div class="password-wrapper">
+              <input type="password" name="client_secret" placeholder="********" autocomplete="new-password" value="{"" if not calendar_status.get("secret_client_secret_saved") else "********"}">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
             
             <label>Google Refresh Token</label>
-            <input type="password" name="refresh_token" placeholder="1//0..." value="{"" if not calendar_status.get("secret_refresh_token_saved") else "********"}">
+            <div class="password-wrapper">
+              <input type="password" name="refresh_token" placeholder="1//0..." autocomplete="new-password" value="{"" if not calendar_status.get("secret_refresh_token_saved") else "********"}">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
             
             <label>Google Calendar ID</label>
             <input name="calendar_id" placeholder="ej. primary o email@gmail.com" value="{html.escape(calendar_config.get("calendar_id") or "primary")}">
@@ -1190,7 +1248,12 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
               row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-top:4px;';
               row.innerHTML = `
                 <input name="env_key" placeholder="KEY (Ej. API_KEY)" style="flex:1; margin:0;" required>
-                <input type="password" name="env_val" placeholder="Valor del secreto" style="flex:2; margin:0;" required>
+                <div class="password-wrapper" style="flex:2;">
+                  <input type="password" name="env_val" placeholder="Valor del secreto" autocomplete="new-password" style="margin:0;" required>
+                  <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                  </button>
+                </div>
                 <button type="button" class="btn secondary" style="padding:8px 12px; color:var(--red);" onclick="this.parentElement.remove()">X</button>
               `;
               container.appendChild(row);
