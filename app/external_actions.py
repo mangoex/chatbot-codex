@@ -114,6 +114,20 @@ def _merge_dict(base: Any, override: Any) -> dict | None:
     return merged or None
 
 
+def _interpolate(obj: Any, secrets: dict[str, str]) -> Any:
+    if isinstance(obj, str):
+        result = obj
+        for k, v in secrets.items():
+            if f"{{{k}}}" in result:
+                result = result.replace(f"{{{k}}}", v)
+        return result
+    elif isinstance(obj, dict):
+        return {k: _interpolate(v, secrets) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [_interpolate(v, secrets) for v in obj]
+    return obj
+
+
 def build_request(
     action: dict[str, Any],
     integration: dict[str, Any],
@@ -163,7 +177,8 @@ def build_request(
     data = _merge_dict(operation.get("data"), payload.get("data"))
     if data and request_json is None:
         request_data["data"] = data
-    return request_data
+        
+    return _interpolate(request_data, secrets)
 
 
 def _operation_instruction_lines(config_data: dict) -> list[str]:

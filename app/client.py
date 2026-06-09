@@ -716,8 +716,21 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
         
     api_integration = await db.get_active_bot_integration(bot_id, "external_api")
     api_config = {}
+    api_secrets = []
     if api_integration:
         api_config = api_integration.get("config") or {}
+        api_secrets = await db.list_integration_secrets(int(api_integration["id"]))
+        
+    env_rows_html = ""
+    for sec in api_secrets:
+        key_safe = html.escape(sec["secret_name"])
+        env_rows_html += f'''
+        <div class="env-var-row" style="display:flex; gap:8px; align-items:center;">
+          <input name="env_key" placeholder="KEY (Ej. STRIPE_KEY)" value="{key_safe}" style="flex:1; margin:0;" readonly>
+          <input type="password" name="env_val" placeholder="Valor del secreto" value="********" style="flex:2; margin:0;">
+          <button type="button" class="btn secondary" style="padding:8px 12px; color:var(--red);" onclick="this.parentElement.remove()">X</button>
+        </div>
+        '''
         
     # Metrics
     metrics = await db.admin_metrics(bot_id=bot_id)
@@ -1148,27 +1161,41 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
         
         <div class="card">
           <div class="card-header">
-            <h2>Conexión de API Externa</h2>
-            <p>Configura las credenciales para que tu bot pueda consultar o enviar datos a tu CRM u otros sistemas de software a través del marcador <code>[[EXTERNAL_API_REQUEST]]</code>.</p>
+            <h2>Variables de Entorno (API / Webhook)</h2>
+            <p>Configura variables dinámicas (Ej. <code>MERCADOPAGO_TOKEN</code>) para usarlas en llamadas externas reemplazando su nombre con llaves: <code>{MERCADOPAGO_TOKEN}</code>.</p>
           </div>
           
           <form method="post" action="/client/bots/{bot_id}/integrations/api">
-            <label>URL Base del API</label>
+            <label>URL Base del API (Opcional)</label>
             <input name="base_url" placeholder="https://api.miclinicadental.com/v1" value="{html.escape(api_config.get("base_url") or "")}">
             
-            <label>Token de Autorización (API Key)</label>
-            <input type="password" name="api_key" placeholder="********" value="{"" if not api_config.get("api_key") else "********"}">
+            <div style="margin-top: 16px;">
+              <label>Variables de Entorno</label>
+              <div id="envVarsContainer" style="display:flex; flex-direction:column; gap:8px;">
+                {env_rows_html}
+              </div>
+              <button type="button" class="btn secondary" style="margin-top:12px; font-size:12px;" onclick="addEnvVarRow()">+ Agregar Variable</button>
+            </div>
             
-            <label>Cabecera HTTP de Autorización</label>
-            <input name="auth_header" placeholder="Authorization" value="{html.escape(api_config.get("auth_header") or "Authorization")}">
-            
-            <label>Esquema de Autorización</label>
-            <input name="auth_scheme" placeholder="Bearer" value="{html.escape(api_config.get("auth_scheme") or "Bearer")}">
-            
-            <div style="margin-top:20px;">
-              <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar API</button>
+            <div style="margin-top:24px;">
+              <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar Variables</button>
             </div>
           </form>
+          
+          <script>
+            function addEnvVarRow() {
+              const container = document.getElementById('envVarsContainer');
+              const row = document.createElement('div');
+              row.className = 'env-var-row';
+              row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-top:4px;';
+              row.innerHTML = `
+                <input name="env_key" placeholder="KEY (Ej. API_KEY)" style="flex:1; margin:0;" required>
+                <input type="password" name="env_val" placeholder="Valor del secreto" style="flex:2; margin:0;" required>
+                <button type="button" class="btn secondary" style="padding:8px 12px; color:var(--red);" onclick="this.parentElement.remove()">X</button>
+              `;
+              container.appendChild(row);
+            }
+          </script>
         </div>
       </div>
     </div>
@@ -1540,24 +1567,20 @@ async def client_calendar_save(
 async def client_api_save(
     request: Request,
     bot_id: int,
-    base_url: str = Form(...),
-    api_key: str = Form(""),
-    auth_header: str = Form("Authorization"),
-    auth_scheme: str = Form("Bearer"),
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
     
-    clean_url = base_url.strip()
-    if not clean_url:
-        raise HTTPException(status_code=400, detail="La URL Base es obligatoria.")
+    form_data = await request.form()
+    base_url = str(form_data.get("base_url", "")).strip()
+    
+    env_keys = form_data.getlist("env_key")
+    env_vals = form_data.getlist("env_val")
         
     integration = await db.get_active_bot_integration(bot_id, "external_api")
     
     config_data = {
-        "base_url": clean_url,
-        "auth_header": auth_header.strip() or "Authorization",
-        "auth_scheme": auth_scheme.strip() or "Bearer"
+        "base_url": base_url,
     }
     
     if integration:
@@ -1578,10 +1601,26 @@ async def client_api_save(
             enabled=True
         )
         
-    # Save secrets if provided
-    if api_key.strip():
-        encrypted_key = secure_store.encrypt_secret(api_key.strip())
-        await db.upsert_integration_secret(integration_id, "api_key", encrypted_key)
+    # Handle dynamic secrets
+    submitted_keys = []
+    for k, v in zip(env_keys, env_vals):
+        k_clean = str(k).strip()
+        v_clean = str(v).strip()
+        if not k_clean:
+            continue
+        submitted_keys.append(k_clean)
+        
+        # Only upsert if it's a new value (not the masked placeholder)
+        if v_clean and v_clean != "********":
+            encrypted_val = secure_store.encrypt_secret(v_clean)
+            await db.upsert_integration_secret(integration_id, k_clean, encrypted_val)
+            
+    # Delete removed secrets
+    existing_secrets = await db.list_integration_secrets(integration_id)
+    for sec in existing_secrets:
+        sec_name = sec["secret_name"]
+        if sec_name not in submitted_keys:
+            await db.delete_integration_secret(integration_id, sec_name)
         
     # Enable skill
     await db.upsert_bot_skill(
