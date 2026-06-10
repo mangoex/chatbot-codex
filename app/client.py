@@ -424,6 +424,11 @@ CLIENT_CSS = """
     gap: 8px;
     border: 1px solid transparent;
   }
+  .notice-banner svg {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+  }
   .notice-banner.success {
     background: #d1fae5;
     border-color: #a7f3d0;
