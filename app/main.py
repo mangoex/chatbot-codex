@@ -285,6 +285,7 @@ async def _process_message(payload: dict) -> None:
 @app.get("/debug-waba/{bot_id}")
 async def debug_waba(
     bot_id: int,
+    subscribe: bool = Query(False),
     x_reload_token: str = Header(None),
     reload_token: str = Query(None),
 ):
@@ -292,6 +293,13 @@ async def debug_waba(
         raise HTTPException(status_code=403, detail="Forbidden")
 
     from app import meta_provider, db
+
+    subscription_result = None
+    if subscribe:
+        try:
+            subscription_result = await meta_provider.subscribe_app_to_waba(bot_id)
+        except Exception as e:
+            subscription_result = {"error": str(e)}
 
     # 1. Run standard meta provider connection diagnostics
     diag = await meta_provider.diagnose_bot_connection(bot_id)
@@ -332,6 +340,7 @@ async def debug_waba(
 
     return {
         "bot_id": bot_id,
+        "subscription_action_result": subscription_result,
         "diagnostics": diag,
         "token_info": {
             "has_token": bool(token),

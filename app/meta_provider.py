@@ -166,6 +166,12 @@ async def connect_bot_from_embedded_signup(data: MetaConnectionInput) -> dict[st
         token,
         connection_config,
     )
+    # Suscribir la app al WABA de forma automatica
+    try:
+        await subscribe_app_to_waba(data.bot_id)
+        log.info(f"Auto-subscribed app to WABA {data.waba_id} for bot {data.bot_id}")
+    except Exception as exc:
+        log.error(f"Failed to auto-subscribe app to WABA during setup: {exc}")
     return {
         "bot_id": data.bot_id,
         "integration_id": integration_id,
@@ -406,3 +412,19 @@ async def create_message_template(
         "components": [{"type": "BODY", "text": _clean(body_text)}],
     }
     return await graph_post(f"{waba_id}/message_templates", token, payload)
+
+
+async def subscribe_app_to_waba(bot_id: int) -> dict[str, Any]:
+    runtime = await get_bot_whatsapp_runtime(bot_id)
+    bot = runtime["bot"]
+    integration = runtime["integration"]
+    token = runtime["access_token"]
+    if not bot:
+        raise ValueError("Bot no encontrado.")
+    config_data = integration.get("config") if integration else {}
+    waba_id = _clean(bot.get("waba_id") or config_data.get("waba_id"))
+    if not waba_id:
+        raise ValueError("Falta WABA ID para suscribir la app.")
+    if not token:
+        raise ValueError("Falta access_token cifrado para WhatsApp Cloud.")
+    return await graph_post(f"{waba_id}/subscribed_apps", token, {})
