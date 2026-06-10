@@ -321,11 +321,12 @@ async def debug_waba(
 
     # Convert records to dicts for JSON serialization, handling datetime
     def serialize_record(record):
+        from datetime import datetime as dt
         if not record:
             return None
         d = dict(record)
         for k, v in d.items():
-            if isinstance(v, datetime):
+            if isinstance(v, dt):
                 d[k] = v.isoformat()
         return d
 
