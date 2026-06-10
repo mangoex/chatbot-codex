@@ -74,7 +74,6 @@ async def exchange_code_for_token(authorization_code: str) -> str:
     params = {
         "client_id": config.META_APP_ID,
         "client_secret": config.META_APP_SECRET,
-        "redirect_uri": config.META_REDIRECT_URI,
         "code": code,
     }
     async with httpx.AsyncClient(timeout=20) as client:
