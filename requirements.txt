@@ -8,3 +8,7 @@ python-dotenv==1.0.1
 itsdangerous==2.2.0
 python-multipart==0.0.17
 cryptography==42.0.8
+pypdf==6.12.1
+python-docx==1.2.0
+openpyxl==3.1.5
+
