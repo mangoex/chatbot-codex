@@ -1137,6 +1137,7 @@ async def client_app(
           </div>
         </div>
     </div>
+  </div>
 
     <!-- 1b. TAB PANEL: CONVERSACIONES -->
     <div id="panel-conversations" class="tab-panel">
