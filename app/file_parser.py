@@ -6,9 +6,14 @@ log = logging.getLogger("file-parser")
 
 # Dynamic imports inside functions to fail gracefully if needed
 def parse_file(file_bytes: bytes, filename: str) -> str:
-    """Parses text content from file bytes based on filename extension.
+    """Parses text content from file bytes based on filename extension, sanitizing NUL bytes.
     Supported extensions: .pdf, .docx, .xlsx, .csv, .md, .txt
     """
+    raw_text = _parse_file_raw(file_bytes, filename)
+    return raw_text.replace('\x00', '')
+
+def _parse_file_raw(file_bytes: bytes, filename: str) -> str:
+    """Parses raw text content from file bytes based on filename extension."""
     ext = filename.lower().split('.')[-1]
     
     if ext == "pdf":
@@ -52,8 +57,25 @@ def parse_file(file_bytes: bytes, filename: str) -> str:
             
     elif ext == "csv":
         try:
-            decoded = file_bytes.decode('utf-8', errors='ignore')
-            reader = csv.reader(io.StringIO(decoded))
+            decoded = None
+            for encoding in ("utf-8", "utf-16", "latin-1"):
+                try:
+                    decoded = file_bytes.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if decoded is None:
+                decoded = file_bytes.decode('utf-8', errors='ignore')
+            
+            # Remove NUL characters before passing to csv.reader
+            decoded = decoded.replace('\x00', '')
+            
+            # Auto-detect delimiter
+            delimiter = ','
+            if ';' in decoded and decoded.count(';') > decoded.count(','):
+                delimiter = ';'
+                
+            reader = csv.reader(io.StringIO(decoded), delimiter=delimiter)
             rows = []
             for row in reader:
                 if any(row):
@@ -65,7 +87,16 @@ def parse_file(file_bytes: bytes, filename: str) -> str:
             
     elif ext in ("md", "txt"):
         try:
-            return file_bytes.decode('utf-8', errors='ignore')
+            decoded = None
+            for encoding in ("utf-8", "utf-16", "latin-1"):
+                try:
+                    decoded = file_bytes.decode(encoding)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if decoded is None:
+                decoded = file_bytes.decode('utf-8', errors='ignore')
+            return decoded
         except Exception as e:
             log.error(f"Error parsing plain text file: {e}")
             raise ValueError(f"No se pudo leer el archivo de texto: {e}")

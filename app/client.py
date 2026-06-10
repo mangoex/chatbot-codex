@@ -532,6 +532,12 @@ CLIENT_CSS = """
     color: var(--primary);
   }
 
+  /* Scrollbar styling */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
   /* Chatwoot Layout */
   .chatwoot-layout {
     display: grid;
@@ -543,6 +549,9 @@ CLIENT_CSS = """
     overflow: hidden;
     box-shadow: var(--shadow);
     margin-top: 14px;
+  }
+  .chat-sidebar, .chat-main, .chat-crm {
+    min-height: 0;
   }
   .chat-sidebar {
     border-right: 1px solid var(--line);
@@ -806,6 +815,15 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
       if (activePanel) {{
         activePanel.classList.add('active');
       }}
+      
+      // Auto-scroll chat messages if switching to conversations tab
+      if (tabId === 'conversations') {{
+        const chatMessages = document.querySelector('.chat-messages');
+        if (chatMessages) {{
+          chatMessages.scrollTop = chatMessages.scrollHeight;
+        }}
+      }}
+      
       // Save tab to URL state
       const url = new URL(window.location.href);
       url.searchParams.set("tab", tabId);
@@ -823,6 +841,12 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
       const params = new URLSearchParams(window.location.search);
       const tab = params.get("tab") || "inicio";
       switchTab(tab);
+      
+      // Auto-scroll chat messages on load
+      const chatMessages = document.querySelector('.chat-messages');
+      if (chatMessages) {{
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }}
     }});
   </script>
 </body>
@@ -1896,12 +1920,17 @@ async def client_knowledge_create(
     if not clean_title or not clean_content:
         raise HTTPException(status_code=400, detail="El título y el contenido son obligatorios (o sube un archivo válido).")
         
-    await db.create_bot_knowledge(
-        bot_id=bot_id,
-        title=clean_title,
-        content=clean_content,
-        status="active"
-    )
+    try:
+        await db.create_bot_knowledge(
+            bot_id=bot_id,
+            title=clean_title,
+            content=clean_content,
+            status="active"
+        )
+    except Exception as e:
+        log.exception(f"Error guardando documento de conocimiento en base de datos: {clean_title}")
+        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=knowledge&saved=err", status_code=302)
+        
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=knowledge&saved=1", status_code=302)
 
 @router.post("/bots/{bot_id}/knowledge/{knowledge_id}/archive")

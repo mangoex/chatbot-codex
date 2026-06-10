@@ -753,6 +753,9 @@ BASE_CSS = """
     overflow: hidden;
     box-shadow: var(--shadow);
   }
+  .chat-sidebar, .chat-main, .chat-crm {
+    min-height: 0;
+  }
   .chat-sidebar {
     border-right: 1px solid var(--line);
     background: #f8fafc;
@@ -3458,6 +3461,14 @@ async def conversations(request: Request, wa_id: str | None = None, bot_id: int 
       </div>
       {crm_sidebar}
     </div>
+    <script>
+      window.addEventListener('DOMContentLoaded', () => {{
+        const chatMessages = document.querySelector('.chat-messages');
+        if (chatMessages) {{
+          chatMessages.scrollTop = chatMessages.scrollHeight;
+        }}
+      }});
+    </script>
     """
     return HTMLResponse(_layout("Conversaciones", "conversations", body))
 

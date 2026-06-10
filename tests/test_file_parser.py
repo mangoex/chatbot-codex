@@ -13,6 +13,27 @@ class FileParserTests(unittest.TestCase):
         self.assertIn("col1, col2", result)
         self.assertIn("val1, val2", result)
 
+    def test_parse_csv_utf16_with_nul_bytes(self):
+        # UTF-16 CSV file containing NUL bytes when read as raw bytes
+        csv_utf16 = "col1,col2\nval1,val2\n".encode("utf-16")
+        result = parse_file(csv_utf16, "data.csv")
+        self.assertNotIn("\x00", result)
+        self.assertIn("col1, col2", result)
+        self.assertIn("val1, val2", result)
+
+    def test_parse_csv_semicolon_delimiter(self):
+        # CSV with semicolon delimiter (common in Spanish locales)
+        csv_semicolon = b"col1;col2\nval1;val2\n"
+        result = parse_file(csv_semicolon, "data.csv")
+        self.assertIn("col1, col2", result)
+        self.assertIn("val1, val2", result)
+
+    def test_parse_text_utf16(self):
+        # UTF-16 text file
+        text_utf16 = "Hello world\nLine 2".encode("utf-16")
+        result = parse_file(text_utf16, "info.txt")
+        self.assertEqual(result, "Hello world\nLine 2")
+
     def test_parse_text(self):
         text_content = "Hello world\nLine 2".encode("utf-8")
         result = parse_file(text_content, "info.txt")
