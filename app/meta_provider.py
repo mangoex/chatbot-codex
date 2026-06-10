@@ -75,8 +75,12 @@ async def exchange_code_for_token(authorization_code: str) -> str:
         "code": code,
     }
     async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(graph_url("oauth/access_token"), params=params)
-        response.raise_for_status()
+        try:
+            response = await client.get(graph_url("oauth/access_token"), params=params)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as err:
+            log.error(f"Error de Meta al intercambiar token. Status: {err.response.status_code}, Body: {err.response.text}")
+            raise
         payload = response.json()
     token = _clean(payload.get("access_token"))
     if not token:
