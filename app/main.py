@@ -280,3 +280,69 @@ async def _process_message(payload: dict) -> None:
     await _send_and_track(bot, wa_id, user_text, reply, history, scheduled=scheduled)
 
     log.info("Respondido a %s (%d chars)", wa_id, len(reply))
+
+
+@app.get("/debug-waba/{bot_id}")
+async def debug_waba(
+    bot_id: int,
+    x_reload_token: str = Header(None),
+    reload_token: str = Query(None),
+):
+    if not config.RELOAD_TOKEN or (x_reload_token != config.RELOAD_TOKEN and reload_token != config.RELOAD_TOKEN):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from app import meta_provider, db
+
+    # 1. Run standard meta provider connection diagnostics
+    diag = await meta_provider.diagnose_bot_connection(bot_id)
+
+    # 2. Get the decrypted access token if available, check length
+    runtime = await meta_provider.get_bot_whatsapp_runtime(bot_id)
+    token = runtime.get("access_token")
+    token_len = len(token) if token else 0
+    token_prefix = token[:10] + "..." if token and len(token) > 10 else ""
+
+    # 3. Retrieve database records for this bot
+    async with db._pool.acquire() as conn:
+        bot_row = await conn.fetchrow("SELECT * FROM bots WHERE id = $1", bot_id)
+        number_row = await conn.fetchrow("SELECT * FROM bot_whatsapp_numbers WHERE bot_id = $1", bot_id)
+        integration_rows = await conn.fetch(
+            "SELECT id, bot_id, integration_type, name, enabled, config FROM bot_integrations WHERE bot_id = $1",
+            bot_id
+        )
+        last_messages = await conn.fetch(
+            "SELECT id, wa_id, role, content, created_at FROM conversations WHERE bot_id = $1 ORDER BY created_at DESC LIMIT 10",
+            bot_id
+        )
+        processed_msgs = await conn.fetch(
+            "SELECT message_id, processed_at FROM processed_messages WHERE bot_id = $1 ORDER BY processed_at DESC LIMIT 10",
+            bot_id
+        )
+
+    # Convert records to dicts for JSON serialization, handling datetime
+    def serialize_record(record):
+        if not record:
+            return None
+        d = dict(record)
+        for k, v in d.items():
+            if isinstance(v, datetime):
+                d[k] = v.isoformat()
+        return d
+
+    return {
+        "bot_id": bot_id,
+        "diagnostics": diag,
+        "token_info": {
+            "has_token": bool(token),
+            "length": token_len,
+            "prefix": token_prefix
+        },
+        "database": {
+            "bot": serialize_record(bot_row),
+            "whatsapp_number": serialize_record(number_row),
+            "integrations": [serialize_record(r) for r in integration_rows],
+            "last_conversations": [serialize_record(r) for r in last_messages],
+            "last_processed_messages": [serialize_record(r) for r in processed_msgs]
+        }
+    }
+
