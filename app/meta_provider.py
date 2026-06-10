@@ -6,8 +6,11 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+import logging
 
 from app import config, db, secure_store
+
+log = logging.getLogger(__name__)
 
 
 GRAPH_ROOT = "https://graph.facebook.com"
