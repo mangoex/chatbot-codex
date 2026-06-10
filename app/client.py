@@ -4,10 +4,10 @@ import json
 import logging
 import re
 from datetime import datetime, timezone
-from fastapi import APIRouter, Request, Form, HTTPException
+from fastapi import APIRouter, Request, Form, HTTPException, UploadFile, File
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
-from app import db, config, auth, secure_store, meta_provider, prompt_assistant, skill_runtime, calendar_client
+from app import db, config, auth, secure_store, meta_provider, prompt_assistant, skill_runtime, calendar_client, file_parser
 
 log = logging.getLogger("client-panel")
 router = APIRouter(prefix="/client", tags=["client-portal"])
@@ -23,7 +23,9 @@ ICONS = {
     "integrations": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>',
     "out": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>',
     "success": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="green"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
-    "error": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="red"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>'
+    "error": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="red"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    "chat": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/></svg>',
+    "leads": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>'
 }
 
 CLIENT_CSS = """
@@ -529,6 +531,120 @@ CLIENT_CSS = """
   .password-toggle:hover {
     color: var(--primary);
   }
+
+  /* Chatwoot Layout */
+  .chatwoot-layout {
+    display: grid;
+    grid-template-columns: 300px 1fr 280px;
+    height: calc(100vh - 220px);
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    margin-top: 14px;
+  }
+  .chat-sidebar {
+    border-right: 1px solid var(--line);
+    background: #f8fafc;
+    display: flex;
+    flex-direction: column;
+  }
+  .chat-sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--line);
+    font-weight: 700;
+    font-size: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .chat-list {
+    overflow-y: auto;
+    flex: 1;
+  }
+  .chat-item {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    transition: var(--transition);
+    text-decoration: none;
+    display: block;
+    color: inherit;
+  }
+  .chat-item:hover { background: rgba(13, 148, 136, 0.05); }
+  .chat-item.active { background: white; border-left: 3px solid var(--primary); }
+  .chat-item-header { display: flex; justify-content: space-between; margin-bottom: 4px; align-items: center; }
+  .chat-item-name { font-weight: 600; color: var(--ink); font-size: 14px; }
+  .chat-item-time { font-size: 11px; color: var(--muted); }
+  .chat-item-preview { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  
+  .chat-main {
+    display: flex;
+    flex-direction: column;
+    background: white;
+  }
+  .chat-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .chat-avatar {
+    width: 36px; height: 36px; border-radius: 50%; background: var(--primary-light); color: var(--primary-dark);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+  }
+  .chat-header-info { display: flex; flex-direction: column; }
+  .chat-header-info strong { font-size: 15px; }
+  .chat-header-info small { color: var(--muted); font-size: 12px; }
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: #f8fafc;
+  }
+  .chat-crm {
+    border-left: 1px solid var(--line);
+    background: white;
+    padding: 20px;
+    overflow-y: auto;
+  }
+  .crm-section { margin-bottom: 24px; }
+  .crm-section h3 { font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 700; margin: 0 0 12px 0; letter-spacing: 0.05em; }
+
+  .bubble {
+    max-width: min(720px, 85%);
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+  }
+  .bubble.assistant { margin-left: auto; background: #ccfbf1; border-color: #99f6e4; color: var(--primary-dark); }
+  .bubble .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; }
+
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tabs a {
+    border: 1px solid var(--line);
+    background: white;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+    text-decoration: none;
+    transition: var(--transition);
+  }
+  .tabs a:hover { border-color: var(--line-strong); color: var(--ink); }
+  .tabs a.active { background: var(--ink); border-color: var(--ink); color: white; font-weight: 600; }
+
+  .b-en_progreso, .b-pendiente { background: #fef3c7; color: #b45309; }
+  .b-calificado, .b-resuelto { background: #d1fae5; color: #065f46; }
+  .b-descalificado, .b-urgente { background: #ffe4e6; color: #9f1239; }
 </style>
 """
 
@@ -569,6 +685,30 @@ async def _first_allowed_bot(session: dict) -> dict | None:
     bots = await db.list_bots(client_id=client_id, limit=1)
     return bots[0] if bots else None
 
+def _fmt_dt(value: datetime | None) -> str:
+    return value.strftime("%d/%m/%Y %H:%M") if value else "-"
+
+
+def _clip(value: str | None, size: int = 160) -> str:
+    text = (value or "").strip()
+    return text if len(text) <= size else text[: size - 1].rstrip() + "..."
+
+
+def _wa_link(wa_id: str) -> str:
+    return f"https://wa.me/{html.escape(wa_id)}"
+
+
+def _display_name(name: str | None, wa_id: str) -> str:
+    clean = (name or "").strip()
+    invalid_terms = (
+        "quien", "quien toma", "toma", "decision", "decisión", "dueno",
+        "dueño", "negocio", "empresa", "encargado", "responsable",
+    )
+    if not clean or any(term in clean.lower() for term in invalid_terms):
+        return wa_id
+    return clean
+
+
 def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", notice: str = "", bots_list: list = [], selected_bot_id: int | None = None) -> str:
     bot_options = "".join(
         f'<option value="{b["id"]}" {"selected" if b["id"] == selected_bot_id else ""}>{html.escape(b["name"])}</option>'
@@ -577,6 +717,8 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
     
     sidebar_links = [
         ("inicio", "Inicio", ICONS["dashboard"]),
+        ("conversations", "Conversaciones", ICONS["chat"]),
+        ("crm", "CRM de Leads", ICONS["leads"]),
         ("whatsapp", "Conectar WhatsApp", ICONS["wa"]),
         ("prompt", "Comportamiento (IA)", ICONS["prompt"]),
         ("hours", "Horarios", ICONS["hours"]),
@@ -687,7 +829,14 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
 </html>"""
 
 @router.get("/app", response_class=HTMLResponse)
-async def client_app(request: Request, bot_id: int | None = None, tab: str = "inicio", saved: str | None = None):
+async def client_app(
+    request: Request,
+    bot_id: int | None = None,
+    tab: str = "inicio",
+    saved: str | None = None,
+    wa_id: str | None = None,
+    status: str = "en_progreso",
+):
     session = _require_client_login(request)
     client_id = session.get("client_id")
     
@@ -727,6 +876,8 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Configuración guardada correctamente.</div>'
     elif saved == "err":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} Ocurrió un error al guardar la configuración. Revisa los datos.</div>'
+    elif saved == "err_parse":
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} Error al leer o procesar el archivo. Asegúrate de que no esté dañado y sea de un tipo compatible (PDF, DOCX, MD, XLSX, CSV).</div>'
 
     # 1. FETCH STATE
     # WhatsApp config
@@ -735,7 +886,17 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
     
     # Check if access token is actually saved
     integration = await db.get_active_bot_integration(bot_id, "whatsapp_cloud")
-    has_token = bool(integration)
+    access_token_val = ""
+    if integration:
+        encrypted = await db.get_integration_secret_values(int(integration["id"]))
+        for name in ("access_token", "whatsapp_access_token", "token"):
+            enc_val = encrypted.get(name)
+            if enc_val:
+                dec = secure_store.decrypt_secret(enc_val)
+                if dec:
+                    access_token_val = dec
+                    break
+    has_token = bool(access_token_val)
     
     # Active prompt
     prompt_row = await db.get_active_bot_prompt(bot_id)
@@ -789,6 +950,116 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
     
     # Recent conversation threads
     recent_threads = await db.list_conversation_threads(limit=5, bot_id=bot_id)
+
+    # Fetch Conversations and CRM info for client tabs
+    await db.qualify_leads_with_action_link(
+        config.QUALIFIED_CTA_URL,
+        bot_id=bot_id,
+    )
+    
+    threads = await db.list_conversation_threads(limit=100, bot_id=bot_id)
+    selected_wa_id = wa_id or (threads[0]["wa_id"] if threads else None)
+    messages = await db.list_conversation_messages(selected_wa_id, limit=120, bot_id=bot_id) if selected_wa_id else []
+    selected_lead = await db.get_lead(selected_wa_id, bot_id=bot_id) if selected_wa_id else None
+    
+    # CRM info
+    crm_counts = await db.crm_counts(bot_id=bot_id)
+    crm_leads = await db.list_leads(
+        None if status == "todos" else status,
+        limit=200,
+        bot_id=bot_id,
+    )
+
+    thread_items = "".join(
+        f"""
+        <a class="chat-item {'active' if selected_wa_id == t['wa_id'] else ''}" href="/client/app?bot_id={bot_id}&tab=conversations&wa_id={html.escape(t["wa_id"])}">
+          <div class="chat-item-header">
+            <span class="chat-item-name">{html.escape(_display_name(t.get("nombre"), t["wa_id"]))}</span>
+            <span class="chat-item-time">{_fmt_dt(t.get("last_message_at")).split(" ")[-1]}</span>
+          </div>
+          <div class="chat-item-preview">{html.escape(_clip(t.get("last_content"), 60))}</div>
+        </a>
+        """
+        for t in threads
+    ) or '<div class="empty" style="padding: 20px; text-align: center; color: var(--muted);">Aún no hay conversaciones.</div>'
+
+    bubble_html = "".join(
+        f"""
+        <div class="bubble {html.escape(m["role"])}">
+          <div class="meta">{html.escape("Bot" if m["role"] == "assistant" else "Cliente")} - {_fmt_dt(m.get("created_at"))}</div>
+          <div>{html.escape(m["content"])}</div>
+        </div>
+        """
+        for m in messages
+    ) or '<div class="empty" style="padding: 20px; text-align: center; color: var(--muted);">Selecciona una conversación para ver el historial.</div>'
+
+    chat_header = ""
+    crm_sidebar = ""
+    if selected_wa_id:
+        lead_status = (selected_lead or {}).get("qualification_status", "en_progreso")
+        name_display = html.escape(_display_name((selected_lead or {}).get("nombre"), selected_wa_id))
+        initials = name_display[:2].upper() if name_display else "??"
+        
+        chat_header = f"""
+        <div class="chat-header">
+          <div class="chat-avatar">{initials}</div>
+          <div class="chat-header-info">
+            <strong>{name_display}</strong>
+            <small>{html.escape(selected_wa_id)}</small>
+          </div>
+        </div>
+        """
+        
+        crm_sidebar = f"""
+        <div class="chat-crm">
+          <div class="crm-section">
+            <h3>Detalles del Contacto</h3>
+            <div style="font-weight:600;font-size:15px;margin-bottom:4px;">{name_display}</div>
+            <div style="color:var(--muted);font-size:13px;margin-bottom:12px;">{html.escape((selected_lead or {}).get("negocio") or "Sin negocio")}</div>
+            <a class="btn whatsapp" href="{_wa_link(selected_wa_id)}" target="_blank" style="width:100%; justify-content:center; display:flex; align-items:center; gap:8px; background:#25d366; color:white; border:none; text-decoration:none; border-radius:8px; padding:10px; font-weight:600; font-size:13px;">Conectar por WhatsApp</a>
+          </div>
+          <div class="crm-section">
+            <h3>Estado del Lead</h3>
+            <span class="badge b-{html.escape(lead_status)}">{html.escape(lead_status.replace("_", " "))}</span>
+          </div>
+          <div class="crm-section">
+            <h3>Notas</h3>
+            <div style="font-size:13px;color:var(--muted);background:#f8fafc;padding:10px;border-radius:8px;border:1px solid var(--line);">
+              {html.escape((selected_lead or {}).get("notes") or "Sin notas guardadas.")}
+            </div>
+          </div>
+        </div>
+        """
+
+    crm_tabs = [
+        ("en_progreso", "No cualificados"),
+        ("calificado", "Calificados"),
+        ("descalificado", "Descalificados"),
+        ("todos", "Todos"),
+    ]
+    crm_tabs_html = "".join(
+        f'<a class="{"active" if key == status else ""}" href="/client/app?bot_id={bot_id}&tab=crm&status={key}">{label} ({sum(crm_counts.values()) if key == "todos" else crm_counts.get(key, 0)})</a>'
+        for key, label in crm_tabs
+    )
+    
+    crm_rows = "".join(
+        f"""
+        <tr>
+          <td><strong>{html.escape(_display_name(l.get("nombre"), l["wa_id"]))}</strong><br><span class="muted">{html.escape(l["wa_id"])}</span></td>
+          <td>{html.escape(l.get("negocio") or "-")}</td>
+          <td><span class="badge b-{html.escape(l["qualification_status"])}">{html.escape(l["qualification_status"].replace("_", " "))}</span><br><span class="muted">{html.escape(l.get("disqualify_reason") or "")}</span></td>
+          <td>{_fmt_dt(l.get("updated_at"))}</td>
+          <td>
+            <div class="actions" style="display:flex; gap:6px;">
+              <form class="inline" method="post" action="/client/bots/{bot_id}/crm/{html.escape(l["wa_id"])}/status"><button class="btn secondary" name="status" value="en_progreso" style="padding:6px 10px; font-size:12px; cursor:pointer;">No cualificado</button></form>
+              <form class="inline" method="post" action="/client/bots/{bot_id}/crm/{html.escape(l["wa_id"])}/status"><button class="btn primary-btn" name="status" value="calificado" style="padding:6px 10px; font-size:12px; cursor:pointer;">Calificar</button></form>
+              <form class="inline" method="post" action="/client/bots/{bot_id}/crm/{html.escape(l["wa_id"])}/status"><button class="btn secondary" name="status" value="descalificado" style="padding:6px 10px; font-size:12px; color:var(--red); cursor:pointer;">Descartar</button></form>
+            </div>
+          </td>
+        </tr>
+        """
+        for l in crm_leads
+    ) or '<tr><td colspan="5" class="empty" style="text-align:center; padding:20px; color:var(--muted);">No hay leads en esta etapa.</td></tr>'
 
     # 2. RENDER SECTIONS
     body_html = f"""
@@ -865,7 +1136,57 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
             </div>
           </div>
         </div>
+    </div>
+
+    <!-- 1b. TAB PANEL: CONVERSACIONES -->
+    <div id="panel-conversations" class="tab-panel">
+      <div class="chatwoot-layout">
+        <div class="chat-sidebar">
+          <div class="chat-sidebar-header">
+            Chats activos
+            <span class="badge">{len(threads)}</span>
+          </div>
+          <div class="chat-list">
+            {thread_items}
+          </div>
+        </div>
+        <div class="chat-main">
+          {chat_header}
+          <div class="chat-messages">
+            {bubble_html}
+          </div>
+        </div>
+        {crm_sidebar}
       </div>
+    </div>
+    
+    <!-- 1c. TAB PANEL: CRM -->
+    <div id="panel-crm" class="tab-panel">
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+          <h2>CRM de Leads</h2>
+          <p>Mueve prospectos de no cualificados a calificados conforme avanza la venta.</p>
+        </div>
+      </div>
+      <div class="tabs" style="margin-bottom:16px;">
+        {crm_tabs_html}
+      </div>
+      <section class="table-wrap" style="background:white; border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow:var(--shadow);">
+        <table style="width:100%; border-collapse:collapse; text-align:left;">
+          <thead>
+            <tr style="background:#f8fafc; border-bottom:1px solid var(--line);">
+              <th style="padding:14px 16px; font-weight:600; color:var(--muted); font-size:13px;">Prospecto</th>
+              <th style="padding:14px 16px; font-weight:600; color:var(--muted); font-size:13px;">Negocio</th>
+              <th style="padding:14px 16px; font-weight:600; color:var(--muted); font-size:13px;">Estado</th>
+              <th style="padding:14px 16px; font-weight:600; color:var(--muted); font-size:13px;">Actualizado</th>
+              <th style="padding:14px 16px; font-weight:600; color:var(--muted); font-size:13px;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {crm_rows}
+          </tbody>
+        </table>
+      </section>
     </div>
     
     <!-- 2. TAB PANEL: WHATSAPP -->
@@ -907,7 +1228,7 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
               
               <label>Access Token (Manual o Temporal)</label>
               <div class="password-wrapper">
-                <input type="password" name="access_token" placeholder="EAW..." autocomplete="new-password" value="{"" if not has_token else "********"}">
+                <input type="password" name="access_token" placeholder="EAW..." autocomplete="new-password" value="{html.escape(access_token_val)}">
                 <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                 </button>
@@ -1158,15 +1479,18 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
         <div>
           <div class="card">
             <div class="card-header">
-              <h2>Agregar Documento</h2>
-              <p>Sube preguntas frecuentes, menús de servicio o políticas operativas.</p>
+              <h2>Agregar Documento o Archivo</h2>
+              <p>Sube preguntas frecuentes, menús de servicio o políticas operativas. Puedes escribir texto directamente o subir un archivo.</p>
             </div>
-            <form method="post" action="/client/bots/{bot_id}/knowledge">
-              <label>Título del Documento</label>
-              <input name="title" placeholder="Preguntas Frecuentes Dentales" required>
+            <form method="post" action="/client/bots/{bot_id}/knowledge" enctype="multipart/form-data">
+              <label>Título del Documento (Opcional si subes archivo)</label>
+              <input name="title" placeholder="Preguntas Frecuentes Dentales">
               
-              <label>Contenido del Conocimiento</label>
-              <textarea name="content" style="min-height: 220px;" placeholder="Ej. \n¿Tienen estacionamiento? Sí, gratuito en plaza.\n¿Precios de Limpieza? Desde $500 MXN.\n¿Aceptan tarjeta? Sí, Visa y Mastercard." required></textarea>
+              <label>Contenido del Conocimiento (Escribe texto...)</label>
+              <textarea name="content" style="min-height: 140px;" placeholder="Ej. &#10;¿Tienen estacionamiento? Sí, gratuito en plaza.&#10;¿Precios de Limpieza? Desde $500 MXN.&#10;¿Aceptan tarjeta? Sí, Visa y Mastercard."></textarea>
+              
+              <label style="margin-top:14px; display:block; font-weight:600;">...o Sube un Archivo (PDF, Word, MD, Excel, CSV)</label>
+              <input type="file" name="file" accept=".pdf,.docx,.doc,.xlsx,.csv,.md,.txt" style="margin-top:6px; font-size:13px; color:var(--muted);">
               
               <div style="margin-top:18px;">
                 <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar documento</button>
@@ -1544,16 +1868,32 @@ async def client_escalation_save(
 async def client_knowledge_create(
     request: Request,
     bot_id: int,
-    title: str = Form(...),
-    content: str = Form(...),
+    title: str = Form(""),
+    content: str = Form(""),
+    file: UploadFile | None = File(None),
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
     clean_title = title.strip()
     clean_content = content.strip()
     
+    if file and file.filename:
+        filename = file.filename
+        try:
+            file_bytes = await file.read()
+            if len(file_bytes) > 0:
+                parsed_text = file_parser.parse_file(file_bytes, filename)
+                if not parsed_text.strip():
+                    raise ValueError("El archivo está vacío o no contiene texto legible.")
+                clean_content = parsed_text.strip()
+                if not clean_title:
+                    clean_title = filename
+        except Exception as e:
+            log.exception(f"Error parseando archivo: {filename}")
+            return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=knowledge&saved=err_parse", status_code=302)
+            
     if not clean_title or not clean_content:
-        raise HTTPException(status_code=400, detail="El título y el contenido son obligatorios.")
+        raise HTTPException(status_code=400, detail="El título y el contenido son obligatorios (o sube un archivo válido).")
         
     await db.create_bot_knowledge(
         bot_id=bot_id,
@@ -1707,3 +2047,28 @@ async def client_api_save(
     )
     
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&saved=1", status_code=302)
+
+
+@router.post("/bots/{bot_id}/crm/{wa_id}/status")
+async def client_crm_update_status(
+    request: Request,
+    bot_id: int,
+    wa_id: str,
+    status: str = Form(...),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    if status not in ("en_progreso", "calificado", "descalificado"):
+        raise HTTPException(400, "Estado inválido")
+    
+    # Verify the lead belongs to this bot
+    lead = await db.get_lead(wa_id, bot_id=bot_id)
+    if not lead:
+        raise HTTPException(404, "Lead no encontrado o no pertenece a este bot")
+        
+    await db.update_lead_status(
+        wa_id,
+        status,
+        disqualify_reason="Movido manualmente desde panel cliente" if status == "descalificado" else None,
+    )
+    return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=crm&status={status}", status_code=302)

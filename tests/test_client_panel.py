@@ -109,8 +109,14 @@ class TestClientPanelFeatures:
     @patch("app.db.get_active_bot_integration")
     @patch("app.db.admin_metrics")
     @patch("app.db.list_conversation_threads")
+    @patch("app.db.qualify_leads_with_action_link")
+    @patch("app.db.crm_counts")
+    @patch("app.db.list_leads")
     async def test_client_app_view(
         self,
+        mock_list_leads,
+        mock_crm_counts,
+        mock_qualify,
         mock_threads,
         mock_metrics,
         mock_integration,
@@ -138,6 +144,9 @@ class TestClientPanelFeatures:
         mock_integration.return_value = None
         mock_metrics.return_value = {}
         mock_threads.return_value = []
+        mock_qualify.return_value = 0
+        mock_crm_counts.return_value = {}
+        mock_list_leads.return_value = []
         
         response = await client.client_app(Request(), bot_id=1)
         assert response is not None

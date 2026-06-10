@@ -92,8 +92,11 @@ def verify_webhook(
     hub_challenge: str = Query(None, alias="hub.challenge"),
 ):
     """Handshake de Meta: verifica el token y devuelve el challenge."""
+    log.info("Handshake webhook Meta recibido: mode=%s, token=%s, challenge=%s", hub_mode, hub_verify_token, hub_challenge)
     if hub_mode == "subscribe" and hub_verify_token == config.VERIFY_TOKEN:
+        log.info("Handshake exitoso. Verificacion de Meta correcta.")
         return PlainTextResponse(hub_challenge or "")
+    log.warning("Fallo en verificacion de handshake: token recibido=%s, esperado=%s", hub_verify_token, config.VERIFY_TOKEN)
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
@@ -101,7 +104,11 @@ def verify_webhook(
 @app.post("/webhooks/whatsapp")
 async def receive_webhook(request: Request, bg: BackgroundTasks):
     body = await request.body()
-    if not signature.verify(request.headers.get("X-Hub-Signature-256"), body):
+    log.info("Mensaje webhook POST recibido. Body: %s", body.decode('utf-8', errors='ignore')[:1000])
+    sig = request.headers.get("X-Hub-Signature-256")
+    log.info("Cabecera X-Hub-Signature-256: %s", sig)
+    if not signature.verify(sig, body):
+        log.warning("Firma invalida de webhook. Signature: %s", sig)
         raise HTTPException(status_code=403, detail="Invalid signature")
     payload = await request.json()
     bg.add_task(_process_message_safe, payload)
