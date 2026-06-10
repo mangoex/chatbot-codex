@@ -81,21 +81,19 @@ Aliases soportados:
 
 ## Meta / WhatsApp
 
-Problema ya resuelto:
+Automatización y Diagnóstico de Suscripciones:
 
-- Los mensajes reales no llegaban al bot aunque la prueba de Meta si
-  funcionaba.
-- La causa era un `override_callback_uri` heredado apuntando a un webhook viejo
-  de n8n/Chatwoot.
-- Se corrigio desde Graph API Explorer actualizando `subscribed_apps` del WABA.
+- **Suscripción Automática (¡Nuevo!)**: La aplicación ahora realiza automáticamente una petición `POST /{WABA_ID}/subscribed_apps` cuando el cliente conecta su número por Embedded Signup. Esto asegura que la App de Meta quede vinculada a los eventos de la cuenta del cliente de manera automática, sin requerir acciones manuales en el Graph API Explorer.
+- **Herramienta de Diagnóstico en Producción (¡Nuevo!)**: Se implementó una ruta segura `/debug-waba/{bot_id}` (protegida mediante `RELOAD_TOKEN`) que permite consultar de manera inmediata el estado de conexión del bot, los eventos de base de datos (`last_conversations` y `last_processed_messages`) y las suscripciones activas en Meta. Además, permite forzar la suscripción agregando `&subscribe=true`.
+- **override_callback_uri residual**: Si el número estuvo conectado previamente a otro sistema (como Chatwoot o n8n), Meta puede tener una URL residual registrada. Esta URL se puede diagnosticar y limpiar desde el endpoint de diagnóstico rápido o haciendo un `DELETE` y un posterior `POST` a `/{WABA_ID}/subscribed_apps`.
 
-Validacion recomendada:
+Validación recomendada:
 
 ```text
-GET /v25.0/{WABA_ID}/subscribed_apps
+GET /debug-waba/{bot_id}?reload_token={RELOAD_TOKEN}
 ```
 
-El webhook debe apuntar a:
+El webhook general apunta a:
 
 ```text
 https://bot.humanio.digital/webhooks/whatsapp
