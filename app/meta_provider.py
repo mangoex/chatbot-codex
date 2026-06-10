@@ -128,8 +128,17 @@ async def connect_bot_from_embedded_signup(data: MetaConnectionInput) -> dict[st
     if not phone_number_id:
         raise ValueError("Falta phone_number_id de Meta.")
     token = _clean(data.access_token)
-    if not token:
-        token = await exchange_code_for_token(data.authorization_code)
+    if not token or token == "********":
+        if _clean(data.authorization_code):
+            token = await exchange_code_for_token(data.authorization_code)
+        else:
+            try:
+                runtime = await get_bot_whatsapp_runtime(data.bot_id)
+                token = runtime.get("access_token")
+            except Exception:
+                token = ""
+            if not token:
+                raise ValueError("Falta el token de acceso o el código de autorización de Meta.")
     now = datetime.now(timezone.utc).isoformat()
     connection_config = {
         "provider": "meta",

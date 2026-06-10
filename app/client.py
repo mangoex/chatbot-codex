@@ -733,6 +733,10 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
     wa_row = await db.get_bot_whatsapp_number(bot_id)
     wa_info = wa_row or {}
     
+    # Check if access token is actually saved
+    integration = await db.get_active_bot_integration(bot_id, "whatsapp_cloud")
+    has_token = bool(integration)
+    
     # Active prompt
     prompt_row = await db.get_active_bot_prompt(bot_id)
     current_prompt_content = prompt_row.get("content", "") if prompt_row else ""
@@ -903,7 +907,7 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
               
               <label>Access Token (Manual o Temporal)</label>
               <div class="password-wrapper">
-                <input type="password" name="access_token" placeholder="EAW..." autocomplete="new-password" value="{"" if not wa_info.get("whatsapp_access_token") else "********"}">
+                <input type="password" name="access_token" placeholder="EAW..." autocomplete="new-password" value="{"" if not has_token else "********"}">
                 <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
                 </button>
