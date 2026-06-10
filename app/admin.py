@@ -1883,7 +1883,7 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
             config_id: settings.config_id,
             response_type: "code",
             override_default_response_type: true,
-            extras: {{ feature: "whatsapp_embedded_signup" }}
+            extras: {{ featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3", setup: {{}} }}
           }});
         }});
       }})();

@@ -965,7 +965,11 @@ async def client_app(request: Request, bot_id: int | None = None, tab: str = "in
               config_id: config_id,
               response_type: "code",
               override_default_response_type: true,
-              extras: {{ feature: "whatsapp_embedded_signup" }}
+              extras: {{ 
+                featureType: "whatsapp_business_app_onboarding",
+                sessionInfoVersion: "3",
+                setup: {{}}
+              }}
             }});
           }});
         }})();
