@@ -353,6 +353,43 @@ class AgendaGuardTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_cancel_and_reschedule_simultaneous(self):
+        async def run():
+            original_now = agenda_guard._now
+            original_process = agenda_guard.calendar_client.process_reply
+            captured = {}
+
+            async def fake_process_reply(wa_id, marker, bot_id=None, replace_existing=False):
+                captured["marker"] = marker
+                captured["replace_existing"] = replace_existing
+                return "Listo, Miguel. Reprogramé la llamada.", True
+
+            agenda_guard._now = lambda: datetime(
+                2026, 6, 11, 9, 0, tzinfo=ZoneInfo("America/Chihuahua")
+            )
+            agenda_guard.calendar_client.process_reply = fake_process_reply
+            history = [
+                {"role": "user", "content": "quiero probar haciendo una cita"},
+                {"role": "assistant", "content": "Listo, Miguel. Quedó agendada tu llamada para el jueves 11 de junio de 2026 a las 12:00."},
+            ]
+            try:
+                reply, scheduled = await agenda_guard.maybe_handle(
+                    "5215550000000",
+                    "Sabes que no me acordaba que salgo y no voy a estar quiero cancelar y reagendar para el sábado a la misma hora",
+                    history,
+                    bot_id=1,
+                )
+            finally:
+                agenda_guard._now = original_now
+                agenda_guard.calendar_client.process_reply = original_process
+
+            self.assertTrue(scheduled)
+            self.assertTrue(captured["replace_existing"])
+            self.assertIn("2026-06-13T12:00:00", captured["marker"])
+
+        import asyncio
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()

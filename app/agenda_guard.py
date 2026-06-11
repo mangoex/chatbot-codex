@@ -197,6 +197,14 @@ def _last_user_start(history: list[dict]) -> datetime | None:
     return None
 
 
+def _last_history_time(history: list[dict]) -> tuple[int, int] | None:
+    for item in reversed(history):
+        time = _extract_time(item.get("content", ""))
+        if time:
+            return time
+    return None
+
+
 def _last_user_start_after_latest_name_prompt(history: list[dict]) -> datetime | None:
     seen_name_prompt = False
     for item in reversed(history[:-1]):
@@ -478,6 +486,14 @@ def _extract_start_with_context(text: str, history: list[dict]) -> datetime | No
                 second=0,
                 microsecond=0,
             )
+        last_time = _last_history_time(history)
+        if last_time:
+            return date.replace(
+                hour=last_time[0],
+                minute=last_time[1],
+                second=0,
+                microsecond=0,
+            )
 
     time = _extract_time(text)
     if not time or date:
@@ -536,7 +552,10 @@ async def maybe_handle(
     if _THANKS_RE.match(user_text.strip()) and _SCHEDULED_CONFIRMATION_RE.search(_last_assistant_text(history)):
         return "Con gusto. Te esperamos en la llamada.", False
 
-    if _CANCEL_RE.search(user_text) or _is_cancel_continuation(user_text, history):
+    is_cancel = bool(_CANCEL_RE.search(user_text) or _is_cancel_continuation(user_text, history))
+    is_reschedule = bool(_RESCHEDULE_RE.search(user_text) or _is_reschedule_continuation(user_text, history))
+
+    if is_cancel and not is_reschedule:
         return await calendar_client.cancel_appointment(
             wa_id,
             _extract_cancel_start(user_text, history),
