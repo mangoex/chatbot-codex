@@ -783,6 +783,9 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
             <span>by Humanio</span>
           </div>
         </div>
+        <div style="padding: 0 16px; margin: -10px 0 16px; font-size: 11px; color: #94a3b8;">
+          ID del Bot: <strong style="color: #38bdf8;">{selected_bot_id}</strong>
+        </div>
         {selector_html}
         <nav class="sidebar-nav">
           {links_html}
@@ -1151,6 +1154,7 @@ async def client_app(
         <p>Configuración del asistente inteligente para tu negocio</p>
       </div>
       <div class="header-actions">
+        <span class="badge" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;">ID del Bot: {bot_id}</span>
         <span class="badge success">Bot {html.escape(selected_bot.get("status") or "active")}</span>
         <span class="badge">WhatsApp: {html.escape(wa_info.get("display_phone_number") or "sin conectar")}</span>
       </div>
