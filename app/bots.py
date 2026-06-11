@@ -14,6 +14,7 @@ class BotContext:
     whatsapp_access_token: str
     display_phone_number: str = ""
     openai_model: str = ""
+    status: str = "active"
 
 
 def default_bot() -> BotContext:
@@ -26,6 +27,7 @@ def default_bot() -> BotContext:
         whatsapp_access_token=config.WHATSAPP_API_TOKEN,
         display_phone_number="",
         openai_model=config.OPENAI_MODEL,
+        status="active",
     )
 
 
@@ -39,6 +41,7 @@ def _from_row(row: dict) -> BotContext:
         whatsapp_access_token=row.get("whatsapp_access_token") or config.WHATSAPP_API_TOKEN,
         display_phone_number=row.get("display_phone_number") or "",
         openai_model=row.get("openai_model") or config.OPENAI_MODEL,
+        status=row.get("status") or "active",
     )
 
 

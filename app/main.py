@@ -212,9 +212,13 @@ async def _process_message(payload: dict) -> None:
 
     # Caso A: media entrante → reply fijo, no llamamos OpenAI
     if media_type:
-        reply = MEDIA_REPLY
         saved_user_msg = user_text or f"[envió un archivo de tipo {media_type}]"
         await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
+        if bot.status == "paused":
+            log.info("Bot %s esta pausado. Ignorando respuesta a media de %s.", bot.id, wa_id)
+            return
+            
+        reply = MEDIA_REPLY
         await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
         await whatsapp_client.send_text(
             wa_id,
@@ -240,6 +244,10 @@ async def _process_message(payload: dict) -> None:
         return  # nada que procesar
 
     await db.save_message(wa_id, "user", user_text, bot_id=bot.id)
+    if bot.status == "paused":
+        log.info("Bot %s esta pausado. Mensaje de %s guardado, no se responde.", bot.id, wa_id)
+        return
+        
     current_history = history + [{"role": "user", "content": user_text}]
 
     core_reply = core_replies.maybe_handle(user_text, history)

@@ -936,6 +936,7 @@ async def get_bot_by_phone_number_id(phone_number_id: str) -> dict | None:
                 bots.client_id,
                 bots.slug,
                 bots.name,
+                bots.status,
                 bot_whatsapp_numbers.phone_number_id,
                 bot_whatsapp_numbers.display_phone_number,
                 bot_whatsapp_numbers.whatsapp_access_token,
@@ -948,7 +949,7 @@ async def get_bot_by_phone_number_id(phone_number_id: str) -> dict | None:
             JOIN bots ON bots.id = bot_whatsapp_numbers.bot_id
             WHERE bot_whatsapp_numbers.phone_number_id = $1
               AND bot_whatsapp_numbers.status = 'active'
-              AND bots.status = 'active'
+              AND bots.status IN ('active', 'paused')
             LIMIT 1
             """,
             phone_number_id,
@@ -1193,6 +1194,20 @@ async def upsert_bot_whatsapp_connection(
             sync_status or "connected",
         )
     return int(row["id"])
+
+
+async def update_bot_status(bot_id: int, status: str) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE bots
+            SET status = $2,
+                updated_at = now()
+            WHERE id = $1
+            """,
+            bot_id,
+            status,
+        )
 
 
 async def update_bot_whatsapp_sync_status(

@@ -212,6 +212,16 @@ CLIENT_CSS = """
   .badge.success { background: #d1fae5; color: #065f46; }
   .badge.warning { background: #fef3c7; color: #b45309; }
   .badge.danger { background: #ffe4e6; color: #9f1239; }
+  .badge-toggle {
+    transition: opacity 0.2s ease, transform 0.1s ease;
+  }
+  .badge-toggle:hover {
+    opacity: 0.85;
+    transform: translateY(-1px);
+  }
+  .badge-toggle:active {
+    transform: translateY(0);
+  }
   
   /* Tab Panel */
   .tab-panel {
@@ -1146,6 +1156,18 @@ async def client_app(
         for l in crm_leads
     ) or '<tr><td colspan="5" class="empty" style="text-align:center; padding:20px; color:var(--muted);">No hay leads en esta etapa.</td></tr>'
 
+    bot_status = selected_bot.get("status") or "active"
+    if bot_status == "active":
+        status_class = "success"
+        status_label = "Activo"
+        dot_color = "#10b981"
+        status_title = "Haz clic para PAUSAR el bot (modo humano únicamente)"
+    else:
+        status_class = "warning"
+        status_label = "Pausado"
+        dot_color = "#f59e0b"
+        status_title = "Haz clic para REANUDAR las respuestas autónomas del bot"
+
     # 2. RENDER SECTIONS
     body_html = f"""
     <div class="header">
@@ -1155,7 +1177,12 @@ async def client_app(
       </div>
       <div class="header-actions">
         <span class="badge" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;">ID del Bot: {bot_id}</span>
-        <span class="badge success">Bot {html.escape(selected_bot.get("status") or "active")}</span>
+        <form action="/client/bots/{bot_id}/toggle-status" method="post" class="inline" style="margin:0; padding:0;">
+          <button type="submit" class="badge {status_class} badge-toggle" style="border: none; cursor: pointer; display: inline-flex; gap: 6px; align-items: center;" title="{status_title}">
+            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:{dot_color};"></span>
+            Bot: {status_label}
+          </button>
+        </form>
         <span class="badge">WhatsApp: {html.escape(wa_info.get("display_phone_number") or "sin conectar")}</span>
       </div>
     </div>
@@ -2004,6 +2031,19 @@ async def client_knowledge_archive(request: Request, bot_id: int, knowledge_id: 
          raise HTTPException(status_code=404, detail="Documento no encontrado o no pertenece a tu bot.")
          
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=knowledge&saved=1", status_code=302)
+
+@router.post("/bots/{bot_id}/toggle-status")
+async def client_bot_toggle_status(request: Request, bot_id: int):
+    session = _require_client_login(request)
+    bot = await _require_bot_editor(session, bot_id)
+    
+    current_status = bot.get("status") or "active"
+    new_status = "paused" if current_status == "active" else "active"
+    
+    await db.update_bot_status(bot_id, new_status)
+    
+    referer = request.headers.get("referer") or f"/client/app?bot_id={bot_id}"
+    return RedirectResponse(referer, status_code=302)
 
 @router.post("/bots/{bot_id}/integrations/calendar")
 async def client_calendar_save(

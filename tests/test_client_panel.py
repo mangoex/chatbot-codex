@@ -152,3 +152,45 @@ class TestClientPanelFeatures:
         assert response is not None
         assert "Bot 1" in response.body.decode("utf-8")
 
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.update_bot_status")
+    async def test_client_bot_toggle_status(self, mock_update, mock_get):
+        from app import client
+        
+        class MockRequest:
+            def __init__(self):
+                self.headers = {"referer": "/client/app?bot_id=1"}
+                self.session = {
+                    "user": "client@example.com",
+                    "role": "client_admin",
+                    "client_id": 44,
+                    "user_id": 5,
+                }
+        
+        # Mock active status
+        mock_get.return_value = {
+            "id": 1,
+            "client_id": 44,
+            "slug": "test",
+            "name": "Bot 1",
+            "status": "active",
+        }
+        
+        # Test Case 1: toggle status to paused
+        req = MockRequest()
+        response = await client.client_bot_toggle_status(req, bot_id=1)
+        assert response is not None
+        assert response.status_code == 302
+        assert response.headers["location"] == "/client/app?bot_id=1"
+        mock_update.assert_called_once_with(1, "paused")
+        
+        # Test Case 2: toggle status back to active
+        mock_update.reset_mock()
+        mock_get.return_value["status"] = "paused"
+        response = await client.client_bot_toggle_status(req, bot_id=1)
+        assert response is not None
+        assert response.status_code == 302
+        assert response.headers["location"] == "/client/app?bot_id=1"
+        mock_update.assert_called_once_with(1, "active")
+
