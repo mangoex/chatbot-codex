@@ -1924,8 +1924,7 @@ async def client_knowledge_create(
         await db.create_bot_knowledge(
             bot_id=bot_id,
             title=clean_title,
-            content=clean_content,
-            status="active"
+            content=clean_content
         )
     except Exception as e:
         log.exception(f"Error guardando documento de conocimiento en base de datos: {clean_title}")
