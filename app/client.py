@@ -848,6 +848,64 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }}
     }});
+
+    // Auto-refresh chat list and messages in background (Conversations tab)
+    setInterval(async () => {{
+      if (document.hidden) return;
+      
+      const chatLayout = document.querySelector('.chatwoot-layout');
+      if (!chatLayout || chatLayout.offsetParent === null) return;
+      
+      try {{
+        const response = await fetch(window.location.href);
+        if (response.ok) {{
+          const html = await response.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          
+          const newChatList = doc.querySelector('.chat-list');
+          const currentChatList = document.querySelector('.chat-list');
+          if (newChatList && currentChatList) {{
+            if (currentChatList.innerHTML !== newChatList.innerHTML) {{
+              currentChatList.innerHTML = newChatList.innerHTML;
+            }}
+          }}
+          
+          const newMessages = doc.querySelector('.chat-messages');
+          const currentMessages = document.querySelector('.chat-messages');
+          if (newMessages && currentMessages) {{
+            if (currentMessages.innerHTML !== newMessages.innerHTML) {{
+              const hadNewMessages = newMessages.children.length !== currentMessages.children.length;
+              const wasAtBottom = currentMessages.scrollHeight - currentMessages.scrollTop <= currentMessages.clientHeight + 100;
+              
+              currentMessages.innerHTML = newMessages.innerHTML;
+              
+              if (hadNewMessages && wasAtBottom) {{
+                currentMessages.scrollTop = currentMessages.scrollHeight;
+              }}
+            }}
+          }}
+          
+          const newCrm = doc.querySelector('.chat-crm');
+          const currentCrm = document.querySelector('.chat-crm');
+          if (newCrm && currentCrm) {{
+            if (currentCrm.innerHTML !== newCrm.innerHTML) {{
+              currentCrm.innerHTML = newCrm.innerHTML;
+            }}
+          }}
+
+          const newHeader = doc.querySelector('.chat-header');
+          const currentHeader = document.querySelector('.chat-header');
+          if (newHeader && currentHeader) {{
+            if (currentHeader.innerHTML !== newHeader.innerHTML) {{
+              currentHeader.innerHTML = newHeader.innerHTML;
+            }}
+          }}
+        }}
+      }} catch (err) {{
+        console.error("Error refreshing conversations:", err);
+      }}
+    }}, 4000);
   </script>
 </body>
 </html>"""
