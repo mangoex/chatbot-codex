@@ -2053,12 +2053,14 @@ async def client_calendar_save(
         )
         
     # Save secrets if provided
-    if client_secret.strip():
-        encrypted_secret = secure_store.encrypt_secret(client_secret.strip())
+    clean_secret = client_secret.strip()
+    if clean_secret and clean_secret != "********":
+        encrypted_secret = secure_store.encrypt_secret(clean_secret)
         await db.upsert_integration_secret(integration_id, "client_secret", encrypted_secret)
         
-    if refresh_token.strip():
-        encrypted_refresh = secure_store.encrypt_secret(refresh_token.strip())
+    clean_refresh = refresh_token.strip()
+    if clean_refresh and clean_refresh != "********":
+        encrypted_refresh = secure_store.encrypt_secret(clean_refresh)
         await db.upsert_integration_secret(integration_id, "refresh_token", encrypted_refresh)
         
     # Sync status also in bot_skills (for enabling calendar)
