@@ -2038,6 +2038,7 @@ async def client_calendar_save(
         await db.update_bot_integration(
             bot_id=bot_id,
             integration_id=integration_id,
+            integration_type="google_calendar",
             name=integration["name"],
             config_data=config_data,
             enabled=enabled == "on"
@@ -2095,6 +2096,7 @@ async def client_api_save(
         await db.update_bot_integration(
             bot_id=bot_id,
             integration_id=integration_id,
+            integration_type="external_api",
             name=integration["name"],
             config_data=config_data,
             enabled=True
