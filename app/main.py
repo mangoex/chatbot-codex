@@ -118,8 +118,21 @@ async def receive_webhook(request: Request, bg: BackgroundTasks):
 async def receive_chatwoot_webhook(request: Request, bot_id: int):
     payload = await request.json()
     
-    # We only care about message creation events
-    if payload.get("event") != "message_created":
+    event = payload.get("event")
+    
+    # Si la conversacion se resuelve en Chatwoot, reiniciamos el historial del bot
+    if event == "conversation_status_changed" and payload.get("status") == "resolved":
+        contact = payload.get("contact", {})
+        conversation = payload.get("conversation", {})
+        wa_id = contact.get("phone_number") or contact.get("identifier") or conversation.get("meta", {}).get("sender", {}).get("phone_number")
+        if wa_id:
+            wa_id = wa_id.lstrip("+")
+            await db.clear_conversation_history(wa_id, bot_id)
+            log.info(f"Historial de {wa_id} borrado porque Chatwoot resolvió la conversación")
+        return {"status": "resolved"}
+        
+    # We only care about message creation events for forwarding
+    if event != "message_created":
         return {"status": "ignored"}
         
     # We only forward outgoing messages (sent by the agent) that are not private notes

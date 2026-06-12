@@ -898,6 +898,15 @@ async def clear_contact_data(wa_ids: list[str]) -> dict[str, int]:
     }
 
 
+async def clear_conversation_history(wa_id: str, bot_id: int) -> None:
+    """Borra el historial de conversaciones para resetear la memoria del bot."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM conversations WHERE wa_id = $1 AND bot_id = $2",
+            wa_id, bot_id
+        )
+
+
 async def ensure_default_bot() -> int:
     """Creates the default Asistto client/bot/number rows for backwards compatibility."""
     async with _pool.acquire() as conn:

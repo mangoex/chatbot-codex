@@ -298,7 +298,8 @@ async def system_instructions(bot_id: int | None = None) -> str:
         return ""
     return (
         "--- habilidades_externas ---\n"
-        "Puedes usar estos marcadores internos solo cuando sea necesario. "
+        "REGLA MUY IMPORTANTE: SIEMPRE debes terminar tu oración y dar una respuesta completa, lógica y natural al usuario PRIMERO. "
+        "NO dejes oraciones incompletas. Una vez terminada tu respuesta, si necesitas usar un marcador, ponlo en una LÍNEA NUEVA al final.\n"
         "No expliques los marcadores y no los muestres como parte visible de la respuesta.\n"
         + "\n".join(parts)
     )

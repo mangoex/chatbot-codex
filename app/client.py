@@ -769,7 +769,7 @@ def _display_name(name: str | None, wa_id: str) -> str:
     return clean
 
 
-def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", notice: str = "", bots_list: list = [], selected_bot_id: int | None = None) -> str:
+def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", notice: str = "", bots_list: list = [], selected_bot_id: int | None = None, chatwoot_enabled: bool = False, cw_base_url: str = "", cw_account: str = "") -> str:
     bot_options = "".join(
         f'<option value="{b["id"]}" {"selected" if b["id"] == selected_bot_id else ""}>{html.escape(b["name"])}</option>'
         for b in bots_list
@@ -787,10 +787,13 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
         ("integrations", "Integraciones", ICONS["integrations"]),
     ]
     
-    links_html = "".join(
-        f'<div class="sidebar-link {"active" if key == active_tab else ""}" onclick="switchTab(\'{key}\')">{icon}<span>{label}</span></div>'
-        for key, label, icon in sidebar_links
-    )
+    links_html = ""
+    for key, label, icon in sidebar_links:
+        if key == "conversations" and chatwoot_enabled and cw_base_url and cw_account:
+            cw_url = f"{cw_base_url.rstrip('/')}/app/accounts/{cw_account}/dashboard"
+            links_html += f'<a href="{cw_url}" target="_blank" class="sidebar-link" style="text-decoration: none;">{icon}<span>Chatwoot ↗</span></a>'
+        else:
+            links_html += f'<div class="sidebar-link {"active" if key == active_tab else ""}" onclick="switchTab(\'{key}\')">{icon}<span>{label}</span></div>'
     
     selector_html = ""
     if len(bots_list) > 1:
@@ -846,11 +849,12 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
         <div class="user-avatar">{html.escape(session.get("name", "Usuario")[:2].upper())}</div>
         <div class="user-info" title="{html.escape(session.get("name", "Usuario"))}">
           <strong>{html.escape(session.get("name", "Usuario"))}</strong>
-          <span>Admin</span>
+          <span style="display:flex; align-items:center; gap:4px; margin-top:2px;">
+             Configuración <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px; height:12px;"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          </span>
         </div>
-        <button class="icon-btn" title="Configuración de usuario">{ICONS["settings"]}</button>
         <form method="post" action="/admin/logout" style="margin: 0; display: flex;">
-          <button class="icon-btn logout" type="submit" title="Salir del panel">{ICONS["out"]}</button>
+          <button class="icon-btn logout" type="submit" title="Cerrar sesión" style="color:var(--red);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg></button>
         </form>
       </div>
     </aside>
@@ -1846,13 +1850,16 @@ async def client_app(
     """
     
     return HTMLResponse(_layout(
-        title="Panel de Control",
+        title="Panel",
         body=body_html,
         session=session,
         active_tab=tab,
         notice=notice_html,
         bots_list=bots,
-        selected_bot_id=bot_id
+        selected_bot_id=bot_id,
+        chatwoot_enabled=chatwoot_enabled,
+        cw_base_url=cw_base_url,
+        cw_account=cw_account,
     ))
 
 def _render_conversations_table(threads: list) -> str:
@@ -2223,13 +2230,14 @@ async def client_calendar_save(
         )
         
     # Save secrets if provided
+    import re
     clean_secret = client_secret.strip()
-    if clean_secret and clean_secret != "********":
+    if clean_secret and not re.match(r"^\*+$", clean_secret):
         encrypted_secret = secure_store.encrypt_secret(clean_secret)
         await db.upsert_integration_secret(integration_id, "client_secret", encrypted_secret)
         
     clean_refresh = refresh_token.strip()
-    if clean_refresh and clean_refresh != "********":
+    if clean_refresh and not re.match(r"^\*+$", clean_refresh):
         encrypted_refresh = secure_store.encrypt_secret(clean_refresh)
         await db.upsert_integration_secret(integration_id, "refresh_token", encrypted_refresh)
         
@@ -2292,7 +2300,7 @@ async def client_api_save(
         submitted_keys.append(k_clean)
         
         # Only upsert if it's a new value (not the masked placeholder)
-        if v_clean and v_clean != "********":
+        if v_clean and not re.match(r"^\*+$", v_clean):
             encrypted_val = secure_store.encrypt_secret(v_clean)
             await db.upsert_integration_secret(integration_id, k_clean, encrypted_val)
             
@@ -2360,7 +2368,7 @@ async def client_chatwoot_save(
         )
         
     clean_api_token = api_token.strip()
-    if clean_api_token and clean_api_token != "********":
+    if clean_api_token and not re.match(r"^\*+$", clean_api_token):
         encrypted_token = secure_store.encrypt_secret(clean_api_token)
         await db.upsert_integration_secret(integration_id, "api_token", encrypted_token)
         
