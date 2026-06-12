@@ -60,7 +60,6 @@ class ChatwootClient:
         # Create new conversation
         create_url = f"{self.base_url}/api/v1/accounts/{self.account_id}/conversations"
         payload = {
-            "source_id": "", # Required by some APIs, but Chatwoot usually infers from contact
             "inbox_id": inbox_id,
             "contact_id": contact_id,
             "status": "open"
@@ -120,5 +119,7 @@ async def sync_message_to_chatwoot(bot_id: int, wa_id: str, name: str, content: 
         
         msg_type = "incoming" if role == "user" else "outgoing"
         await cw.send_message(conversation_id, content, message_type=msg_type)
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Chatwoot API HTTP Error: {e.response.status_code} - {e.response.text}")
     except Exception as e:
         logger.error(f"Error syncing to Chatwoot: {e}")
