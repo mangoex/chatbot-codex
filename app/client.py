@@ -25,7 +25,8 @@ ICONS = {
     "success": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="green"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
     "error": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="red"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
     "chat": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/></svg>',
-    "leads": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>'
+    "leads": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+    "settings": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'
 }
 
 CLIENT_CSS = """
@@ -142,29 +143,69 @@ CLIENT_CSS = """
     width: 18px;
     height: 18px;
   }
-  .logout-form {
+  .sidebar-user-profile {
     margin-top: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
   }
-  .btn-logout {
-    width: 100%;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #cbd5e1;
-    border-radius: 8px;
-    padding: 10px;
-    cursor: pointer;
-    font-weight: 500;
+  .user-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: white;
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    font-weight: 700;
     font-size: 13px;
-    transition: var(--transition);
+    flex-shrink: 0;
   }
-  .btn-logout:hover {
-    background: var(--red);
-    border-color: var(--red);
+  .user-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .user-info strong {
     color: white;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .user-info span {
+    color: #94a3b8;
+    font-size: 11px;
+  }
+  .icon-btn {
+    background: none;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+    border-radius: 6px;
+  }
+  .icon-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+  .icon-btn:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .icon-btn.logout:hover {
+    color: var(--red);
+    background: rgba(239, 68, 68, 0.1);
   }
   
   /* Main Content Area */
@@ -801,9 +842,17 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
           {links_html}
         </nav>
       </div>
-      <form method="post" action="/admin/logout" class="logout-form">
-        <button class="btn-logout" type="submit">{ICONS["out"]} Salir del panel</button>
-      </form>
+      <div class="sidebar-user-profile">
+        <div class="user-avatar">{html.escape(session.get("name", "Usuario")[:2].upper())}</div>
+        <div class="user-info" title="{html.escape(session.get("name", "Usuario"))}">
+          <strong>{html.escape(session.get("name", "Usuario"))}</strong>
+          <span>Admin</span>
+        </div>
+        <button class="icon-btn" title="Configuración de usuario">{ICONS["settings"]}</button>
+        <form method="post" action="/admin/logout" style="margin: 0; display: flex;">
+          <button class="icon-btn logout" type="submit" title="Salir del panel">{ICONS["out"]}</button>
+        </form>
+      </div>
     </aside>
     <main class="main-content">
       {notice}
@@ -1266,8 +1315,9 @@ async def client_app(
 """
 
     # 1b. TAB PANEL: CONVERSACIONES
-    if chatwoot_enabled and chatwoot_config.get("base_url"):
-        cw_url = chatwoot_config.get("base_url").rstrip("/")
+    cw_base_url = chatwoot_config.get("base_url") or "https://app.chatwoot.com"
+    if chatwoot_enabled:
+        cw_url = cw_base_url.rstrip("/")
         cw_account = chatwoot_config.get("account_id", "")
         # Render Chatwoot Iframe
         conversations_panel_html = f"""
