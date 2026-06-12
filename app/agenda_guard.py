@@ -244,9 +244,10 @@ def _is_reschedule_continuation(user_text: str, history: list[dict]) -> bool:
     ):
         return True
     recent = _history_text(history, limit=8)
-    if _RESCHEDULE_RE.search(recent) and (_extract_date(user_text) or _SAME_TIME_RE.search(user_text)):
+    recent_user = "\n".join(item.get("content", "") for item in history[-8:] if item.get("role") == "user")
+    if _RESCHEDULE_RE.search(recent_user) and (_extract_date(user_text) or _SAME_TIME_RE.search(user_text)):
         return True
-    if _SCHEDULED_CONFIRMATION_RE.search(recent) and _RESCHEDULE_RE.search(recent):
+    if _SCHEDULED_CONFIRMATION_RE.search(recent) and _RESCHEDULE_RE.search(recent_user):
         return bool(_RESCHEDULE_CONFIRM_RE.match(user_text.strip()))
     return False
 
@@ -404,7 +405,7 @@ def _extract_date(text: str) -> datetime | None:
         return _upcoming_day_of_month(base, int(day_with_time_match.group(1)))
 
     for label, weekday in _WEEKDAYS.items():
-        if label in lower:
+        if re.search(rf"\b{label}\b", lower):
             days = (weekday - base.weekday()) % 7
             if days == 0:
                 days = 7
@@ -564,6 +565,8 @@ async def maybe_handle(
 
     reschedule_flow = _RESCHEDULE_RE.search(user_text) or _is_reschedule_continuation(user_text, history)
     if reschedule_flow and not _extract_start_with_context(user_text, history):
+        if "?" in user_text:
+            return None, False
         return "Sin problema. ¿Qué día y hora te queda?", False
 
     if _looks_like_service_scheduling(user_text, history):
@@ -573,6 +576,9 @@ async def maybe_handle(
         )
 
     if not _in_schedule_flow(user_text, history):
+        return None, False
+
+    if "?" in user_text and not _extract_start_with_context(user_text, history):
         return None, False
 
     name = _extract_name(user_text, history)
