@@ -1736,7 +1736,7 @@ async def client_app(
             
             <label>User API Token</label>
             <div class="password-wrapper">
-              <input type="password" name="api_token" placeholder="********" autocomplete="new-password" value="{"" if not chatwoot_secrets.get("api_token") else "********"}">
+              <input type="password" name="api_token" placeholder="Copia aquí el token" autocomplete="new-password" value="{html.escape(chatwoot_secrets.get("api_token") or "")}">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
