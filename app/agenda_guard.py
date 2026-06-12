@@ -544,6 +544,8 @@ async def maybe_handle(
     bot_id: int | None = None,
 ) -> tuple[str | None, bool]:
     """Devuelve (respuesta, cita_creada) si se puede resolver sin IA."""
+    if _GREETING_RE.match(user_text.strip()):
+        return None, False
 
 
     if _THANKS_RE.match(user_text.strip()) and _SCHEDULED_CONFIRMATION_RE.search(_last_assistant_text(history)):
