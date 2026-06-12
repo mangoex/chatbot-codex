@@ -1322,7 +1322,11 @@ async def client_app(
         # Render Chatwoot Iframe
         conversations_panel_html = f"""
         <div id="panel-conversations" class="tab-panel">
-          <div style="height: calc(100vh - 220px); border-radius: 12px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); margin-top: 14px; background: white;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; margin-top: 14px;">
+            <p style="margin: 0; color: var(--muted); font-size: 13px;">Si la bandeja no carga, tu servidor podría estar bloqueando iframes por seguridad.</p>
+            <a href="{html.escape(cw_url)}/app/accounts/{html.escape(cw_account)}/dashboard" target="_blank" class="btn secondary" style="text-decoration: none; padding: 6px 12px; font-size: 13px;">Abrir Chatwoot Externo <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px; height:14px; margin-left:4px;"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></a>
+          </div>
+          <div style="height: calc(100vh - 260px); border-radius: 12px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); background: white;">
             <iframe src="{html.escape(cw_url)}/app/accounts/{html.escape(cw_account)}/dashboard" width="100%" height="100%" frameborder="0" style="background: white;"></iframe>
           </div>
         </div>
