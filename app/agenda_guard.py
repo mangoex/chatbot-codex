@@ -544,11 +544,7 @@ async def maybe_handle(
     bot_id: int | None = None,
 ) -> tuple[str | None, bool]:
     """Devuelve (respuesta, cita_creada) si se puede resolver sin IA."""
-    if _GREETING_RE.match(user_text.strip()):
-        return (
-            "Hola, soy Asistto de Humanio. Te puedo explicar como funcionan los chatbots de WhatsApp con IA, paquetes o casos de uso para tu negocio. ¿Qué te gustaría resolver primero?",
-            False,
-        )
+
 
     if _THANKS_RE.match(user_text.strip()) and _SCHEDULED_CONFIRMATION_RE.search(_last_assistant_text(history)):
         return "Con gusto. Te esperamos en la llamada.", False
@@ -569,11 +565,7 @@ async def maybe_handle(
             return None, False
         return "Sin problema. ¿Qué día y hora te queda?", False
 
-    if _looks_like_service_scheduling(user_text, history):
-        return (
-            "Perfecto. Asistto puede pedir datos al prospecto, entender el motivo de la llamada y crear la cita en tu calendario. ¿Quieres que te recomiende un paquete para eso?",
-            False,
-        )
+
 
     if not _in_schedule_flow(user_text, history):
         return None, False
