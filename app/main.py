@@ -114,6 +114,67 @@ async def receive_webhook(request: Request, bg: BackgroundTasks):
     bg.add_task(_process_message_safe, payload)
     return {"status": "received"}
 
+@app.post("/webhooks/chatwoot/{bot_id}")
+async def receive_chatwoot_webhook(request: Request, bot_id: int):
+    payload = await request.json()
+    
+    # We only care about message creation events
+    if payload.get("event") != "message_created":
+        return {"status": "ignored"}
+        
+    # We only forward outgoing messages (sent by the agent) that are not private notes
+    message_type = payload.get("message_type")
+    is_private = payload.get("private", False)
+    
+    if message_type != "outgoing" or is_private:
+        return {"status": "ignored"}
+        
+    content = payload.get("content")
+    if not content:
+        return {"status": "ignored"}
+        
+    # Extract customer phone number
+    conversation = payload.get("conversation", {})
+    contact = payload.get("contact", {})
+    wa_id = contact.get("phone_number")
+    
+    if not wa_id:
+        # Fallback if phone_number is not directly in contact
+        wa_id = contact.get("identifier") or conversation.get("meta", {}).get("sender", {}).get("phone_number")
+        
+    if not wa_id:
+        log.warning("Received Chatwoot message but could not determine wa_id")
+        return {"status": "error_no_wa_id"}
+        
+    # Clean phone number
+    wa_id = wa_id.lstrip("+")
+    
+    bot = await db.get_bot(bot_id)
+    if not bot:
+        return {"status": "error_bot_not_found"}
+        
+    # Send message to WhatsApp via Asistto
+    from app import whatsapp_client
+    from app.bots import _whatsapp_cloud_token
+    
+    token = await _whatsapp_cloud_token(bot_id) or config.WHATSAPP_API_TOKEN
+    phone_id = bot.get("phone_number_id") or config.WHATSAPP_PHONE_NUMBER_ID
+    
+    try:
+        await whatsapp_client.send_text(
+            to_wa_id=wa_id,
+            body=content,
+            phone_number_id=phone_id,
+            access_token=token
+        )
+        # Also save to local conversations to keep history synced, without syncing back to Chatwoot
+        await db.save_message(wa_id, "assistant", content, bot_id=bot_id, sync_chatwoot=False)
+    except Exception as e:
+        log.error("Failed to send Chatwoot message to WhatsApp: %s", str(e))
+        
+    return {"status": "sent"}
+
+
 
 @app.post("/reload")
 def reload_prompts(x_reload_token: str = Header(None)):

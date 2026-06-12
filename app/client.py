@@ -1024,6 +1024,18 @@ async def client_app(
         api_config = api_integration.get("config") or {}
         api_secrets = await db.list_integration_secrets(int(api_integration["id"]))
         
+    chatwoot_integration = await db.get_active_bot_integration(bot_id, "chatwoot")
+    chatwoot_config = {}
+    chatwoot_secrets = {}
+    chatwoot_enabled = False
+    if chatwoot_integration:
+        chatwoot_config = chatwoot_integration.get("config") or {}
+        chatwoot_enabled = chatwoot_integration.get("enabled", False)
+        # Fetch token secret
+        enc_secrets = await db.get_integration_secret_values(int(chatwoot_integration["id"]))
+        if "api_token" in enc_secrets:
+            chatwoot_secrets["api_token"] = secure_store.decrypt_secret(enc_secrets["api_token"])
+        
     env_rows_html = ""
     for sec in api_secrets:
         key_safe = html.escape(sec["secret_name"])
@@ -1251,29 +1263,45 @@ async def client_app(
         </div>
     </div>
   </div>
+"""
 
-    <!-- 1b. TAB PANEL: CONVERSACIONES -->
-    <div id="panel-conversations" class="tab-panel">
-      <div class="chatwoot-layout">
-        <div class="chat-sidebar">
-          <div class="chat-sidebar-header">
-            Chats activos
-            <span class="badge">{len(threads)}</span>
-          </div>
-          <div class="chat-list">
-            {thread_items}
-          </div>
-        </div>
-        <div class="chat-main">
-          {chat_header}
-          <div class="chat-messages">
-            {bubble_html}
+    # 1b. TAB PANEL: CONVERSACIONES
+    if chatwoot_enabled and chatwoot_config.get("base_url"):
+        cw_url = chatwoot_config.get("base_url").rstrip("/")
+        cw_account = chatwoot_config.get("account_id", "")
+        # Render Chatwoot Iframe
+        conversations_panel_html = f"""
+        <div id="panel-conversations" class="tab-panel">
+          <div style="height: calc(100vh - 220px); border-radius: 12px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); margin-top: 14px; background: white;">
+            <iframe src="{html.escape(cw_url)}/app/accounts/{html.escape(cw_account)}/dashboard" width="100%" height="100%" frameborder="0" style="background: white;"></iframe>
           </div>
         </div>
-        {crm_sidebar}
-      </div>
-    </div>
-    
+        """
+    else:
+        conversations_panel_html = f"""
+        <div id="panel-conversations" class="tab-panel">
+          <div class="chatwoot-layout">
+            <div class="chat-sidebar">
+              <div class="chat-sidebar-header">
+                Chats activos
+                <span class="badge">{len(threads)}</span>
+              </div>
+              <div class="chat-list">
+                {thread_items}
+              </div>
+            </div>
+            <div class="chat-main">
+              {chat_header}
+              <div class="chat-messages">
+                {bubble_html}
+              </div>
+            </div>
+            {crm_sidebar}
+          </div>
+        </div>
+        """
+
+    body_html += conversations_panel_html + f"""
     <!-- 1c. TAB PANEL: CRM -->
     <div id="panel-crm" class="tab-panel">
       <div class="card" style="margin-bottom:20px;">
@@ -1618,6 +1646,53 @@ async def client_app(
     <!-- 7. TAB PANEL: INTEGRACIONES -->
     <div id="panel-integrations" class="tab-panel">
       <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h2>Chatwoot (Bandeja Multicanal)</h2>
+            <p>Conecta tu cuenta de Chatwoot para responder manualmente a tus clientes cuando la IA transfiere el chat.</p>
+          </div>
+          
+          <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <span class="bold-text">Estado de Integración</span>
+            <span class="badge {"success" if chatwoot_enabled else "warning"}">
+              {"Conectado" if chatwoot_enabled else "Desconectado"}
+            </span>
+          </div>
+          
+          <form method="post" action="/client/bots/{bot_id}/integrations/chatwoot">
+            <div class="checkbox-group">
+              <input type="checkbox" name="enabled" id="chatwootToggle" {"checked" if chatwoot_enabled else ""}>
+              <label for="chatwootToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar Sincronización con Chatwoot</label>
+            </div>
+            
+            <label>URL Base de Chatwoot</label>
+            <input name="base_url" placeholder="https://app.chatwoot.com" value="{html.escape(chatwoot_config.get("base_url") or "")}">
+            
+            <div style="display:flex; gap:10px;">
+              <div style="flex:1;">
+                <label>Account ID</label>
+                <input name="account_id" placeholder="Ej. 1" value="{html.escape(chatwoot_config.get("account_id") or "")}">
+              </div>
+              <div style="flex:1;">
+                <label>Inbox ID</label>
+                <input name="inbox_id" placeholder="Ej. 12" value="{html.escape(chatwoot_config.get("inbox_id") or "")}">
+              </div>
+            </div>
+            
+            <label>User API Token</label>
+            <div class="password-wrapper">
+              <input type="password" name="api_token" placeholder="********" autocomplete="new-password" value="{"" if not chatwoot_secrets.get("api_token") else "********"}">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            
+            <div style="margin-top:20px; display:flex; gap:10px;">
+              <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar Chatwoot</button>
+            </div>
+          </form>
+        </div>
+
         <div class="card">
           <div class="card-header">
             <h2>Agenda (Google Calendar)</h2>
@@ -2183,6 +2258,58 @@ async def client_api_save(
     
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&saved=1", status_code=302)
 
+@router.post("/bots/{bot_id}/integrations/chatwoot")
+async def client_chatwoot_save(
+    request: Request,
+    bot_id: int,
+    enabled: str | None = Form(None),
+    base_url: str = Form(""),
+    account_id: str = Form(""),
+    inbox_id: str = Form(""),
+    api_token: str = Form(""),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    
+    clean_base_url = base_url.strip()
+    clean_account_id = account_id.strip()
+    clean_inbox_id = inbox_id.strip()
+    
+    integration = await db.get_active_bot_integration(bot_id, "chatwoot")
+    
+    config_data = {
+        "base_url": clean_base_url,
+        "account_id": clean_account_id,
+        "inbox_id": clean_inbox_id
+    }
+    
+    is_enabled = (enabled == "on")
+    
+    if integration:
+        integration_id = int(integration["id"])
+        await db.update_bot_integration(
+            bot_id=bot_id,
+            integration_id=integration_id,
+            integration_type="chatwoot",
+            name=integration["name"],
+            config_data=config_data,
+            enabled=is_enabled
+        )
+    else:
+        integration_id = await db.create_bot_integration(
+            bot_id=bot_id,
+            integration_type="chatwoot",
+            name="Chatwoot Bandeja",
+            config_data=config_data,
+            enabled=is_enabled
+        )
+        
+    clean_api_token = api_token.strip()
+    if clean_api_token and clean_api_token != "********":
+        encrypted_token = secure_store.encrypt_secret(clean_api_token)
+        await db.upsert_integration_secret(integration_id, "api_token", encrypted_token)
+        
+    return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&saved=1", status_code=302)
 
 @router.post("/bots/{bot_id}/crm/{wa_id}/status")
 async def client_crm_update_status(

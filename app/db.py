@@ -403,12 +403,23 @@ async def save_message(
     role: str,
     content: str,
     bot_id: int | None = None,
+    sync_chatwoot: bool = True,
 ) -> None:
     async with _pool.acquire() as conn:
         await conn.execute(
             "INSERT INTO conversations(wa_id, role, content, bot_id) VALUES($1, $2, $3, $4)",
             wa_id, role, content, bot_id,
         )
+    
+    if bot_id and sync_chatwoot:
+        import asyncio
+        from app.chatwoot_client import sync_message_to_chatwoot
+        
+        # Determine name if available
+        lead = await get_lead(wa_id, bot_id=bot_id)
+        name = lead.get("nombre") if lead else wa_id
+        
+        asyncio.create_task(sync_message_to_chatwoot(bot_id, wa_id, name or wa_id, content, role))
 
 
 async def find_pending_escalation(wa_id: str) -> dict | None:
