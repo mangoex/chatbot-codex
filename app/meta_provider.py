@@ -206,12 +206,18 @@ async def get_bot_whatsapp_runtime(bot_id: int) -> dict[str, Any]:
 
 async def graph_get(path: str, access_token: str, params: dict[str, Any] | None = None) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
+    log.info(f"Meta Graph GET request to {path} with params={params}")
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.get(graph_url(path), headers=headers, params=params or {})
         if response.status_code >= 400:
             try:
                 err_data = response.json()
-                msg = err_data.get("error", {}).get("message") or response.text
+                err_obj = err_data.get("error", {})
+                msg = err_obj.get("message") or response.text
+                details = err_obj.get("error_data", {}).get("details")
+                if details:
+                    msg = f"{msg} ({details})"
+                log.error(f"Meta Graph GET error: {err_data}")
                 raise ValueError(f"Error de Meta API: {msg}")
             except Exception as e:
                 if isinstance(e, ValueError):
@@ -222,12 +228,18 @@ async def graph_get(path: str, access_token: str, params: dict[str, Any] | None 
 
 async def graph_post(path: str, access_token: str, json_data: dict[str, Any]) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
+    log.info(f"Meta Graph POST request to {path} with payload={json_data}")
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(graph_url(path), headers=headers, json=json_data)
         if response.status_code >= 400:
             try:
                 err_data = response.json()
-                msg = err_data.get("error", {}).get("message") or response.text
+                err_obj = err_data.get("error", {})
+                msg = err_obj.get("message") or response.text
+                details = err_obj.get("error_data", {}).get("details")
+                if details:
+                    msg = f"{msg} ({details})"
+                log.error(f"Meta Graph POST error: {err_data}")
                 raise ValueError(f"Error de Meta API: {msg}")
             except Exception as e:
                 if isinstance(e, ValueError):
