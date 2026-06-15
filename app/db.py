@@ -214,6 +214,48 @@ CREATE INDEX IF NOT EXISTS idx_esc_status_ts
     ON escalations(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_esc_wa_status
     ON escalations(wa_id, status);
+
+CREATE TABLE IF NOT EXISTS contacts (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE CASCADE,
+    wa_id TEXT NOT NULL,
+    name TEXT,
+    business TEXT,
+    tags TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(bot_id, wa_id)
+);
+CREATE INDEX IF NOT EXISTS idx_contacts_bot_search ON contacts(bot_id, name, wa_id);
+
+CREATE TABLE IF NOT EXISTS broadcasts (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    template_name TEXT NOT NULL,
+    language_code TEXT NOT NULL DEFAULT 'es_MX',
+    variable_mappings JSONB NOT NULL DEFAULT '[]'::jsonb,
+    total_recipients INT DEFAULT 0,
+    sent_count INT DEFAULT 0,
+    failed_count INT DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending' 
+        CHECK (status IN ('pending', 'running', 'completed', 'paused', 'failed')),
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS broadcast_recipients (
+    id BIGSERIAL PRIMARY KEY,
+    broadcast_id BIGINT REFERENCES broadcasts(id) ON DELETE CASCADE,
+    wa_id TEXT NOT NULL,
+    contact_name TEXT,
+    contact_business TEXT,
+    status TEXT NOT NULL DEFAULT 'pending' 
+        CHECK (status IN ('pending', 'sent', 'failed')),
+    error_message TEXT,
+    sent_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_recipients_exec ON broadcast_recipients(broadcast_id, status);
 """
 
 
@@ -1816,4 +1858,242 @@ async def delete_bot(bot_id: int) -> bool:
     async with _pool.acquire() as conn:
         result = await conn.execute("DELETE FROM bots WHERE id = $1", bot_id)
         return result != "DELETE 0"
+
+
+# --- CONTACTS & BROADCASTS DB OPERATIONS ---
+
+async def list_contact_tags(bot_id: int) -> list[str]:
+    """Devuelve una lista de etiquetas únicas usadas por los contactos del bot."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT trim(unnest(string_to_array(tags, ','))) AS tag
+            FROM contacts
+            WHERE bot_id = $1 AND tags IS NOT NULL AND tags != ''
+            ORDER BY tag ASC
+            """,
+            bot_id,
+        )
+        return [r["tag"] for r in rows if r["tag"]]
+
+
+async def upsert_contact(
+    bot_id: int,
+    wa_id: str,
+    name: str | None = None,
+    business: str | None = None,
+    tags: str | None = None,
+) -> None:
+    """Inserta o actualiza un contacto en el catálogo del cliente."""
+    clean_wa_id = "".join(filter(str.isdigit, wa_id))
+    if not clean_wa_id:
+        return
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO contacts (bot_id, wa_id, name, business, tags, updated_at)
+            VALUES ($1, $2, $3, $4, $5, now())
+            ON CONFLICT (bot_id, wa_id) DO UPDATE SET
+                name = COALESCE($3, contacts.name),
+                business = COALESCE($4, contacts.business),
+                tags = COALESCE($5, contacts.tags),
+                updated_at = now()
+            """,
+            bot_id,
+            clean_wa_id,
+            name,
+            business,
+            tags,
+        )
+
+
+async def list_contacts(
+    bot_id: int,
+    search: str | None = None,
+    tag: str | None = None,
+    limit: int = 1000,
+    offset: int = 0,
+) -> list[dict]:
+    """Lista contactos de un bot específico con filtros de búsqueda y tags."""
+    async with _pool.acquire() as conn:
+        query = "SELECT * FROM contacts WHERE bot_id = $1"
+        args = [bot_id]
+        
+        if search:
+            args.append(f"%{search}%")
+            query += f" AND (name ILIKE ${len(args)} OR wa_id ILIKE ${len(args)} OR business ILIKE ${len(args)})"
+            
+        if tag:
+            args.append(f"%{tag}%")
+            query += f" AND tags ILIKE ${len(args)}"
+            
+        args.append(limit)
+        query += f" ORDER BY name ASC, created_at DESC LIMIT ${len(args)}"
+        args.append(offset)
+        query += f" OFFSET ${len(args)}"
+        
+        rows = await conn.fetch(query, *args)
+        return [dict(r) for r in rows]
+
+
+async def count_contacts(
+    bot_id: int,
+    search: str | None = None,
+    tag: str | None = None,
+) -> int:
+    """Devuelve el total de contactos que coinciden con los criterios."""
+    async with _pool.acquire() as conn:
+        query = "SELECT COUNT(*) FROM contacts WHERE bot_id = $1"
+        args = [bot_id]
+        
+        if search:
+            args.append(f"%{search}%")
+            query += f" AND (name ILIKE ${len(args)} OR wa_id ILIKE ${len(args)} OR business ILIKE ${len(args)})"
+            
+        if tag:
+            args.append(f"%{tag}%")
+            query += f" AND tags ILIKE ${len(args)}"
+            
+        row = await conn.fetchrow(query, *args)
+        return row[0] if row else 0
+
+
+async def delete_contacts(bot_id: int, wa_ids: list[str]) -> bool:
+    """Elimina uno o varios contactos de un bot."""
+    if not wa_ids:
+        return False
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM contacts WHERE bot_id = $1 AND wa_id = ANY($2::text[])",
+            bot_id,
+            wa_ids,
+        )
+        return result != "DELETE 0"
+
+
+async def create_broadcast(
+    bot_id: int,
+    name: str,
+    template_name: str,
+    language_code: str,
+    variable_mappings: list[dict],
+    recipients: list[dict],
+) -> int:
+    """Crea una campaña de envío masivo y sus destinatarios pendientes."""
+    if not recipients:
+        raise ValueError("Se requiere al menos un destinatario para crear la campaña.")
+        
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            # Crear la campaña
+            broadcast_id = await conn.fetchval(
+                """
+                INSERT INTO broadcasts (bot_id, name, template_name, language_code, variable_mappings, total_recipients)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING id
+                """,
+                bot_id,
+                name,
+                template_name,
+                language_code,
+                json.dumps(variable_mappings),
+                len(recipients),
+            )
+            
+            # Insertar los destinatarios por lotes
+            values = []
+            for r in recipients:
+                clean_wa = "".join(filter(str.isdigit, r["wa_id"]))
+                if clean_wa:
+                    values.append((broadcast_id, clean_wa, r.get("name"), r.get("business")))
+            
+            if values:
+                await conn.executemany(
+                    """
+                    INSERT INTO broadcast_recipients (broadcast_id, wa_id, contact_name, contact_business)
+                    VALUES ($1, $2, $3, $4)
+                    """,
+                    values,
+                )
+            
+            return broadcast_id
+
+
+async def list_broadcasts(bot_id: int, limit: int = 50) -> list[dict]:
+    """Lista las campañas de un bot ordenadas por fecha de creación descendente."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM broadcasts WHERE bot_id = $1 ORDER BY created_at DESC LIMIT $2",
+            bot_id,
+            limit,
+        )
+        return [dict(r) for r in rows]
+
+
+async def get_broadcast(broadcast_id: int, bot_id: int) -> dict | None:
+    """Obtiene los detalles de una campaña de envío masivo."""
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM broadcasts WHERE id = $1 AND bot_id = $2",
+            broadcast_id,
+            bot_id,
+        )
+        return dict(row) if row else None
+
+
+async def update_broadcast_status(broadcast_id: int, status: str) -> None:
+    """Actualiza el estado principal de una campaña."""
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE broadcasts SET status = $1, updated_at = now() WHERE id = $2",
+            status,
+            broadcast_id,
+        )
+
+
+async def get_pending_broadcast_recipients(broadcast_id: int, limit: int = 100) -> list[dict]:
+    """Obtiene destinatarios pendientes de envío de una campaña específica."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM broadcast_recipients WHERE broadcast_id = $1 AND status = 'pending' LIMIT $2",
+            broadcast_id,
+            limit,
+        )
+        return [dict(r) for r in rows]
+
+
+async def update_broadcast_recipient_status(
+    recipient_id: int,
+    status: str,
+    error_message: str | None = None,
+) -> None:
+    """Actualiza el estado de entrega de un destinatario individual y actualiza contadores de campaña."""
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            # Actualizar destinatario
+            row = await conn.fetchrow(
+                """
+                UPDATE broadcast_recipients
+                SET status = $1, error_message = $2, sent_at = now()
+                WHERE id = $3
+                RETURNING broadcast_id
+                """,
+                status,
+                error_message,
+                recipient_id,
+            )
+            
+            if row:
+                broadcast_id = row["broadcast_id"]
+                # Incrementar el contador correspondiente en la campaña
+                if status == "sent":
+                    await conn.execute(
+                        "UPDATE broadcasts SET sent_count = sent_count + 1, updated_at = now() WHERE id = $1",
+                        broadcast_id,
+                    )
+                elif status == "failed":
+                    await conn.execute(
+                        "UPDATE broadcasts SET failed_count = failed_count + 1, updated_at = now() WHERE id = $1",
+                        broadcast_id,
+                    )
 

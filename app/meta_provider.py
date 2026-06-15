@@ -441,3 +441,60 @@ async def subscribe_app_to_waba(bot_id: int) -> dict[str, Any]:
     if not token:
         raise ValueError("Falta access_token cifrado para WhatsApp Cloud.")
     return await graph_post(f"{waba_id}/subscribed_apps", token, {})
+
+
+async def send_template_message(
+    bot_id: int,
+    to_wa_id: str,
+    template_name: str,
+    language_code: str = "es_MX",
+    parameters: list[str] = None,
+) -> dict[str, Any]:
+    """Envía un mensaje de plantilla de WhatsApp con parámetros dinámicos a un destinatario."""
+    runtime = await get_bot_whatsapp_runtime(bot_id)
+    bot = runtime["bot"]
+    integration = runtime["integration"]
+    token = runtime["access_token"]
+    if not bot:
+        raise ValueError("Bot no encontrado.")
+    config_data = integration.get("config") if integration else {}
+    phone_number_id = _clean(bot.get("phone_number_id") or config_data.get("phone_number_id"))
+    token = token or _clean(bot.get("whatsapp_access_token")) or _clean(config.WHATSAPP_API_TOKEN)
+    if not phone_number_id:
+        raise ValueError("Falta Phone Number ID para enviar mensajes.")
+    if not token:
+        raise ValueError("Falta access_token cifrado o token global para enviar mensajes.")
+
+    to = "".join(filter(str.isdigit, to_wa_id))
+    if not to:
+        raise ValueError("Falta el número de teléfono de destino válido.")
+
+    components = []
+    if parameters:
+        meta_params = [{"type": "text", "text": str(p)} for p in parameters]
+        components.append({
+            "type": "body",
+            "parameters": meta_params
+        })
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": to,
+        "type": "template",
+        "template": {
+            "name": template_name,
+            "language": {"code": language_code},
+        }
+    }
+    if components:
+        payload["template"]["components"] = components
+
+    result = await graph_post(f"{phone_number_id}/messages", token, payload)
+    return {
+        "phone_number_id": phone_number_id,
+        "to": to,
+        "template_name": template_name,
+        "request": payload,
+        "response": result,
+    }

@@ -3,8 +3,13 @@ import html
 import json
 import logging
 import re
+import os
+import uuid
+import csv
+import openpyxl
+import asyncio
 from datetime import datetime, timezone
-from fastapi import APIRouter, Request, Form, HTTPException, UploadFile, File
+from fastapi import APIRouter, Request, Form, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from app import db, config, auth, secure_store, meta_provider, prompt_assistant, skill_runtime, calendar_client, file_parser
@@ -27,7 +32,9 @@ ICONS = {
     "chat": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/></svg>',
     "leads": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
     "settings": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>',
-    "templates": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>'
+    "templates": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>',
+    "contacts": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><circle cx="12" cy="8" r="2"/><path d="M12 11c-2 0-3 1-3 2v1h6v-1c0-1-1-2-3-2Z"/></svg>',
+    "campaigns": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9Z"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M2 10h4M18 10h4M4 5l2.5 2.5M17.5 7.5L20 5"/></svg>'
 }
 
 CLIENT_CSS = """
@@ -780,6 +787,8 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
         ("inicio", "Inicio", ICONS["dashboard"]),
         ("conversations", "Conversaciones", ICONS["chat"]),
         ("crm", "CRM de Leads", ICONS["leads"]),
+        ("contacts", "Contactos", ICONS["contacts"]),
+        ("campaigns", "Campañas", ICONS["campaigns"]),
         ("whatsapp", "Conectar WhatsApp", ICONS["wa"]),
         ("prompt", "Comportamiento (IA)", ICONS["prompt"]),
         ("hours", "Horarios", ICONS["hours"]),
@@ -986,6 +995,13 @@ async def client_app(
     saved: str | None = None,
     wa_id: str | None = None,
     status: str = "en_progreso",
+    search_q: str | None = None,
+    tag_q: str | None = None,
+    cpage: int = 1,
+    map_file: str | None = None,
+    imported: int | None = None,
+    deleted: int | None = None,
+    broadcast_selected: str | None = None,
 ):
     session = _require_client_login(request)
     client_id = session.get("client_id")
@@ -1025,9 +1041,21 @@ async def client_app(
     if saved == "1":
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Configuración guardada correctamente.</div>'
     elif saved == "err":
-        notice_html = f'<div class="notice-banner error">{ICONS["error"]} Ocurrió un error al guardar la configuración. Revisa los datos.</div>'
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} Ocurrió un error. Revisa los datos.</div>'
     elif saved == "err_parse":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} Error al leer o procesar el archivo. Asegúrate de que no esté dañado y sea de un tipo compatible (PDF, DOCX, MD, XLSX, CSV).</div>'
+    elif saved == "err_ext":
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} Formato de archivo inválido. Solo se admiten archivos .csv, .xlsx y .xls.</div>'
+    elif saved == "err_num":
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} El número de teléfono ingresado no es válido. Debe contener solo números y el prefijo de país.</div>'
+    elif saved == "err_file_expired":
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} El archivo temporal ha expirado o no se encuentra. Intenta subirlo de nuevo.</div>'
+    elif saved == "err_no_recipients":
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} No hay destinatarios seleccionados o válidos para iniciar el envío masivo.</div>'
+    elif imported is not None:
+        notice_html = f'<div class="notice-banner success">{ICONS["success"]} Se importaron con éxito {imported} contactos al directorio.</div>'
+    elif deleted is not None:
+        notice_html = f'<div class="notice-banner success">{ICONS["success"]} Se eliminaron {deleted} contactos correctamente.</div>'
 
     # 1. FETCH STATE
     # WhatsApp config
@@ -1124,6 +1152,31 @@ async def client_app(
     except Exception as exc:
         log.error(f"Error al listar plantillas para bot {bot_id}: {exc}")
         templates_error = str(exc)
+
+    # Fetch Contacts and Campaigns
+    search_contacts = search_q.strip() if search_q else None
+    tag_filter = tag_q.strip() if tag_q else None
+    contacts_limit = 50
+    contacts_offset = max(0, cpage - 1) * contacts_limit
+    
+    contacts = []
+    total_contacts = 0
+    unique_tags = []
+    broadcasts = []
+    
+    try:
+        contacts = await db.list_contacts(
+            bot_id,
+            search=search_contacts,
+            tag=tag_filter,
+            limit=contacts_limit,
+            offset=contacts_offset
+        )
+        total_contacts = await db.count_contacts(bot_id, search=search_contacts, tag=tag_filter)
+        unique_tags = await db.list_contact_tags(bot_id)
+        broadcasts = await db.list_broadcasts(bot_id, limit=50)
+    except Exception as exc:
+        log.error(f"Error fetching contacts/broadcasts state: {exc}")
 
     # Fetch Conversations and CRM info for client tabs
     await db.qualify_leads_with_action_link(
@@ -1437,6 +1490,506 @@ async def client_app(
             }});
           }}
         }})();
+      </script>
+    </div>
+    """
+    # 2b. CONTACTS PANEL HTML
+    contacts_rows = ""
+    for c in contacts:
+        c_tags = html.escape(c.get("tags") or "")
+        tags_badges = "".join(f'<span class="badge" style="margin-right:4px; font-size:10.5px; background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; border-radius:4px; padding:2px 6px;">{t.strip()}</span>' for t in c_tags.split(",") if t.strip())
+        contacts_rows += f"""
+        <tr>
+          <td style="width: 40px; text-align: center;"><input type="checkbox" name="selected_contacts" value="{html.escape(c['wa_id'])}" class="contact-checkbox" onchange="updateSelectedCount()"></td>
+          <td style="font-weight:600; font-size:13px; color:var(--ink);">{html.escape(c.get("name") or "-")}</td>
+          <td style="font-family:monospace; font-size:12.5px; color:var(--ink);">{html.escape(c.get("wa_id") or "-")}</td>
+          <td>{html.escape(c.get("business") or "-")}</td>
+          <td>{tags_badges}</td>
+          <td style="font-size:11.5px; color:var(--muted);">{_fmt_dt(c.get("created_at"))}</td>
+        </tr>
+        """
+        
+    if not contacts_rows:
+        contacts_rows = '<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--muted); font-size:13.5px;">No se encontraron contactos en el directorio.</td></tr>'
+
+    tag_options = '<option value="">Todas las etiquetas</option>'
+    for t in unique_tags:
+        selected_attr = "selected" if t == tag_filter else ""
+        tag_options += f'<option value="{html.escape(t)}" {selected_attr}>{html.escape(t)}</option>'
+
+    total_pages = max(1, (total_contacts + contacts_limit - 1) // contacts_limit)
+    prev_disabled = "disabled" if cpage <= 1 else ""
+    next_disabled = "disabled" if cpage >= total_pages else ""
+
+    # Check if we are in Column Mapping wizard
+    if map_file:
+        tmp_dir = os.path.join(os.getcwd(), "tmp", "uploads")
+        file_path = os.path.join(tmp_dir, map_file)
+        headers = extract_headers_from_file(file_path)
+        
+        if not headers:
+            mapping_wizard_html = f"""
+            <div class="card" style="margin-top:20px; border:1px solid var(--red); background:#fff1f2;">
+              <div class="card-header">
+                <h2 style="color:var(--red);">{ICONS["error"]} Error de Lectura</h2>
+                <p>No pudimos extraer columnas de tu archivo. Asegúrate de que tenga una fila de encabezados y no esté dañado.</p>
+              </div>
+              <a href="/client/app?bot_id={bot_id}&tab=contacts" class="btn secondary">Volver al directorio</a>
+            </div>
+            """
+        else:
+            col_options = ""
+            for idx, h in enumerate(headers):
+                col_options += f'<option value="{idx}">{html.escape(h)} (Columna {idx+1})</option>'
+                
+            mapping_wizard_html = f"""
+            <div class="card" style="margin-top:20px; border:1px solid #bae6fd; background:#f0f9ff;">
+              <div class="card-header">
+                <h2 style="color:#0369a1;">Mapear Columnas de Importación</h2>
+                <p>Asocia las columnas de tu archivo <code>{html.escape(map_file.split(".",1)[-1] or "cargado")}</code> con los atributos de contactos en Asistto.</p>
+              </div>
+              <form method="post" action="/client/bots/{bot_id}/contacts/import">
+                <input type="hidden" name="file_token" value="{html.escape(map_file)}">
+                
+                <div style="display:flex; flex-direction:column; gap:14px; max-width:500px;">
+                  <div>
+                    <label style="font-weight:600; margin-bottom:4px;">Columna de Teléfono (Obligatoria)</label>
+                    <p class="muted-text" style="font-size:11px; margin:0 0 6px 0;">Debe contener los números telefónicos con prefijo de país.</p>
+                    <select name="phone_col" required>
+                      <option value="" disabled selected>-- Seleccionar columna --</option>
+                      {col_options}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label style="font-weight:600; margin-bottom:4px;">Columna de Nombre (Opcional)</label>
+                    <select name="name_col">
+                      <option value="-1">-- No importar (vacío) --</option>
+                      {col_options}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label style="font-weight:600; margin-bottom:4px;">Columna de Negocio/Empresa (Opcional)</label>
+                    <select name="business_col">
+                      <option value="-1">-- No importar (vacío) --</option>
+                      {col_options}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label style="font-weight:600; margin-bottom:4px;">Columna de Etiquetas (Opcional)</label>
+                    <p class="muted-text" style="font-size:11px; margin:0 0 6px 0;">Las etiquetas dentro de la celda deben estar separadas por comas.</p>
+                    <select name="tags_col">
+                      <option value="-1">-- No importar (vacío) --</option>
+                      {col_options}
+                    </select>
+                  </div>
+                </div>
+                
+                <div style="margin-top:24px; display:flex; gap:10px;">
+                  <button class="btn primary-btn" type="submit">Completar Importación</button>
+                  <a href="/client/app?bot_id={bot_id}&tab=contacts" class="btn secondary" style="text-decoration:none; display:inline-flex; align-items:center;">Cancelar</a>
+                </div>
+              </form>
+            </div>
+            """
+        
+        contacts_panel_html = f"""
+        <div id="panel-contacts" class="tab-panel">
+          {mapping_wizard_html}
+        </div>
+        """
+    else:
+        contacts_panel_html = f"""
+        <div id="panel-contacts" class="tab-panel">
+          <div class="grid-contacts" style="display:grid; grid-template-columns:1fr 340px; gap:20px; align-items:start;">
+            
+            <!-- Left Side: Table -->
+            <div class="card">
+              <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div>
+                  <h2>Directorio de Contactos</h2>
+                  <p>Catálogo de contactos para campañas de difusión por WhatsApp. Total: <strong>{total_contacts}</strong> contactos.</p>
+                </div>
+              </div>
+              
+              <!-- Filter & Search Bar -->
+              <div style="background:#f8fafc; padding:12px 16px; border-bottom:1px solid var(--line); display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <form method="get" action="/client/app" style="display:flex; gap:10px; flex:1; margin:0; flex-wrap:wrap;">
+                  <input type="hidden" name="bot_id" value="{bot_id}">
+                  <input type="hidden" name="tab" value="contacts">
+                  <input name="search_q" placeholder="Buscar por nombre, teléfono..." value="{html.escape(search_q or '')}" style="max-width:240px; margin:0; font-size:13px; padding:6px 10px;">
+                  <select name="tag_q" style="max-width:180px; margin:0; font-size:13px; padding:6px 10px;">
+                    {tag_options}
+                  </select>
+                  <button class="btn" type="submit" style="padding:6px 14px; font-size:13px;">Filtrar</button>
+                  <a href="/client/app?bot_id={bot_id}&tab=contacts" class="btn secondary" style="text-decoration:none; display:inline-flex; align-items:center; padding:6px 14px; font-size:13px;">Limpiar</a>
+                </form>
+                
+                <div id="contactsActionBar" style="display:none; gap:8px;">
+                  <button class="btn" style="background:#2563eb; color:white; border:none; padding:6px 12px; font-size:13px;" onclick="startBroadcastFromSelected()">Crear Difusión ({html.escape("{{count}}")})</button>
+                  <form method="post" action="/client/bots/{bot_id}/contacts/delete" id="deleteContactsForm" style="margin:0; padding:0; display:inline;">
+                    <input type="hidden" name="selected_contacts_list" id="selectedContactsListInput">
+                    <button class="btn secondary" type="button" style="color:var(--red); padding:6px 12px; font-size:13px;" onclick="confirmDeleteContacts()">Eliminar</button>
+                  </form>
+                </div>
+              </div>
+
+              <div style="overflow-x:auto;">
+                <table style="width:100%;" id="contactsTable">
+                  <thead>
+                    <tr>
+                      <th style="width: 40px; text-align: center;"><input type="checkbox" id="selectAllContacts" onchange="toggleSelectAllContacts(this)"></th>
+                      <th>Nombre</th>
+                      <th>Teléfono (WA ID)</th>
+                      <th>Negocio</th>
+                      <th>Etiquetas</th>
+                      <th>Registro</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contacts_rows}
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Paging footer -->
+              <div style="padding:14px; border-top:1px solid var(--line); display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:12.5px; color:var(--muted);">Pág. {cpage} de {total_pages}</span>
+                <div style="display:flex; gap:6px;">
+                  <a href="/client/app?bot_id={bot_id}&tab=contacts&search_q={html.escape(search_q or '')}&tag_q={html.escape(tag_q or '')}&cpage={cpage - 1}" class="btn secondary {'disabled' if cpage <= 1 else ''}" style="padding:5px 12px; font-size:12px; text-decoration:none;">Anterior</a>
+                  <a href="/client/app?bot_id={bot_id}&tab=contacts&search_q={html.escape(search_q or '')}&tag_q={html.escape(tag_q or '')}&cpage={cpage + 1}" class="btn secondary {'disabled' if cpage >= total_pages else ''}" style="padding:5px 12px; font-size:12px; text-decoration:none;">Siguiente</a>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Right Side: Import & Manual creation -->
+            <div style="display:flex; flex-direction:column; gap:20px;">
+              <div class="card">
+                <div class="card-header">
+                  <h2>Importar Contactos</h2>
+                  <p>Carga un archivo de Excel (.xlsx) o texto (.csv) con tu lista de contactos para importarlos masivamente.</p>
+                </div>
+                <form method="post" action="/client/bots/{bot_id}/contacts/upload" enctype="multipart/form-data">
+                  <label>Seleccionar Archivo</label>
+                  <input type="file" name="file" accept=".csv,.xlsx,.xls" required style="font-size:13px; color:var(--muted); margin-bottom:12px;">
+                  <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Subir y Mapear</button>
+                </form>
+              </div>
+              
+              <div class="card">
+                <div class="card-header">
+                  <h2>Agregar Contacto Nuevo</h2>
+                  <p>Registra un contacto de forma individual en tu directorio.</p>
+                </div>
+                <form method="post" action="/client/bots/{bot_id}/contacts/create-manual">
+                  <label>Nombre Completo</label>
+                  <input name="name" placeholder="Ej. Juan Pérez" required style="margin-bottom:10px;" {"readonly" if session["role"] == "client_viewer" else ""}>
+                  
+                  <label>Teléfono (WhatsApp con prefijo)</label>
+                  <input name="wa_id" placeholder="Ej. 5216869032840" required style="margin-bottom:10px;" {"readonly" if session["role"] == "client_viewer" else ""}>
+                  
+                  <label>Nombre del Negocio</label>
+                  <input name="business" placeholder="Ej. Tacos El Pastor" style="margin-bottom:10px;" {"readonly" if session["role"] == "client_viewer" else ""}>
+                  
+                  <label>Etiquetas (Separadas por coma)</label>
+                  <input name="tags" placeholder="Ej. VIP, Prospecto" style="margin-bottom:14px;" {"readonly" if session["role"] == "client_viewer" else ""}>
+                  
+                  <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Registrar Contacto</button>
+                </form>
+              </div>
+            </div>
+            
+          </div>
+          
+          <script>
+            function toggleSelectAllContacts(master) {{
+              const checkboxes = document.querySelectorAll('.contact-checkbox');
+              checkboxes.forEach(cb => cb.checked = master.checked);
+              updateSelectedCount();
+            }}
+            
+            function updateSelectedCount() {{
+              const selected = document.querySelectorAll('.contact-checkbox:checked');
+              const actionBar = document.getElementById('contactsActionBar');
+              if (selected.length > 0) {{
+                actionBar.style.display = 'flex';
+                const btn = actionBar.querySelector('button');
+                btn.textContent = `Crear Difusión (${{selected.length}})`;
+              }} else {{
+                actionBar.style.display = 'none';
+              }}
+            }}
+            
+            function startBroadcastFromSelected() {{
+              const selected = document.querySelectorAll('.contact-checkbox:checked');
+              const ids = Array.from(selected).map(cb => cb.value);
+              const url = new URL(window.location.href);
+              url.searchParams.set("tab", "campaigns");
+              url.searchParams.set("broadcast_selected", ids.join(","));
+              window.location.href = url.toString();
+            }}
+            
+            function confirmDeleteContacts() {{
+              if (confirm("¿Estás seguro de que deseas eliminar los contactos seleccionados? Esta acción es irreversible.")) {{
+                const selected = document.querySelectorAll('.contact-checkbox:checked');
+                const ids = Array.from(selected).map(cb => cb.value);
+                const form = document.getElementById('deleteContactsForm');
+                
+                ids.forEach(id => {{
+                  const input = document.createElement('input');
+                  input.type = 'hidden';
+                  input.name = 'selected_contacts';
+                  input.value = id;
+                  form.appendChild(input);
+                }});
+                
+                form.submit();
+              }}
+            }}
+          </script>
+        </div>
+        """
+
+    # 2c. CAMPAIGNS PANEL HTML
+    broadcast_selected_count = 0
+    selected_wa_ids_str = ""
+    if broadcast_selected:
+        selected_ids_list = [w.strip() for w in broadcast_selected.split(",") if w.strip()]
+        broadcast_selected_count = len(selected_ids_list)
+        selected_wa_ids_str = broadcast_selected
+
+    broadcast_rows = ""
+    for b in broadcasts:
+        b_status = b["status"].upper()
+        badge_class = "success" if b_status == "COMPLETED" else ("warning" if b_status == "RUNNING" else ("danger" if b_status == "FAILED" else "info"))
+        status_label = "Completada" if b_status == "COMPLETED" else ("Enviando..." if b_status == "RUNNING" else ("Fallida" if b_status == "FAILED" else b["status"]))
+        
+        total = b["total_recipients"] or 0
+        sent = b["sent_count"] or 0
+        failed = b["failed_count"] or 0
+        progress_pct = int(min(100, (sent + failed) * 100 / total)) if total > 0 else 0
+        
+        broadcast_rows += f"""
+        <tr>
+          <td style="font-weight:600; font-size:13px; color:var(--ink);">{html.escape(b["name"])}</td>
+          <td><code>{html.escape(b["template_name"])}</code></td>
+          <td style="font-size:12px;"><strong>{sent + failed}</strong> / {total} <span class="muted-text">({progress_pct}%)</span><br>
+            <div style="width:100%; background:#e2e8f0; height:6px; border-radius:3px; overflow:hidden; margin-top:4px;">
+              <div style="width:{progress_pct}%; background:var(--primary); height:100%;"></div>
+            </div>
+            <small style="color:var(--green); font-weight:600;">{sent} exitosos</small> | <small style="color:var(--red); font-weight:600;">{failed} fallidos</small>
+          </td>
+          <td><span class="badge {badge_class}" style="font-size:11px;">{html.escape(status_label)}</span></td>
+          <td style="font-size:11.5px; color:var(--muted);">{_fmt_dt(b.get("created_at"))}</td>
+        </tr>
+        """
+        
+    if not broadcast_rows:
+        broadcast_rows = '<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--muted); font-size:13.5px;">No se han realizado campañas de envío masivo.</td></tr>'
+
+    template_options = '<option value="" disabled selected>-- Seleccionar plantilla --</option>'
+    for t in templates:
+        if (t.get("status") or "").upper() == "APPROVED":
+            template_options += f'<option value="{html.escape(t.get("name"))}">{html.escape(t.get("name"))}</option>'
+
+    templates_json = json.dumps(templates)
+
+    create_view_display = "block" if broadcast_selected else "none"
+    list_view_display = "none" if broadcast_selected else "block"
+
+    campaigns_panel_html = f"""
+    <div id="panel-campaigns" class="tab-panel">
+      
+      <!-- List Campaigns View -->
+      <div id="campaignsListView" style="display:{list_view_display};">
+        <div class="card">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <div>
+              <h2>Campañas de Envío Masivo</h2>
+              <p>Historial y estado de las campañas de difusión por WhatsApp usando plantillas aprobadas.</p>
+            </div>
+            {"<button class='btn primary-btn' onclick='showNewCampaignForm()'>Nueva Campaña</button>" if session["role"] != "client_viewer" else ""}
+          </div>
+          
+          <div style="overflow-x:auto;">
+            <table style="width:100%;">
+              <thead>
+                <tr>
+                  <th>Nombre de Campaña</th>
+                  <th>Plantilla Utilizada</th>
+                  <th>Progreso de Envío</th>
+                  <th>Estado</th>
+                  <th>Fecha de Creación</th>
+                </tr>
+              </thead>
+              <tbody>
+                {broadcast_rows}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Create Campaign View -->
+      <div id="campaignsCreateView" style="display:{create_view_display};">
+        <div class="grid-2">
+          
+          <!-- Left side: Configuration -->
+          <div class="card">
+            <div class="card-header">
+              <h2>Configurar Nueva Campaña</h2>
+              <p>Elige tu plantilla y configura el mapeo de variables dinámicas.</p>
+            </div>
+            
+            <form method="post" action="/client/bots/{bot_id}/campaigns/create">
+              <input type="hidden" name="language_code" id="campaignLangCode" value="es_MX">
+              <input type="hidden" name="vars_count" id="campaignVarsCountInput" value="0">
+              
+              <label>Nombre de la Campaña</label>
+              <input name="campaign_name" placeholder="Ej. Promoción Junio 2026" required style="margin-bottom:12px;">
+              
+              <label>Destinatarios de la Campaña</label>
+              <div style="margin-bottom:12px; display:flex; flex-direction:column; gap:8px;">
+                <div style="display:flex; gap:16px;">
+                  <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0; cursor:pointer;">
+                    <input type="radio" name="recipients_option" value="selected" {"checked" if broadcast_selected else "disabled"} onchange="toggleRecipientsType(this.value)"> 
+                    Contactos Seleccionados ({broadcast_selected_count})
+                  </label>
+                  <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0; cursor:pointer;">
+                    <input type="radio" name="recipients_option" value="all" {"" if broadcast_selected else "checked"} onchange="toggleRecipientsType(this.value)"> 
+                    Todos los Contactos ({total_contacts})
+                  </label>
+                </div>
+                <input type="hidden" name="selected_wa_ids" value="{html.escape(selected_wa_ids_str)}">
+              </div>
+              
+              <label>Seleccionar Plantilla Meta</label>
+              <select name="template_name" required style="margin-bottom:16px;" onchange="onTemplateSelected(this)">
+                {template_options}
+              </select>
+              
+              <!-- Dynamic Variables Container -->
+              <div id="campaignVarsContainer" style="display:none; margin-bottom:20px;">
+                <label style="font-weight:700; margin-bottom:8px; display:block;">Mapear Variables Dinámicas</label>
+                <p class="muted-text" style="font-size:11.5px; margin-top:0; margin-bottom:10px;">Asocia cada marcador <code>{{{{1}}}}</code>, <code>{{{{2}}}}</code> con campos del contacto.</p>
+                <div id="campaignVarsInputs"></div>
+              </div>
+              
+              <div style="display:flex; gap:10px;">
+                <button class="btn primary-btn" type="submit">Iniciar Campaña Masiva</button>
+                <button class="btn secondary" type="button" onclick="cancelNewCampaign()">Cancelar</button>
+              </div>
+            </form>
+          </div>
+          
+          <!-- Right side: Template details / Preview -->
+          <div class="card" style="border:1px solid #bae6fd; background:#f0f9ff;">
+            <div class="card-header" style="border-bottom:1px solid #bae6fd; padding-bottom:8px; margin-bottom:12px;">
+              <h3 style="margin:0; font-size:14px; font-weight:700; color:#0369a1; display:flex; align-items:center; gap:6px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px; height:16px;"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                Vista de Plantilla Seleccionada
+              </h3>
+            </div>
+            <div style="background:#e5ddd5; padding:16px; border-radius:6px; min-height:100px; position:relative; font-family:\'Inter\', sans-serif;">
+              <div style="background:#ffffff; padding:10px 12px; border-radius:6px; max-width:90%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 0.5px rgba(0,0,0,0.13); position:relative;">
+                <span id="campaignTemplateText" style="word-break: break-word; color:#333;">Selecciona una plantilla para previsualizar el cuerpo...</span>
+                <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+              </div>
+            </div>
+            <div style="margin-top:14px; font-size:12px; color:#0369a1;">
+              <strong>Nota:</strong> Los destinatarios recibirán el mensaje reemplazando cada variable con sus datos correspondientes. Si la variable está mapeada al Nombre, se reemplazará por su nombre real guardado en el directorio.
+            </div>
+          </div>
+          
+        </div>
+      </div>
+      
+      <script>
+        const metaTemplates = {templates_json};
+        
+        function showNewCampaignForm() {{
+          document.getElementById('campaignsListView').style.display = 'none';
+          document.getElementById('campaignsCreateView').style.display = 'block';
+        }}
+        
+        function cancelNewCampaign() {{
+          document.getElementById('campaignsListView').style.display = 'block';
+          document.getElementById('campaignsCreateView').style.display = 'none';
+          const url = new URL(window.location.href);
+          if (url.searchParams.has("broadcast_selected")) {{
+            url.searchParams.delete("broadcast_selected");
+            window.location.href = url.toString();
+          }}
+        }}
+        
+        function toggleRecipientsType(val) {{
+          // logic placeholder
+        }}
+        
+        function onTemplateSelected(select) {{
+          const templateName = select.value;
+          const selectedTpl = metaTemplates.find(t => t.name === templateName);
+          const variablesContainer = document.getElementById('campaignVarsContainer');
+          const variablesInputs = document.getElementById('campaignVarsInputs');
+          const previewText = document.getElementById('campaignTemplateText');
+          
+          if (!selectedTpl) return;
+          
+          document.getElementById('campaignLangCode').value = selectedTpl.language || "es_MX";
+          
+          const bodyComp = selectedTpl.components.find(c => c.type === 'BODY');
+          const bodyText = bodyComp ? bodyComp.text : "";
+          previewText.innerHTML = bodyText.replace(/\\n/g, '<br>');
+          
+          const regex = /\\{{\\s*(\\d+)\\s*\\}}/g;
+          let match;
+          const vars = new Set();
+          while ((match = regex.exec(bodyText)) !== null) {{
+            vars.add(parseInt(match[1]));
+          }}
+          
+          const sortedVars = Array.from(vars).sort((a, b) => a - b);
+          document.getElementById('campaignVarsCountInput').value = sortedVars.length;
+          
+          variablesInputs.innerHTML = "";
+          if (sortedVars.length > 0) {{
+            variablesContainer.style.display = "block";
+            sortedVars.forEach(varNum => {{
+              const div = document.createElement('div');
+              div.style.cssText = 'background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px; margin-bottom:12px;';
+              div.innerHTML = `
+                <label style="font-weight:600; margin-bottom:4px; display:block; font-size:12.5px;">Variable {{{{${{varNum}}}}}}</label>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                  <select name="var_map_type_${{varNum}}" style="margin:0; flex:1; max-width:200px;" onchange="toggleVarValueInput(${{varNum}}, this.value)">
+                    <option value="name">Nombre del Contacto</option>
+                    <option value="business">Negocio del Contacto</option>
+                    <option value="wa_id">Teléfono del Contacto</option>
+                    <option value="fixed">Valor Fijo (Texto estático)</option>
+                  </select>
+                  <input type="text" name="var_map_value_${{varNum}}" id="var_map_value_input_${{varNum}}" placeholder="Ej. Clinica Dental" style="display:none; margin:0; flex:2;" required disabled>
+                </div>
+              `;
+              variablesInputs.appendChild(div);
+            }});
+          }} else {{
+            variablesContainer.style.display = "none";
+          }}
+        }}
+        
+        function toggleVarValueInput(varNum, val) {{
+          const input = document.getElementById(`var_map_value_input_${{varNum}}`);
+          if (val === 'fixed') {{
+            input.style.display = 'block';
+            input.required = true;
+            input.disabled = false;
+          }} else {{
+            input.style.display = 'none';
+            input.required = false;
+            input.disabled = true;
+          }}
+        }}
       </script>
     </div>
     """
@@ -1912,6 +2465,12 @@ async def client_app(
     
     <!-- 6b. TAB PANEL: PLANTILLAS -->
     {templates_panel_html}
+    
+    <!-- 6c. TAB PANEL: CONTACTOS -->
+    {contacts_panel_html}
+    
+    <!-- 6d. TAB PANEL: CAMPAÑAS -->
+    {campaigns_panel_html}
     
     <!-- 7. TAB PANEL: INTEGRACIONES -->
     <div id="panel-integrations" class="tab-panel">
@@ -2630,3 +3189,382 @@ async def client_whatsapp_templates_submit(
         log.error(f"Error al crear plantilla desde panel de cliente: {exc}")
         return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=templates&saved=err", status_code=302)
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=templates&saved=1", status_code=302)
+
+
+# --- CONTACTS FILE PARSING & IMPORT HELPERS ---
+
+def extract_headers_from_file(file_path: str) -> list[str]:
+    _, ext = os.path.splitext(file_path.lower())
+    try:
+        if ext == ".csv":
+            with open(file_path, "r", encoding="utf-8-sig") as f:
+                reader = csv.reader(f)
+                headers = next(reader, None)
+                return [h.strip() for h in headers if h.strip()] if headers else []
+        elif ext in (".xlsx", ".xls"):
+            wb = openpyxl.load_workbook(file_path, read_only=True)
+            sheet = wb.active
+            for row in sheet.iter_rows(max_row=1, values_only=True):
+                return [str(cell).strip() for cell in row if cell is not None and str(cell).strip()]
+    except Exception as exc:
+        log.error(f"Error reading headers from {file_path}: {exc}")
+    return []
+
+
+def parse_contacts_file(
+    file_path: str,
+    phone_col_idx: int,
+    name_col_idx: int | None = None,
+    business_col_idx: int | None = None,
+    tags_col_idx: int | None = None,
+) -> list[dict]:
+    contacts = []
+    _, ext = os.path.splitext(file_path.lower())
+    try:
+        if ext == ".csv":
+            with open(file_path, "r", encoding="utf-8-sig") as f:
+                reader = csv.reader(f)
+                next(reader, None)  # Skip header
+                for row in reader:
+                    if not row or len(row) <= phone_col_idx:
+                        continue
+                    phone = row[phone_col_idx].strip()
+                    if not phone:
+                        continue
+                    name = row[name_col_idx].strip() if (name_col_idx is not None and len(row) > name_col_idx) else None
+                    business = row[business_col_idx].strip() if (business_col_idx is not None and len(row) > business_col_idx) else None
+                    tags = row[tags_col_idx].strip() if (tags_col_idx is not None and len(row) > tags_col_idx) else None
+                    contacts.append({
+                        "wa_id": phone,
+                        "name": name,
+                        "business": business,
+                        "tags": tags,
+                    })
+        elif ext in (".xlsx", ".xls"):
+            wb = openpyxl.load_workbook(file_path, data_only=True)
+            sheet = wb.active
+            first = True
+            for row in sheet.iter_rows(values_only=True):
+                if first:
+                    first = False
+                    continue
+                if not row or len(row) <= phone_col_idx:
+                    continue
+                phone = str(row[phone_col_idx] or "").strip()
+                if not phone:
+                    continue
+                name = str(row[name_col_idx] or "").strip() if (name_col_idx is not None and len(row) > name_col_idx) else None
+                business = str(row[business_col_idx] or "").strip() if (business_col_idx is not None and len(row) > business_col_idx) else None
+                tags = str(row[tags_col_idx] or "").strip() if (tags_col_idx is not None and len(row) > tags_col_idx) else None
+                contacts.append({
+                    "wa_id": phone,
+                    "name": name,
+                    "business": business,
+                    "tags": tags,
+                })
+    except Exception as exc:
+        log.error(f"Error parsing contacts file {file_path}: {exc}")
+    return contacts
+
+
+# --- CONTACTS & CAMPAIGNS ENDPOINTS ---
+
+@router.post("/bots/{bot_id}/contacts/upload")
+async def client_contacts_upload(
+    request: Request,
+    bot_id: int,
+    file: UploadFile = File(...),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    
+    _, ext = os.path.splitext(file.filename.lower())
+    if ext not in (".csv", ".xlsx", ".xls"):
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=contacts&saved=err_ext", status_code=302
+        )
+        
+    # Ensure tmp directory exists inside workspace
+    tmp_dir = os.path.join(os.getcwd(), "tmp", "uploads")
+    os.makedirs(tmp_dir, exist_ok=True)
+    
+    # Save the file with a unique name
+    file_token = f"{uuid.uuid4()}{ext}"
+    file_path = os.path.join(tmp_dir, file_token)
+    try:
+        with open(file_path, "wb") as f:
+            content = await file.read()
+            f.write(content)
+    except Exception as exc:
+        log.error(f"Error saving uploaded contacts file: {exc}")
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=contacts&saved=err", status_code=302
+        )
+        
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=contacts&map_file={file_token}", status_code=302
+    )
+
+
+@router.post("/bots/{bot_id}/contacts/import")
+async def client_contacts_confirm_import(
+    request: Request,
+    bot_id: int,
+    file_token: str = Form(...),
+    phone_col: int = Form(...),
+    name_col: int = Form(-1),
+    business_col: int = Form(-1),
+    tags_col: int = Form(-1),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    
+    tmp_dir = os.path.join(os.getcwd(), "tmp", "uploads")
+    file_path = os.path.join(tmp_dir, file_token)
+    if not os.path.exists(file_path):
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=contacts&saved=err_file_expired", status_code=302
+        )
+        
+    n_col = None if name_col < 0 else name_col
+    b_col = None if business_col < 0 else business_col
+    t_col = None if tags_col < 0 else tags_col
+    
+    parsed = parse_contacts_file(
+        file_path,
+        phone_col_idx=phone_col,
+        name_col_idx=n_col,
+        business_col_idx=b_col,
+        tags_col_idx=t_col,
+    )
+    
+    success_count = 0
+    for c in parsed:
+        wa_id = "".join(filter(str.isdigit, c["wa_id"]))
+        if wa_id:
+            try:
+                await db.upsert_contact(
+                    bot_id,
+                    wa_id=wa_id,
+                    name=c.get("name"),
+                    business=c.get("business"),
+                    tags=c.get("tags"),
+                )
+                success_count += 1
+            except Exception as exc:
+                log.error(f"Error importing contact {wa_id}: {exc}")
+                
+    # Delete temporary file
+    try:
+        os.remove(file_path)
+    except Exception as exc:
+        log.error(f"Error removing temporary file {file_path}: {exc}")
+        
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=contacts&imported={success_count}", status_code=302
+    )
+
+
+@router.post("/bots/{bot_id}/contacts/create-manual")
+async def client_contacts_create_manual(
+    request: Request,
+    bot_id: int,
+    name: str = Form(...),
+    wa_id: str = Form(...),
+    business: str = Form(None),
+    tags: str = Form(None),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    
+    clean_wa = "".join(filter(str.isdigit, wa_id))
+    if not clean_wa:
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=contacts&saved=err_num", status_code=302
+        )
+        
+    try:
+        await db.upsert_contact(
+            bot_id,
+            wa_id=clean_wa,
+            name=name.strip() if name else None,
+            business=business.strip() if business else None,
+            tags=tags.strip() if tags else None,
+        )
+    except Exception as exc:
+        log.error(f"Error creating contact manually: {exc}")
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=contacts&saved=err", status_code=302
+        )
+        
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=contacts&saved=1", status_code=302
+    )
+
+
+@router.post("/bots/{bot_id}/contacts/delete")
+async def client_contacts_delete(
+    request: Request,
+    bot_id: int,
+    selected_contacts: list[str] = Form(...),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    
+    try:
+        await db.delete_contacts(bot_id, selected_contacts)
+    except Exception as exc:
+        log.error(f"Error deleting contacts: {exc}")
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=contacts&saved=err", status_code=302
+        )
+        
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=contacts&deleted={len(selected_contacts)}", status_code=302
+    )
+
+
+async def process_broadcast_queue(broadcast_id: int, bot_id: int) -> None:
+    """Procesa en segundo plano los envíos individuales de una campaña masiva."""
+    log.info(f"Iniciando procesamiento de campaña masiva {broadcast_id} para bot {bot_id}...")
+    try:
+        # Actualizar campaña a estado 'running'
+        await db.update_broadcast_status(broadcast_id, "running")
+        
+        # Obtener los detalles de la campaña
+        broadcast = await db.get_broadcast(broadcast_id, bot_id)
+        if not broadcast:
+            log.error(f"Campaña {broadcast_id} no encontrada en base de datos.")
+            return
+            
+        template_name = broadcast["template_name"]
+        lang_code = broadcast["language_code"]
+        mappings = json.loads(broadcast["variable_mappings"])
+        
+        while True:
+            # Obtener lote de 50 destinatarios pendientes
+            recipients = await db.get_pending_broadcast_recipients(broadcast_id, limit=50)
+            if not recipients:
+                break
+                
+            for r in recipients:
+                recipient_id = int(r["id"])
+                wa_id = r["wa_id"]
+                
+                # Resolver variables para este destinatario específico
+                resolved_params = []
+                for m in mappings:
+                    m_type = m.get("type")
+                    m_val = m.get("value")
+                    
+                    if m_type == "fixed":
+                        resolved_params.append(m_val or "")
+                    elif m_type == "name":
+                        resolved_params.append(r.get("contact_name") or "")
+                    elif m_type == "business":
+                        resolved_params.append(r.get("contact_business") or "")
+                    elif m_type == "wa_id":
+                        resolved_params.append(wa_id)
+                    else:
+                        resolved_params.append("")
+                        
+                # Llamar API de Meta
+                try:
+                    await meta_provider.send_template_message(
+                        bot_id=bot_id,
+                        to_wa_id=wa_id,
+                        template_name=template_name,
+                        language_code=lang_code,
+                        parameters=resolved_params,
+                    )
+                    await db.update_broadcast_recipient_status(recipient_id, "sent")
+                except Exception as exc:
+                    log.error(f"Error al enviar mensaje de campaña a {wa_id}: {exc}")
+                    await db.update_broadcast_recipient_status(recipient_id, "failed", error_message=str(exc))
+                    
+                await asyncio.sleep(0.1)
+                
+        # Finalizar campaña
+        await db.update_broadcast_status(broadcast_id, "completed")
+        log.info(f"Procesamiento de campaña {broadcast_id} completado con éxito.")
+    except Exception as exc:
+        log.error(f"Error en worker de campaña masiva {broadcast_id}: {exc}")
+        await db.update_broadcast_status(broadcast_id, "failed")
+
+
+@router.post("/bots/{bot_id}/campaigns/create")
+async def client_campaigns_create(
+    request: Request,
+    bot_id: int,
+    background_tasks: BackgroundTasks,
+    campaign_name: str = Form(...),
+    template_name: str = Form(...),
+    language_code: str = Form("es_MX"),
+    recipients_option: str = Form("selected"), # "selected" o "all"
+    selected_wa_ids: str = Form(""),
+    vars_count: int = Form(0),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    
+    recipients_list = []
+    try:
+        if recipients_option == "all":
+            contacts = await db.list_contacts(bot_id, limit=10000)
+            recipients_list = [
+                {"wa_id": c["wa_id"], "name": c.get("name"), "business": c.get("business")}
+                for c in contacts
+            ]
+        else:
+            clean_ids = [w.strip() for w in selected_wa_ids.split(",") if w.strip()]
+            contacts = await db.list_contacts(bot_id, limit=10000)
+            contacts_map = {c["wa_id"]: c for c in contacts}
+            for wa in clean_ids:
+                c = contacts_map.get(wa) or {}
+                recipients_list.append({
+                    "wa_id": wa,
+                    "name": c.get("name"),
+                    "business": c.get("business"),
+                })
+    except Exception as exc:
+        log.error(f"Error resolving campaign recipients: {exc}")
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=campaigns&saved=err", status_code=302
+        )
+        
+    if not recipients_list:
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=campaigns&saved=err_no_recipients", status_code=302
+        )
+        
+    variable_mappings = []
+    form_data = await request.form()
+    for i in range(1, vars_count + 1):
+        map_type = form_data.get(f"var_map_type_{i}") or "fixed"
+        map_value = form_data.get(f"var_map_value_{i}") or ""
+        variable_mappings.append({
+            "var_idx": i,
+            "type": map_type,
+            "value": map_value if map_type == "fixed" else "",
+        })
+        
+    try:
+        broadcast_id = await db.create_broadcast(
+            bot_id=bot_id,
+            name=campaign_name.strip(),
+            template_name=template_name,
+            language_code=language_code,
+            variable_mappings=variable_mappings,
+            recipients=recipients_list,
+        )
+    except Exception as exc:
+        log.error(f"Error creating broadcast record: {exc}")
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=campaigns&saved=err", status_code=302
+        )
+        
+    background_tasks.add_task(process_broadcast_queue, broadcast_id, bot_id)
+    
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=campaigns&saved=1", status_code=302
+    )
