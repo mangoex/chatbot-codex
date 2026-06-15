@@ -208,7 +208,15 @@ async def graph_get(path: str, access_token: str, params: dict[str, Any] | None 
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.get(graph_url(path), headers=headers, params=params or {})
-        response.raise_for_status()
+        if response.status_code >= 400:
+            try:
+                err_data = response.json()
+                msg = err_data.get("error", {}).get("message") or response.text
+                raise ValueError(f"Error de Meta API: {msg}")
+            except Exception as e:
+                if isinstance(e, ValueError):
+                    raise e
+                response.raise_for_status()
         return response.json()
 
 
@@ -216,7 +224,15 @@ async def graph_post(path: str, access_token: str, json_data: dict[str, Any]) ->
     headers = {"Authorization": f"Bearer {access_token}"}
     async with httpx.AsyncClient(timeout=20) as client:
         response = await client.post(graph_url(path), headers=headers, json=json_data)
-        response.raise_for_status()
+        if response.status_code >= 400:
+            try:
+                err_data = response.json()
+                msg = err_data.get("error", {}).get("message") or response.text
+                raise ValueError(f"Error de Meta API: {msg}")
+            except Exception as e:
+                if isinstance(e, ValueError):
+                    raise e
+                response.raise_for_status()
         return response.json()
 
 

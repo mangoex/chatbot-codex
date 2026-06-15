@@ -1043,6 +1043,10 @@ async def client_app(
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Configuración guardada correctamente.</div>'
     elif saved == "err":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} Ocurrió un error. Revisa los datos.</div>'
+    elif saved and saved.startswith("err_"):
+        import urllib.parse
+        decoded_msg = urllib.parse.unquote(saved[4:])
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} {html.escape(decoded_msg)}</div>'
     elif saved == "err_parse":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} Error al leer o procesar el archivo. Asegúrate de que no esté dañado y sea de un tipo compatible (PDF, DOCX, MD, XLSX, CSV).</div>'
     elif saved == "err_ext":
@@ -3188,7 +3192,9 @@ async def client_whatsapp_templates_submit(
         )
     except Exception as exc:
         log.error(f"Error al crear plantilla desde panel de cliente: {exc}")
-        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=templates&saved=err", status_code=302)
+        import urllib.parse
+        safe_msg = urllib.parse.quote(str(exc))
+        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=templates&saved=err_{safe_msg}", status_code=302)
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=templates&saved=1", status_code=302)
 
 

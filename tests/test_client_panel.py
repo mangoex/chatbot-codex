@@ -283,3 +283,35 @@ class TestClientPanelFeatures:
         assert response.headers["location"] == "/client/app?bot_id=1&tab=templates&saved=1"
         mock_create.assert_called_once_with(1, "new_template", "es_MX", "UTILITY", "Hola {{1}}", examples=["Juan"])
 
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.meta_provider.create_message_template")
+    async def test_client_whatsapp_templates_submit_error(self, mock_create, mock_get_bot):
+        from app import client
+        
+        class MockRequest:
+            def __init__(self):
+                self.session = {
+                    "user": "client@example.com",
+                    "role": "client_admin",
+                    "client_id": 44,
+                    "user_id": 5,
+                }
+        
+        mock_get_bot.return_value = {"id": 1, "client_id": 44, "status": "active"}
+        mock_create.side_effect = ValueError("Meta API: Invalid variable format")
+        
+        response = await client.client_whatsapp_templates_submit(
+            MockRequest(),
+            bot_id=1,
+            name="new_template",
+            language="es_MX",
+            category="UTILITY",
+            body_text="Hola {{1}}",
+            examples=["Juan"]
+        )
+        assert response.status_code == 302
+        # Should redirect with encoded message: err_Meta%20API%3A%20Invalid%20variable%20format
+        assert "saved=err_Meta%20API" in response.headers["location"]
+
+
