@@ -1445,7 +1445,7 @@ async def client_app(
           }}
 
           if (bodyText) {{
-            bodyText.addEventListener(\'input\', () => {{
+            function detectVariables() {{
               const text = bodyText.value;
               const regex = {vars_regex};
               let match;
@@ -1492,7 +1492,11 @@ async def client_app(
               }}
 
               updateTemplatePreview();
-            }});
+            }}
+
+            bodyText.addEventListener(\'input\', detectVariables);
+            // Run on load to pick up any prefilled values
+            detectVariables();
           }}
         }})();
       </script>
@@ -3186,6 +3190,8 @@ async def client_whatsapp_templates_submit(
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
+    if not body_text or not body_text.strip():
+        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=templates&saved=err_El%20cuerpo%20de%20la%20plantilla%20no%20puede%20estar%20vac%C3%ADo.", status_code=302)
     try:
         await meta_provider.create_message_template(
             bot_id, name, language, category, body_text, examples=examples
