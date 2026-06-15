@@ -26,7 +26,8 @@ ICONS = {
     "error": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="red"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
     "chat": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/></svg>',
     "leads": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
-    "settings": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>'
+    "settings": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>',
+    "templates": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>'
 }
 
 CLIENT_CSS = """
@@ -784,6 +785,7 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
         ("hours", "Horarios", ICONS["hours"]),
         ("escalate", "Reglas de Escalado", ICONS["escalate"]),
         ("knowledge", "Base de Conocimiento", ICONS["knowledge"]),
+        ("templates", "Plantillas", ICONS["templates"]),
         ("integrations", "Integraciones", ICONS["integrations"]),
     ]
     
@@ -1081,6 +1083,8 @@ async def client_app(
     chatwoot_config = {}
     chatwoot_secrets = {}
     chatwoot_enabled = False
+    cw_account = ""
+    cw_base_url = ""
     if chatwoot_integration:
         chatwoot_config = chatwoot_integration.get("config") or {}
         chatwoot_enabled = chatwoot_integration.get("enabled", False)
@@ -1110,6 +1114,16 @@ async def client_app(
     
     # Recent conversation threads
     recent_threads = await db.list_conversation_threads(limit=5, bot_id=bot_id)
+    
+    # Fetch Meta templates
+    templates = []
+    templates_error = ""
+    try:
+        payload = await meta_provider.list_message_templates(bot_id)
+        templates = payload.get("data") or []
+    except Exception as exc:
+        log.error(f"Error al listar plantillas para bot {bot_id}: {exc}")
+        templates_error = str(exc)
 
     # Fetch Conversations and CRM info for client tabs
     await db.qualify_leads_with_action_link(
@@ -1233,7 +1247,201 @@ async def client_app(
         dot_color = "#f59e0b"
         status_title = "Haz clic para REANUDAR las respuestas autónomas del bot"
 
-    # 2. RENDER SECTIONS
+    # 2. TEMPLATE PANEL HTML
+    templates_rows = ""
+    for t in templates:
+        t_status = (t.get("status") or "").upper()
+        badge_class = "success" if t_status == "APPROVED" else ("danger" if t_status == "REJECTED" else "warning")
+        status_label = "Aprobado" if t_status == "APPROVED" else ("Rechazado" if t_status == "REJECTED" else t.get("status") or "-")
+        templates_rows += f"""
+        <tr>
+          <td style="font-weight:600; font-size:13px;">{html.escape(t.get("name") or "-")}<br><span class="muted-text" style="font-size:11px;">{html.escape(t.get("language") or "-")}</span></td>
+          <td><span class="badge" style="font-size:11px;">{html.escape(t.get("category") or "-")}</span></td>
+          <td><span class="badge {badge_class}" style="font-size:11px;">{html.escape(status_label)}</span></td>
+        </tr>
+        """
+        
+    if not templates_rows:
+        templates_rows = '<tr><td colspan="3" style="text-align:center; padding:20px; color:var(--muted); font-size:13px;">Sin plantillas registradas en Meta para este número.</td></tr>'
+
+    templates_table = f"""
+    <div style="overflow-x:auto;">
+      <table style="width:100%;">
+        <thead>
+          <tr>
+            <th>Plantilla</th>
+            <th>Categoría</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {templates_rows}
+        </tbody>
+      </table>
+    </div>
+    """
+
+    templates_error_html = f'<div class="notice-banner error" style="margin-bottom: 15px;">{ICONS["error"]} {html.escape(templates_error)}</div>' if templates_error else ""
+
+    vars_regex = r"/\{\{\s*(\d+)\s*\}\}/g"
+    amp_regex = r"/&/g"
+    lt_regex = r"/</g"
+    gt_regex = r"/>/g"
+    bold_regex = r"/\*([^*]+)\*/g"
+    italic_regex = r"/_([^_]+)_/g"
+    strike_regex = r"/~([^~]+)~/g"
+    nl_regex = r"/\n/g"
+
+    templates_panel_html = f"""
+    <div id="panel-templates" class="tab-panel">
+      {templates_error_html}
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h2>Plantillas de Mensajes</h2>
+            <p>Lista de plantillas aprobadas por Meta para iniciar conversaciones fuera de la ventana de 24 horas.</p>
+          </div>
+          {templates_table}
+        </div>
+        
+        <div>
+          <div class="card">
+            <div class="card-header">
+              <h2>Crear Plantilla en Meta</h2>
+              <p>Envía una nueva plantilla para revisión y aprobación de Meta.</p>
+            </div>
+            <form method="post" action="/client/bots/{bot_id}/whatsapp/templates">
+              <label>Nombre de la Plantilla</label>
+              <input name="name" placeholder="bienvenida_cliente_v1" required style="margin-bottom:12px;" {"readonly" if session["role"] == "client_viewer" else ""}>
+              
+              <label>Idioma</label>
+              <input name="language" value="es_MX" required style="margin-bottom:12px;" {"readonly" if session["role"] == "client_viewer" else ""}>
+              
+              <label>Categoría</label>
+              <select name="category" style="margin-bottom:12px;" {"disabled" if session["role"] == "client_viewer" else ""}>
+                <option value="UTILITY">Utility (Servicio, Seguimiento)</option>
+                <option value="MARKETING">Marketing (Promociones, Ofertas)</option>
+              </select>
+              
+              <label>Cuerpo de la Plantilla</label>
+              <p class="muted-text" style="font-size:12px; margin-top:2px; margin-bottom:6px;">Usa <code>{{{{1}}}}</code>, <code>{{{{2}}}}</code> para agregar variables. Ejemplo: <i>Hola {{{{1}}}}, tu código es {{{{2}}}}</i>.</p>
+              <textarea name="body_text" style="min-height: 100px; margin-bottom:12px;" placeholder="Hola {{{{1}}}}, tu cita está agendada para el {{{{2}}}}." required {"readonly" if session["role"] == "client_viewer" else ""}></textarea>
+              
+              <div id="clientTemplateVarsContainer" style="display:none; margin-bottom:16px;">
+                <label style="font-weight:600; display:block; margin-top:12px;">Muestras de Variables</label>
+                <p class="muted-text" style="font-size:11px; margin-top:2px; margin-bottom:8px;">Meta requiere un ejemplo real para aprobar cada variable de tu plantilla.</p>
+                <div id="clientTemplateVarsInputs" style="display:flex; flex-direction:column; gap:8px;"></div>
+              </div>
+              
+              <div style="margin-top:14px;">
+                {"<button class='btn primary-btn' type='submit'>Enviar plantilla</button>" if session["role"] != "client_viewer" else "<span class='badge'>Solo lectura</span>"}
+              </div>
+            </form>
+          </div>
+          
+          <!-- Live Preview Card -->
+          <div class="card" style="margin-top:20px; border:1px solid #bae6fd; background:#f0f9ff; padding:15px; border-radius:8px;">
+            <div class="card-header" style="padding-bottom:8px; border-bottom:1px solid #bae6fd; margin-bottom:10px;">
+              <h3 style="margin:0; font-size:14px; font-weight:700; color:#0369a1; display:flex; align-items:center; gap:6px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px; height:16px;"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                Vista Previa de WhatsApp (Real-time)
+              </h3>
+            </div>
+            <div style="background:#e5ddd5; padding:12px; border-radius:6px; min-height:80px; position:relative; font-family:\'Inter\', sans-serif;">
+              <div style="background:#ffffff; padding:8px 10px; border-radius:6px; max-width:90%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 0.5px rgba(0,0,0,0.13); position:relative;">
+                <span id="clientTemplatePreviewBody" style="word-break: break-word;">Escribe el texto de tu plantilla...</span>
+                <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <script>
+        (function() {{
+          const bodyText = document.querySelector(\'#panel-templates textarea[name="body_text"]\');
+          const varsContainer = document.getElementById(\'clientTemplateVarsContainer\');
+          const varsInputs = document.getElementById(\'clientTemplateVarsInputs\');
+          const previewBody = document.getElementById(\'clientTemplatePreviewBody\');
+
+          function updateTemplatePreview() {{
+            let text = bodyText.value || "Escribe el texto de tu plantilla...";
+            
+            const inputs = varsInputs.querySelectorAll(\'input[name="examples"]\');
+            inputs.forEach(input => {{
+              const varNum = input.dataset.varNum;
+              const val = input.value.trim() || `{{{{${{varNum}}}}}}`;
+              text = text.replaceAll(\'{{\' + varNum + \'}}\', val);
+            }});
+
+            let formattedText = text
+              .replace({amp_regex}, "&amp;")
+              .replace({lt_regex}, "&lt;")
+              .replace({gt_regex}, "&gt;")
+              .replace({bold_regex}, \'<strong>$1</strong>\')
+              .replace({italic_regex}, \'<em>$1</em>\')
+              .replace({strike_regex}, \'<del>$1</del>\')
+              .replace({nl_regex}, \'<br>\');
+
+            previewBody.innerHTML = formattedText;
+          }}
+
+          if (bodyText) {{
+            bodyText.addEventListener(\'input\', () => {{
+              const text = bodyText.value;
+              const regex = {vars_regex};
+              let match;
+              const detectedVars = new Set();
+              while ((match = regex.exec(text)) !== null) {{
+                detectedVars.add(parseInt(match[1]));
+              }}
+
+              const sortedVars = Array.from(detectedVars).sort((a, b) => a - b);
+
+              const existingValues = {{}};
+              varsInputs.querySelectorAll(\'input[name="examples"]\').forEach(input => {{
+                existingValues[input.dataset.varNum] = input.value;
+              }});
+
+              varsInputs.innerHTML = "";
+              if (sortedVars.length > 0) {{
+                varsContainer.style.display = "block";
+                sortedVars.forEach(varNum => {{
+                  const row = document.createElement(\'div\');
+                  row.style.cssText = \'display:flex; flex-direction:column; gap:4px; margin-bottom:8px;\';
+                  
+                  const label = document.createElement(\'label\');
+                  label.style.cssText = \'margin:0; font-size:12px; font-weight:600; color:var(--muted);\';
+                  label.textContent = `Muestra para {{{{${{varNum}}}}}}`;
+
+                  const input = document.createElement(\'input\');
+                  input.type = \'text\';
+                  input.name = \'examples\';
+                  input.placeholder = `Ej. para {{{{${{varNum}}}}}}`;
+                  input.dataset.varNum = varNum;
+                  input.required = true;
+                  input.value = existingValues[varNum] || "";
+                  input.style.margin = \'0\';
+                  
+                  input.addEventListener(\'input\', updateTemplatePreview);
+                  
+                  row.appendChild(label);
+                  row.appendChild(input);
+                  varsInputs.appendChild(row);
+                }});
+              }} else {{
+                varsContainer.style.display = "none";
+              }}
+
+              updateTemplatePreview();
+            }});
+          }}
+        }})();
+      </script>
+    </div>
+    """
+
+    # 3. RENDER SECTIONS
     body_html = f"""
     <div class="header">
       <div>
@@ -1701,6 +1909,9 @@ async def client_app(
         </div>
       </div>
     </div>
+    
+    <!-- 6b. TAB PANEL: PLANTILLAS -->
+    {templates_panel_html}
     
     <!-- 7. TAB PANEL: INTEGRACIONES -->
     <div id="panel-integrations" class="tab-panel">
@@ -2397,3 +2608,25 @@ async def client_crm_update_status(
         disqualify_reason="Movido manualmente desde panel cliente" if status == "descalificado" else None,
     )
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=crm&status={status}", status_code=302)
+
+
+@router.post("/bots/{bot_id}/whatsapp/templates")
+async def client_whatsapp_templates_submit(
+    request: Request,
+    bot_id: int,
+    name: str = Form(...),
+    language: str = Form("es_MX"),
+    category: str = Form("UTILITY"),
+    body_text: str = Form(...),
+    examples: list[str] = Form(None),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    try:
+        await meta_provider.create_message_template(
+            bot_id, name, language, category, body_text, examples=examples
+        )
+    except Exception as exc:
+        log.error(f"Error al crear plantilla desde panel de cliente: {exc}")
+        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=templates&saved=err", status_code=302)
+    return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=templates&saved=1", status_code=302)

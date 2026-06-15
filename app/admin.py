@@ -2125,6 +2125,15 @@ async def bot_whatsapp_templates_page(request: Request, bot_id: int, saved: str 
     ) or '<tr><td colspan="3" class="empty">Sin plantillas cargadas desde Meta.</td></tr>'
     error_html = f'<div class="err">{html.escape(error)}</div>' if error else ""
     notice = '<div class="trend">Solicitud de plantilla enviada a Meta.</div>' if saved else ""
+    vars_regex = r"/\{\{\s*(\d+)\s*\}\}/g"
+    amp_regex = r"/&/g"
+    lt_regex = r"/</g"
+    gt_regex = r"/>/g"
+    bold_regex = r"/\*([^*]+)\*/g"
+    italic_regex = r"/_([^_]+)_/g"
+    strike_regex = r"/~([^~]+)~/g"
+    nl_regex = r"/\n/g"
+
     form = f"""
       <div class="panel">
         <h2>Crear plantilla simple</h2>
@@ -2132,10 +2141,118 @@ async def bot_whatsapp_templates_page(request: Request, bot_id: int, saved: str 
           <label>Nombre</label><input name="name" placeholder="asistto_demo_v1" required {'readonly' if not can_edit else ''}>
           <label>Idioma</label><input name="language" value="es_MX" required {'readonly' if not can_edit else ''}>
           <label>Categoria</label><select name="category" {'disabled' if not can_edit else ''}><option value="UTILITY">Utility</option><option value="MARKETING">Marketing</option></select>
-          <label>Texto del cuerpo</label><textarea name="body_text" class="short" required {'readonly' if not can_edit else ''}>Hola, soy {{1}} de Asistto by Humanio. Te contacto para continuar con la atencion de {{2}}.</textarea>
+          <label>Texto del cuerpo</label>
+          <p class="muted-text" style="font-size:12px; margin-top:2px; margin-bottom:6px;">Usa <code>{{{{1}}}}</code>, <code>{{{{2}}}}</code> para agregar variables. Ejemplo: <i>Hola {{{{1}}}}, tu código es {{{{2}}}}</i>.</p>
+          <textarea name="body_text" class="short" required {'readonly' if not can_edit else ''}>Hola, soy {{{{1}}}} de Asistto by Humanio. Te contacto para continuar con la atencion de {{{{2}}}}.</textarea>
+          
+          <div id="adminTemplateVarsContainer" style="display:none; margin-bottom:16px;">
+            <label style="font-weight:600; display:block; margin-top:12px;">Muestras de Variables</label>
+            <p class="muted-text" style="font-size:11px; margin-top:2px; margin-bottom:8px;">Meta requiere un ejemplo real para aprobar cada variable de tu plantilla.</p>
+            <div id="adminTemplateVarsInputs" style="display:flex; flex-direction:column; gap:8px;"></div>
+          </div>
+
           <div class="actions" style="margin-top:14px">{'<button class="btn" type="submit">Crear plantilla</button>' if can_edit else '<span class="badge">Solo lectura</span>'}</div>
         </form>
+
+        <!-- Live Preview Card -->
+        <div class="card" style="margin-top:20px; border:1px solid #bae6fd; background:#f0f9ff; padding: 15px; border-radius: 8px;">
+          <h3 style="margin:0 0 10px 0; font-size:14px; font-weight:700; color:#0369a1; display:flex; align-items:center; gap:6px;">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px; height:16px;"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            Vista Previa de WhatsApp (Real-time)
+          </h3>
+          <div style="background:#e5ddd5; padding:12px; border-radius:6px; min-height:80px; position:relative; font-family:\'Inter\', sans-serif;">
+            <div style="background:#ffffff; padding:8px 10px; border-radius:6px; max-width:90%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 0.5px rgba(0,0,0,0.13); position:relative;">
+              <span id="adminTemplatePreviewBody" style="word-break: break-word;">Escribe el texto de tu plantilla...</span>
+              <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+            </div>
+          </div>
+        </div>
       </div>
+
+      <script>
+        (function() {{
+          const bodyText = document.querySelector(\'textarea[name="body_text"]\');
+          const varsContainer = document.getElementById(\'adminTemplateVarsContainer\');
+          const varsInputs = document.getElementById(\'adminTemplateVarsInputs\');
+          const previewBody = document.getElementById(\'adminTemplatePreviewBody\');
+
+          function updateTemplatePreview() {{
+            let text = bodyText.value || "Escribe el texto de tu plantilla...";
+            
+            const inputs = varsInputs.querySelectorAll(\'input[name="examples"]\');
+            inputs.forEach(input => {{
+              const varNum = input.dataset.varNum;
+              const val = input.value.trim() || `{{{{${{varNum}}}}}}`;
+              text = text.replaceAll(\'{{\' + varNum + \'}}\', val);
+            }});
+
+            let formattedText = text
+              .replace({amp_regex}, "&amp;")
+              .replace({lt_regex}, "&lt;")
+              .replace({gt_regex}, "&gt;")
+              .replace({bold_regex}, \'<strong>$1</strong>\')
+              .replace({italic_regex}, \'<em>$1</em>\')
+              .replace({strike_regex}, \'<del>$1</del>\')
+              .replace({nl_regex}, \'<br>\');
+
+            previewBody.innerHTML = formattedText;
+          }}
+
+          if (bodyText) {{
+            bodyText.addEventListener(\'input\', () => {{
+              const text = bodyText.value;
+              const regex = {vars_regex};
+              let match;
+              const detectedVars = new Set();
+              while ((match = regex.exec(text)) !== null) {{
+                detectedVars.add(parseInt(match[1]));
+              }}
+
+              const sortedVars = Array.from(detectedVars).sort((a, b) => a - b);
+
+              const existingValues = {{}};
+              varsInputs.querySelectorAll(\'input[name="examples"]\').forEach(input => {{
+                existingValues[input.dataset.varNum] = input.value;
+              }});
+
+              varsInputs.innerHTML = "";
+              if (sortedVars.length > 0) {{
+                varsContainer.style.display = "block";
+                sortedVars.forEach(varNum => {{
+                  const row = document.createElement(\'div\');
+                  row.style.cssText = \'display:flex; flex-direction:column; gap:4px; margin-bottom:8px;\';
+                  
+                  const label = document.createElement(\'label\');
+                  label.style.cssText = \'margin:0; font-size:12px; font-weight:600; color:var(--muted);\';
+                  label.textContent = `Muestra para {{{{${{varNum}}}}}}`;
+
+                  const input = document.createElement(\'input\');
+                  input.type = \'text\';
+                  input.name = \'examples\';
+                  input.placeholder = `Ej. para {{{{${{varNum}}}}}}`;
+                  input.dataset.varNum = varNum;
+                  input.required = true;
+                  input.value = existingValues[varNum] || "";
+                  input.style.margin = \'0\';
+                  
+                  input.addEventListener(\'input\', updateTemplatePreview);
+                  
+                  row.appendChild(label);
+                  row.appendChild(input);
+                  varsInputs.appendChild(row);
+                }});
+              }} else {{
+                varsContainer.style.display = "none";
+              }}
+
+              updateTemplatePreview();
+            }});
+
+            // Trigger initial input event to detect initial variables
+            bodyText.dispatchEvent(new Event(\'input\'));
+          }}
+        }})();
+      </script>
     """
     body = f"""
     <div class="topbar"><div><a class="sub" href="/admin/bots/{bot_id}/whatsapp">Volver</a><h1>Plantillas Meta</h1><div class="sub">{html.escape(bot["name"])} - evidencia para whatsapp_business_management.</div>{notice}</div></div>
@@ -2156,11 +2273,14 @@ async def bot_whatsapp_templates_submit(
     language: str = Form("es_MX"),
     category: str = Form("UTILITY"),
     body_text: str = Form(...),
+    examples: list[str] = Form(None),
 ):
     session = _require_login(request)
     await _require_bot_editor(session, bot_id)
     try:
-        await meta_provider.create_message_template(bot_id, name, language, category, body_text)
+        await meta_provider.create_message_template(
+            bot_id, name, language, category, body_text, examples=examples
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RedirectResponse(f"/admin/bots/{bot_id}/whatsapp/templates?saved=1", status_code=302)

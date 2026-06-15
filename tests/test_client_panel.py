@@ -194,3 +194,92 @@ class TestClientPanelFeatures:
         assert response.headers["location"] == "/client/app?bot_id=1"
         mock_update.assert_called_once_with(1, "active")
 
+    @pytest.mark.asyncio
+    @patch("app.db.list_bots")
+    @patch("app.db.get_bot_whatsapp_number")
+    @patch("app.db.get_active_bot_prompt")
+    @patch("app.db.get_bot_skill")
+    @patch("app.db.list_bot_knowledge")
+    @patch("app.db.get_active_bot_integration")
+    @patch("app.db.admin_metrics")
+    @patch("app.db.list_conversation_threads")
+    @patch("app.db.qualify_leads_with_action_link")
+    @patch("app.db.crm_counts")
+    @patch("app.db.list_leads")
+    @patch("app.meta_provider.list_message_templates")
+    async def test_client_app_view_with_templates(
+        self,
+        mock_list_templates,
+        mock_list_leads,
+        mock_crm_counts,
+        mock_qualify,
+        mock_threads,
+        mock_metrics,
+        mock_integration,
+        mock_knowledge,
+        mock_skill,
+        mock_prompt,
+        mock_wa_num,
+        mock_list_bots
+    ):
+        from app import client
+        
+        class Request:
+            session = {
+                "user": "client@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+                "user_id": 5,
+            }
+            
+        mock_list_bots.return_value = [{"id": 1, "name": "Bot 1", "status": "active"}]
+        mock_wa_num.return_value = {"phone_number_id": "123", "display_phone_number": "+521"}
+        mock_prompt.return_value = {"content": "Prompt text"}
+        mock_skill.return_value = {"enabled": True, "config": {}}
+        mock_knowledge.return_value = []
+        mock_integration.return_value = None
+        mock_metrics.return_value = {}
+        mock_threads.return_value = []
+        mock_qualify.return_value = 0
+        mock_crm_counts.return_value = {}
+        mock_list_leads.return_value = []
+        mock_list_templates.return_value = {"data": [{"name": "template_test", "language": "es_MX", "category": "UTILITY", "status": "APPROVED"}]}
+        
+        response = await client.client_app(Request(), bot_id=1)
+        assert response is not None
+        html_body = response.body.decode("utf-8")
+        assert "Bot 1" in html_body
+        assert "template_test" in html_body
+        assert "Crear Plantilla en Meta" in html_body
+
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.meta_provider.create_message_template")
+    async def test_client_whatsapp_templates_submit(self, mock_create, mock_get_bot):
+        from app import client
+        
+        class MockRequest:
+            def __init__(self):
+                self.session = {
+                    "user": "client@example.com",
+                    "role": "client_admin",
+                    "client_id": 44,
+                    "user_id": 5,
+                }
+        
+        mock_get_bot.return_value = {"id": 1, "client_id": 44, "status": "active"}
+        mock_create.return_value = {"id": "123"}
+        
+        response = await client.client_whatsapp_templates_submit(
+            MockRequest(),
+            bot_id=1,
+            name="new_template",
+            language="es_MX",
+            category="UTILITY",
+            body_text="Hola {{1}}",
+            examples=["Juan"]
+        )
+        assert response.status_code == 302
+        assert response.headers["location"] == "/client/app?bot_id=1&tab=templates&saved=1"
+        mock_create.assert_called_once_with(1, "new_template", "es_MX", "UTILITY", "Hola {{1}}", examples=["Juan"])
+

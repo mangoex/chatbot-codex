@@ -143,6 +143,49 @@ class MetaProviderTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_create_message_template_with_and_without_examples(self):
+        async def run():
+            called_payloads = []
+            async def fake_graph_post(path, token, payload):
+                self.assertEqual(path, "waba-7/message_templates")
+                self.assertEqual(token, "token-7")
+                called_payloads.append(payload)
+                return {"id": "template-id-123"}
+
+            with patch(
+                "app.meta_provider.get_bot_whatsapp_runtime",
+                AsyncMock(
+                    return_value={
+                        "bot": {"id": 7, "waba_id": "waba-7"},
+                        "integration": {"id": 3, "config": {}},
+                        "access_token": "token-7",
+                    }
+                ),
+            ), patch("app.meta_provider.graph_post", fake_graph_post):
+                # 1. Without examples
+                await meta_provider.create_message_template(
+                    7, "my_template", "es_MX", "UTILITY", "Hola amigo"
+                )
+                
+                # 2. With examples
+                await meta_provider.create_message_template(
+                    7, "my_template_v2", "es_MX", "MARKETING", "Hola {{1}}, tu codigo es {{2}}",
+                    examples=["Carlos", "9876"]
+                )
+
+            # Assertions for 1st call (no examples)
+            self.assertEqual(called_payloads[0]["name"], "my_template")
+            self.assertEqual(called_payloads[0]["components"][0]["text"], "Hola amigo")
+            self.assertNotIn("example", called_payloads[0]["components"][0])
+
+            # Assertions for 2nd call (with examples)
+            self.assertEqual(called_payloads[1]["name"], "my_template_v2")
+            self.assertEqual(called_payloads[1]["components"][0]["text"], "Hola {{1}}, tu codigo es {{2}}")
+            self.assertEqual(called_payloads[1]["components"][0]["example"]["body_text"][0], ["Carlos", "9876"])
+
+        asyncio.run(run())
+
+
 
 if __name__ == "__main__":
     unittest.main()

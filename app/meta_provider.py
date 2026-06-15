@@ -394,6 +394,7 @@ async def create_message_template(
     language: str,
     category: str,
     body_text: str,
+    examples: list[str] = None,
 ) -> dict[str, Any]:
     runtime = await get_bot_whatsapp_runtime(bot_id)
     bot = runtime["bot"]
@@ -405,11 +406,23 @@ async def create_message_template(
         raise ValueError("Falta WABA ID para crear plantillas.")
     if not token:
         raise ValueError("Falta access_token cifrado para WhatsApp Cloud.")
+    
+    component = {
+        "type": "BODY",
+        "text": _clean(body_text),
+    }
+    if examples:
+        clean_examples = [_clean(ex) for ex in examples if _clean(ex)]
+        if clean_examples:
+            component["example"] = {
+                "body_text": [clean_examples]
+            }
+
     payload = {
         "name": _clean(name),
         "language": _clean(language) or "es_MX",
         "category": (_clean(category) or "UTILITY").upper(),
-        "components": [{"type": "BODY", "text": _clean(body_text)}],
+        "components": [component],
     }
     return await graph_post(f"{waba_id}/message_templates", token, payload)
 
