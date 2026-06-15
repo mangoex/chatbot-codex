@@ -880,7 +880,8 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
       // Update sidebar links
       document.querySelectorAll('.sidebar-link').forEach(link => {{
         link.classList.remove('active');
-        if (link.getAttribute('onclick').includes(tabId)) {{
+        const onclickAttr = link.getAttribute('onclick');
+        if (onclickAttr && onclickAttr.includes(tabId)) {{
           link.classList.add('active');
         }}
       }});
