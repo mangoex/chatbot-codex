@@ -214,9 +214,22 @@ async def graph_get(path: str, access_token: str, params: dict[str, Any] | None 
                 err_data = response.json()
                 err_obj = err_data.get("error", {})
                 msg = err_obj.get("message") or response.text
+                
+                user_title = err_obj.get("error_user_title")
+                user_msg = err_obj.get("error_user_msg")
                 details = err_obj.get("error_data", {}).get("details")
+                
+                parts = []
+                if user_title:
+                    parts.append(user_title)
+                if user_msg:
+                    parts.append(user_msg)
                 if details:
-                    msg = f"{msg} ({details})"
+                    parts.append(details)
+                    
+                if parts:
+                    msg = f"{msg}: " + " - ".join(parts)
+                    
                 log.error(f"Meta Graph GET error: {err_data}")
                 raise ValueError(f"Error de Meta API: {msg}")
             except Exception as e:
@@ -236,9 +249,22 @@ async def graph_post(path: str, access_token: str, json_data: dict[str, Any]) ->
                 err_data = response.json()
                 err_obj = err_data.get("error", {})
                 msg = err_obj.get("message") or response.text
+                
+                user_title = err_obj.get("error_user_title")
+                user_msg = err_obj.get("error_user_msg")
                 details = err_obj.get("error_data", {}).get("details")
+                
+                parts = []
+                if user_title:
+                    parts.append(user_title)
+                if user_msg:
+                    parts.append(user_msg)
                 if details:
-                    msg = f"{msg} ({details})"
+                    parts.append(details)
+                    
+                if parts:
+                    msg = f"{msg}: " + " - ".join(parts)
+                    
                 log.error(f"Meta Graph POST error: {err_data}")
                 raise ValueError(f"Error de Meta API: {msg}")
             except Exception as e:
@@ -434,6 +460,18 @@ async def create_message_template(
         raise ValueError("Falta WABA ID para crear plantillas.")
     if not token:
         raise ValueError("Falta access_token cifrado para WhatsApp Cloud.")
+        
+    import re
+    import unicodedata
+    
+    # Normalize name to lowercase and replace spaces/hyphens with underscores, keeping only a-z0-9_
+    n_name = "".join(
+        c for c in unicodedata.normalize("NFD", name.strip())
+        if unicodedata.category(c) != "Mn"
+    )
+    clean_name = re.sub(r"[^a-z0-9_]", "", n_name.replace(" ", "_").replace("-", "_").lower())
+    if not clean_name:
+        raise ValueError("El nombre de la plantilla es inválido. Debe contener al menos una letra o número (a-z, 0-9).")
     
     component = {
         "type": "BODY",
@@ -447,7 +485,7 @@ async def create_message_template(
             }
 
     payload = {
-        "name": _clean(name),
+        "name": clean_name,
         "language": _clean(language) or "es_MX",
         "category": (_clean(category) or "UTILITY").upper(),
         "components": [component],

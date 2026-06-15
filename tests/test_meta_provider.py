@@ -173,6 +173,11 @@ class MetaProviderTests(unittest.TestCase):
                     examples=["Carlos", "9876"]
                 )
 
+                # 3. With name normalization
+                await meta_provider.create_message_template(
+                    7, "Mi Templáte V3-Tést", "es_MX", "UTILITY", "Hola"
+                )
+
             # Assertions for 1st call (no examples)
             self.assertEqual(called_payloads[0]["name"], "my_template")
             self.assertEqual(called_payloads[0]["components"][0]["text"], "Hola amigo")
@@ -182,6 +187,9 @@ class MetaProviderTests(unittest.TestCase):
             self.assertEqual(called_payloads[1]["name"], "my_template_v2")
             self.assertEqual(called_payloads[1]["components"][0]["text"], "Hola {{1}}, tu codigo es {{2}}")
             self.assertEqual(called_payloads[1]["components"][0]["example"]["body_text"][0], ["Carlos", "9876"])
+
+            # Assertions for 3rd call (name normalization)
+            self.assertEqual(called_payloads[2]["name"], "mi_template_v3_test")
 
         asyncio.run(run())
 
