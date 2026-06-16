@@ -438,7 +438,7 @@ async def list_message_templates(bot_id: int) -> dict[str, Any]:
     return await graph_get(
         f"{waba_id}/message_templates",
         token,
-        params={"fields": "name,status,category,language"},
+        params={"fields": "name,status,category,language,components"},
     )
 
 

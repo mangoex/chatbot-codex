@@ -713,6 +713,77 @@ CLIENT_CSS = """
   .b-en_progreso, .b-pendiente { background: #fef3c7; color: #b45309; }
   .b-calificado, .b-resuelto { background: #d1fae5; color: #065f46; }
   .b-descalificado, .b-urgente { background: #ffe4e6; color: #9f1239; }
+
+  /* Modal overlay and content styles */
+  .modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(15, 23, 42, 0.6);
+    backdrop-filter: blur(4px);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    opacity: 0;
+    transition: opacity 0.2s ease-in-out;
+  }
+  .modal-overlay.active {
+    display: flex;
+    opacity: 1;
+  }
+  .modal-content {
+    background: white;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 550px;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+    transform: translateY(20px);
+    transition: transform 0.2s ease-in-out;
+  }
+  .modal-overlay.active .modal-content {
+    transform: translateY(0);
+  }
+  .modal-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .modal-header h3 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--ink);
+  }
+  .modal-body {
+    padding: 20px;
+  }
+  .modal-footer {
+    padding: 12px 20px;
+    background: #f8fafc;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .modal-close-btn {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--muted);
+    line-height: 1;
+    padding: 0;
+  }
+  .modal-close-btn:hover {
+    color: var(--ink);
+  }
 </style>
 """
 
@@ -1295,27 +1366,33 @@ async def client_app(
 
     bot_status = selected_bot.get("status") or "active"
     if bot_status == "active":
-        status_class = "success"
-        status_label = "Activo"
-        dot_color = "#10b981"
-        status_title = "Haz clic para PAUSAR el bot (modo humano únicamente)"
+        bot_status_class = "success"
+        bot_status_label = "Activo"
+        bot_dot_color = "#10b981"
+        bot_status_title = "Haz clic para PAUSAR el bot (modo humano únicamente)"
     else:
-        status_class = "warning"
-        status_label = "Pausado"
-        dot_color = "#f59e0b"
-        status_title = "Haz clic para REANUDAR las respuestas autónomas del bot"
+        bot_status_class = "warning"
+        bot_status_label = "Pausado"
+        bot_dot_color = "#f59e0b"
+        bot_status_title = "Haz clic para REANUDAR las respuestas autónomas del bot"
 
+    import base64
     # 2. TEMPLATE PANEL HTML
     templates_rows = ""
     for t in templates:
         t_status = (t.get("status") or "").upper()
         badge_class = "success" if t_status == "APPROVED" else ("danger" if t_status == "REJECTED" else "warning")
-        status_label = "Aprobado" if t_status == "APPROVED" else ("Rechazado" if t_status == "REJECTED" else t.get("status") or "-")
+        tpl_status_label = "Aprobado" if t_status == "APPROVED" else ("Rechazado" if t_status == "REJECTED" else t.get("status") or "-")
+        t_json = json.dumps(t)
+        t_b64 = base64.b64encode(t_json.encode("utf-8")).decode("utf-8")
         templates_rows += f"""
         <tr>
-          <td style="font-weight:600; font-size:13px;">{html.escape(t.get("name") or "-")}<br><span class="muted-text" style="font-size:11px;">{html.escape(t.get("language") or "-")}</span></td>
+          <td style="font-weight:600; font-size:13px;">
+            <a href="#" class="template-link" onclick="event.preventDefault(); showTemplateDetailsB64('{t_b64}')" style="text-decoration:none; color:var(--primary); font-weight:600;">{html.escape(t.get("name") or "-")}</a>
+            <br><span class="muted-text" style="font-size:11px;">{html.escape(t.get("language") or "-")}</span>
+          </td>
           <td><span class="badge" style="font-size:11px;">{html.escape(t.get("category") or "-")}</span></td>
-          <td><span class="badge {badge_class}" style="font-size:11px;">{html.escape(status_label)}</span></td>
+          <td><span class="badge {badge_class}" style="font-size:11px;">{html.escape(tpl_status_label)}</span></td>
         </tr>
         """
         
@@ -1773,7 +1850,7 @@ async def client_app(
     for b in broadcasts:
         b_status = b["status"].upper()
         badge_class = "success" if b_status == "COMPLETED" else ("warning" if b_status == "RUNNING" else ("danger" if b_status == "FAILED" else "info"))
-        status_label = "Completada" if b_status == "COMPLETED" else ("Enviando..." if b_status == "RUNNING" else ("Fallida" if b_status == "FAILED" else b["status"]))
+        b_status_label = "Completada" if b_status == "COMPLETED" else ("Enviando..." if b_status == "RUNNING" else ("Fallida" if b_status == "FAILED" else b["status"]))
         
         total = b["total_recipients"] or 0
         sent = b["sent_count"] or 0
@@ -1790,7 +1867,7 @@ async def client_app(
             </div>
             <small style="color:var(--green); font-weight:600;">{sent} exitosos</small> | <small style="color:var(--red); font-weight:600;">{failed} fallidos</small>
           </td>
-          <td><span class="badge {badge_class}" style="font-size:11px;">{html.escape(status_label)}</span></td>
+          <td><span class="badge {badge_class}" style="font-size:11px;">{html.escape(b_status_label)}</span></td>
           <td style="font-size:11.5px; color:var(--muted);">{_fmt_dt(b.get("created_at"))}</td>
         </tr>
         """
@@ -2000,6 +2077,120 @@ async def client_app(
           }}
         }}
       </script>
+
+      <!-- Modal para ver detalle de la plantilla -->
+      <div id="templateDetailsModal" class="modal-overlay" onclick="closeTemplateDetailsModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()">
+          <div class="modal-header">
+            <h3 id="modalTemplateName">Detalles de la Plantilla</h3>
+            <button class="modal-close-btn" onclick="closeTemplateDetailsModal(event)">&times;</button>
+          </div>
+          <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom: 20px;">
+              <div>
+                <span class="muted-text" style="font-size:11px; display:block; text-transform:uppercase; font-weight:600; color:var(--muted);">Idioma</span>
+                <strong id="modalTemplateLang" style="font-size:14px; color:var(--ink);">-</strong>
+              </div>
+              <div>
+                <span class="muted-text" style="font-size:11px; display:block; text-transform:uppercase; font-weight:600; color:var(--muted);">Categoría</span>
+                <span id="modalTemplateCat" class="badge" style="font-size:11px; margin-top:2px;">-</span>
+              </div>
+              <div>
+                <span class="muted-text" style="font-size:11px; display:block; text-transform:uppercase; font-weight:600; color:var(--muted);">Estado en Meta</span>
+                <span id="modalTemplateStatus" class="badge" style="font-size:11px; margin-top:2px;">-</span>
+              </div>
+            </div>
+            
+            <div style="border: 1px solid var(--line); border-radius: 8px; padding: 16px; background:#f8fafc; margin-bottom: 20px;">
+              <span class="muted-text" style="font-size:11px; display:block; text-transform:uppercase; font-weight:600; margin-bottom:8px; color:var(--muted);">Estructura de la Plantilla</span>
+              <div id="modalTemplatePreview" style="font-size:13px; line-height:1.5; color:var(--ink);">
+                Estructura de la plantilla...
+              </div>
+            </div>
+            
+            <div style="background: #fffbeb; border: 1px solid #fef3c7; border-radius: 8px; padding: 12px 16px; display: flex; gap: 10px; align-items: flex-start;">
+              <svg viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 20px; height: 20px; flex-shrink:0; margin-top: 2px;">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="16" x2="12" y2="12"></line>
+                <line x1="12" y1="8" x2="12.01" y2="8"></line>
+              </svg>
+              <div style="font-size: 12px; color: #92400e; line-height: 1.4;">
+                <strong>Nota sobre la edición:</strong> De acuerdo con las políticas de Meta, las plantillas aprobadas o en revisión no se pueden modificar directamente para no interrumpir campañas activas. Si necesitas hacer cambios, por favor crea una nueva plantilla en el panel lateral (ej. agregando un sufijo como <code>_v2</code> al nombre).
+              </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn secondary" onclick="closeTemplateDetailsModal(event)" style="padding: 6px 14px; font-size:13px;">Cerrar</button>
+          </div>
+        </div>
+      </div>
+
+      <script>
+        function showTemplateDetailsB64(b64Str) {{
+          try {{
+            const t = JSON.parse(atob(b64Str));
+            document.getElementById('modalTemplateName').innerText = t.name || 'Detalles';
+            document.getElementById('modalTemplateLang').innerText = t.language || '-';
+            
+            const catBadge = document.getElementById('modalTemplateCat');
+            catBadge.innerText = t.category || '-';
+            
+            const statusBadge = document.getElementById('modalTemplateStatus');
+            const status = (t.status || '').toUpperCase();
+            statusBadge.innerText = status === 'APPROVED' ? 'Aprobado' : (status === 'REJECTED' ? 'Rechazado' : t.status || '-');
+            
+            statusBadge.className = 'badge';
+            if (status === 'APPROVED') statusBadge.classList.add('success');
+            else if (status === 'REJECTED') statusBadge.classList.add('danger');
+            else statusBadge.classList.add('warning');
+            
+            const previewEl = document.getElementById('modalTemplatePreview');
+            previewEl.innerHTML = '';
+            
+            if (t.components && t.components.length > 0) {{
+              t.components.forEach(c => {{
+                const type = (c.type || '').toUpperCase();
+                const div = document.createElement('div');
+                div.style.marginBottom = '12px';
+                
+                let label = '';
+                let content = c.text || '';
+                
+                if (type === 'HEADER') {{
+                  label = 'Encabezado';
+                }} else if (type === 'BODY') {{
+                  label = 'Cuerpo';
+                }} else if (type === 'FOOTER') {{
+                  label = 'Pie de página';
+                }} else if (type === 'BUTTONS') {{
+                  label = 'Botones';
+                  content = JSON.stringify(c.buttons, null, 2);
+                }}
+                
+                if (label) {{
+                  div.innerHTML = `<span style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; display:block; margin-bottom:2px;">${{label}}</span>` + 
+                                  `<div style="background:white; border:1px solid var(--line); border-radius:6px; padding:10px; white-space:pre-wrap; font-family:monospace; font-size:12px;">${{content}}</div>`;
+                  previewEl.appendChild(div);
+                }}
+              }});
+            }} else {{
+              previewEl.innerText = 'Sin componentes de texto definidos.';
+            }}
+            
+            const modal = document.getElementById('templateDetailsModal');
+            modal.classList.add('active');
+          }} catch (e) {{
+            console.error(e);
+            alert('Error al mostrar los detalles de la plantilla.');
+          }}
+        }}
+        
+        function closeTemplateDetailsModal(event) {{
+          if (event) event.preventDefault();
+          const modal = document.getElementById('templateDetailsModal');
+          modal.classList.remove('active');
+        }}
+      </script>
     </div>
     """
 
@@ -2013,9 +2204,9 @@ async def client_app(
       <div class="header-actions">
         <span class="badge" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;">ID del Bot: {bot_id}</span>
         <form action="/client/bots/{bot_id}/toggle-status" method="post" class="inline" style="margin:0; padding:0;">
-          <button type="submit" class="badge {status_class} badge-toggle" style="border: none; cursor: pointer; display: inline-flex; gap: 6px; align-items: center;" title="{status_title}">
-            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:{dot_color};"></span>
-            Bot: {status_label}
+          <button type="submit" class="badge {bot_status_class} badge-toggle" style="border: none; cursor: pointer; display: inline-flex; gap: 6px; align-items: center;" title="{bot_status_title}">
+            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:{bot_dot_color};"></span>
+            Bot: {bot_status_label}
           </button>
         </form>
         <span class="badge">WhatsApp: {html.escape(wa_info.get("display_phone_number") or "sin conectar")}</span>
