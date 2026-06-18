@@ -112,6 +112,7 @@ class TestClientPanelFeatures:
     @patch("app.db.qualify_leads_with_action_link")
     @patch("app.db.crm_counts")
     @patch("app.db.list_leads")
+    @patch("app.db.get_bot_integration_by_type", new=AsyncMock(return_value=None))
     async def test_client_app_view(
         self,
         mock_list_leads,
@@ -207,6 +208,7 @@ class TestClientPanelFeatures:
     @patch("app.db.crm_counts")
     @patch("app.db.list_leads")
     @patch("app.meta_provider.list_message_templates")
+    @patch("app.db.get_bot_integration_by_type", new=AsyncMock(return_value=None))
     async def test_client_app_view_with_templates(
         self,
         mock_list_templates,

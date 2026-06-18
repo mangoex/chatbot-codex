@@ -3,12 +3,25 @@ import sys
 import types
 
 
+class _DummyRoute(dict):
+    @property
+    def path(self):
+        return self["path"]
+    @property
+    def methods(self):
+        return self["methods"]
+
 class _DummyRouter:
     def __init__(self, *args, **kwargs):
         self.routes = []
 
+    def __getattr__(self, name):
+        if name in ("on_startup", "on_shutdown"):
+            return []
+        return None
+
     def api_route(self, path, methods=None, *args, **kwargs):
-        self.routes.append({"path": path, "methods": tuple(methods or ())})
+        self.routes.append(_DummyRoute(path=path, methods=tuple(methods or ())))
         return lambda fn: fn
 
 

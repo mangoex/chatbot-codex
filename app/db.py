@@ -1524,6 +1524,36 @@ async def get_active_bot_integration(
     return item
 
 
+async def get_bot_integration_by_type(
+    bot_id: int,
+    integration_type: str,
+) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                bot_integrations.*,
+                (
+                    SELECT COUNT(*)
+                    FROM integration_secrets
+                    WHERE integration_secrets.integration_id = bot_integrations.id
+                ) AS secret_count
+            FROM bot_integrations
+            WHERE bot_id = $1
+              AND integration_type = $2
+            ORDER BY updated_at DESC, created_at DESC
+            LIMIT 1
+            """,
+            bot_id,
+            integration_type,
+        )
+    if not row:
+        return None
+    item = dict(row)
+    item["config"] = _normalize_config(item.get("config"))
+    return item
+
+
 async def create_bot_integration(
     bot_id: int,
     integration_type: str,

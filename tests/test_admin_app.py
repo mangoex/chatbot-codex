@@ -6,7 +6,12 @@ import asyncio
 
 class _DummyRouter:
     def __init__(self, *args, **kwargs):
-        pass
+        self.routes = []
+
+    def __getattr__(self, name):
+        if name in ("on_startup", "on_shutdown"):
+            return []
+        return None
 
     def get(self, *args, **kwargs):
         return lambda fn: fn

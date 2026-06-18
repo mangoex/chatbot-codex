@@ -1197,6 +1197,23 @@ async def client_app(
         if "api_token" in enc_secrets:
             chatwoot_secrets["api_token"] = secure_store.decrypt_secret(enc_secrets["api_token"])
         
+    # Routing Rules integration
+    routing_integration = await db.get_bot_integration_by_type(bot_id, "routing_rules")
+    routing_config = {}
+    routing_enabled = False
+    routing_secrets = {}
+    if routing_integration:
+        routing_config = routing_integration.get("config") or {}
+        routing_enabled = routing_integration.get("enabled", False)
+        enc_secrets = await db.get_integration_secret_values(int(routing_integration["id"]))
+        if "webhook_auth_token" in enc_secrets:
+            routing_secrets["webhook_auth_token"] = secure_store.decrypt_secret(enc_secrets["webhook_auth_token"])
+            
+    routing_webhook_url = routing_config.get("webhook_url", "")
+    routing_phone_numbers = ",".join(routing_config.get("phone_numbers", []))
+    routing_save_history = routing_config.get("save_history", False)
+    routing_token_saved = bool(routing_secrets.get("webhook_auth_token"))
+        
     env_rows_html = ""
     for sec in api_secrets:
         key_safe = html.escape(sec["secret_name"])
@@ -2815,6 +2832,52 @@ async def client_app(
             }}
           </script>
         </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Enrutamiento Externo y Reglas de Omisión</h2>
+            <p>Define números de teléfono de tu equipo (vendedores/agentes) para que el Bot de IA los ignore y desvíe sus mensajes automáticamente a tu Webhook.</p>
+          </div>
+          
+          <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <span class="bold-text">Estado de Enrutamiento</span>
+            <span class="badge {"success" if routing_enabled else "warning"}">
+              {"Activo" if routing_enabled else "Inactivo"}
+            </span>
+          </div>
+          
+          <form method="post" action="/client/bots/{bot_id}/integrations/routing">
+            <div class="checkbox-group">
+              <input type="checkbox" name="enabled" id="routingEnabledToggle" {"checked" if routing_enabled else ""}>
+              <label for="routingEnabledToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar enrutamiento externo</label>
+            </div>
+            
+            <label>URL del Webhook de Destino</label>
+            <input name="webhook_url" placeholder="https://mi-sistema.com/webhook-whatsapp" value="{html.escape(routing_webhook_url or "")}">
+            
+            <label>Números de Teléfono a Excluir (Separados por comas)</label>
+            <textarea name="phone_numbers" placeholder="Ej. 5216861234567, 5215559876543" style="min-height:80px; font-family:monospace; font-size:12.5px;">{html.escape(routing_phone_numbers or "")}</textarea>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Los mensajes entrantes de estos números serán desviados al Webhook y omitidos por la IA.</span>
+            
+            <div class="checkbox-group" style="margin-bottom:16px;">
+              <input type="checkbox" name="save_history" id="routingSaveHistoryToggle" {"checked" if routing_save_history else ""}>
+              <label for="routingSaveHistoryToggle" style="margin:0; font-weight:500; cursor:pointer; font-size:13px;">Registrar mensajes desviados en el historial del chat (lectura)</label>
+            </div>
+            
+            <label>Token de Autenticación del Webhook (Opcional)</label>
+            <div class="password-wrapper">
+              <input type="password" name="webhook_auth_token" placeholder="********" autocomplete="new-password" value="{"" if not routing_token_saved else "********"}">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Se enviará en la cabecera <code>X-Asistto-Secret-Token</code> para validar la llamada.</span>
+            
+            <div style="margin-top:20px; display:flex; gap:10px;">
+              <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar Enrutamiento</button>
+            </div>
+          </form>
+        </div>
       </div>
     </div>
     """
@@ -3341,6 +3404,75 @@ async def client_chatwoot_save(
     if clean_api_token and not re.match(r"^\*+$", clean_api_token):
         encrypted_token = secure_store.encrypt_secret(clean_api_token)
         await db.upsert_integration_secret(integration_id, "api_token", encrypted_token)
+        
+@router.post("/bots/{bot_id}/integrations/routing")
+async def client_routing_rules_save(
+    request: Request,
+    bot_id: int,
+    enabled: str | None = Form(None),
+    webhook_url: str = Form(""),
+    phone_numbers: str = Form(""),
+    save_history: str | None = Form(None),
+    webhook_auth_token: str = Form(""),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    
+    clean_webhook_url = webhook_url.strip()
+    
+    # Process and clean phone numbers list
+    phones_list = []
+    for p in phone_numbers.split(","):
+        p_clean = p.replace("+", "").replace(" ", "").replace("-", "").strip()
+        if p_clean:
+            phones_list.append(p_clean)
+            
+    is_enabled = (enabled == "on")
+    is_save_history = (save_history == "on")
+    
+    # Structure config data
+    config_data = {
+        "rules": [
+            {
+                "name": "Filtro de Omisión y Desvío",
+                "filter_type": "phone_whitelist",
+                "phone_numbers": phones_list,
+                "action": "forward_and_bypass",
+                "webhook_url": clean_webhook_url,
+                "save_history": is_save_history
+            }
+        ]
+    }
+    
+    # Find existing integration
+    integration = await db.get_bot_integration_by_type(bot_id, "routing_rules")
+    if integration:
+        integration_id = int(integration["id"])
+        await db.update_bot_integration(
+            bot_id=bot_id,
+            integration_id=integration_id,
+            integration_type="routing_rules",
+            name="Enrutamiento Externo",
+            config_data=config_data,
+            enabled=is_enabled
+        )
+    else:
+        integration_id = await db.create_bot_integration(
+            bot_id=bot_id,
+            integration_type="routing_rules",
+            name="Enrutamiento Externo",
+            config_data=config_data,
+            enabled=is_enabled
+        )
+        
+    # Save auth token if submitted
+    clean_token = webhook_auth_token.strip()
+    if clean_token and not re.match(r"^\*+$", clean_token):
+        encrypted_token = secure_store.encrypt_secret(clean_token)
+        await db.upsert_integration_secret(integration_id, "webhook_auth_token", encrypted_token)
+    elif not clean_token:
+        # If token is empty, remove secret
+        await db.delete_integration_secret(integration_id, "webhook_auth_token")
         
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&saved=1", status_code=302)
 

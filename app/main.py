@@ -6,6 +6,8 @@ from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header, Qu
 from fastapi.responses import PlainTextResponse
 from starlette.middleware.sessions import SessionMiddleware
 
+import httpx
+
 from app import (
     admin,
     admin_tools,
@@ -263,6 +265,18 @@ async def _send_and_track(
         await follow_ups.schedule(wa_id)
 
 
+async def forward_payload_to_external_webhook(webhook_url: str, payload: dict, auth_token: str) -> None:
+    headers = {"Content-Type": "application/json"}
+    if auth_token:
+        headers["X-Asistto-Secret-Token"] = auth_token
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            res = await client.post(webhook_url, json=payload, headers=headers)
+            log.info(f"Webhook de enrutamiento enviado a {webhook_url}. Respuesta: {res.status_code}")
+    except Exception as exc:
+        log.error(f"Error al enviar webhook de enrutamiento a {webhook_url}: {exc}")
+
+
 async def _process_message(payload: dict) -> None:
     msg = whatsapp_client.extract_message(payload)
     if msg is None:
@@ -278,6 +292,44 @@ async def _process_message(payload: dict) -> None:
     mtype = msg["type"]
     user_text = (msg.get("text") or "")[: config.MAX_USER_MESSAGE_CHARS]
     media_type = mtype if mtype != "text" else None
+
+    # Check for active routing rules (forward_and_bypass)
+    try:
+        routing_integration = await db.get_active_bot_integration(bot.id, "routing_rules")
+        if routing_integration:
+            config_data = routing_integration.get("config") or {}
+            rules = config_data.get("rules") or []
+            for rule in rules:
+                if rule.get("action") == "forward_and_bypass":
+                    whitelisted_phones = rule.get("phone_numbers") or []
+                    clean_wa = wa_id.replace("+", "").strip()
+                    clean_whitelist = [p.replace("+", "").strip() for p in whitelisted_phones]
+                    if clean_wa in clean_whitelist:
+                        # Fetch token
+                        secrets = await db.get_integration_secret_values(int(routing_integration["id"]))
+                        auth_token = secrets.get("webhook_auth_token") or ""
+                        
+                        # Forward original payload
+                        asyncio.create_task(
+                            forward_payload_to_external_webhook(
+                                rule.get("webhook_url"),
+                                payload,
+                                auth_token
+                            )
+                        )
+                        
+                        # Cancel follow-ups
+                        await follow_ups.cancel(wa_id)
+                        
+                        # Optionally save history
+                        if rule.get("save_history"):
+                            saved_user_msg = user_text or f"[envió un archivo de tipo {media_type}]" if media_type else user_text
+                            await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
+                            
+                        log.info(f"Mensaje de {wa_id} interceptado y desviado a {rule.get('webhook_url')}. Bot omitido.")
+                        return
+    except Exception as exc:
+        log.error("Error al procesar reglas de enrutamiento: %s", exc)
 
     # El usuario escribió → cancelar cualquier follow-up pendiente
     await follow_ups.cancel(wa_id)
