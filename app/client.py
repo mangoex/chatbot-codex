@@ -2514,12 +2514,19 @@ async def client_app(
         </div>
         
         <div class="card">
-          <div class="card-header">
-            <h2>Instrucciones del Bot (Prompt de Sistema)</h2>
-            <p>Este es el texto completo con el comportamiento operativo del bot. Puedes editarlo libremente.</p>
+          <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <h2>Instrucciones del Bot (Prompt de Sistema)</h2>
+              <p>Este es el texto completo con el comportamiento operativo del bot. Puedes editarlo libremente.</p>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="mdToggle" onchange="toggleMarkdownPreview(this)">
+              <label for="mdToggle" style="margin: 0; font-size: 13px; cursor: pointer; font-weight: 600;">Ver en Markdown</label>
+            </div>
           </div>
           <form method="post" action="/client/bots/{bot_id}/prompt/save">
-            <textarea id="activePromptEditor" name="prompt" style="min-height: 380px; font-family:monospace; font-size:12.5px; line-height:1.5;" placeholder="System prompt...">{html.escape(current_prompt_content)}</textarea>
+            <textarea id="activePromptEditor" name="prompt" style="min-height: 380px; width: 100%; font-family:monospace; font-size:12.5px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;" placeholder="System prompt...">{html.escape(current_prompt_content)}</textarea>
+            <div id="activePromptPreview" style="display: none; min-height: 380px; width: 100%; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: #f8fafc; overflow-y: auto; box-sizing: border-box; font-size: 13.5px; line-height: 1.6;"></div>
             <div style="margin-top:16px;">
               <button class="btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Publicar comportamiento</button>
             </div>
@@ -2578,7 +2585,21 @@ async def client_app(
           document.getElementById("promptPreviewBlock").style.display = "none";
           alert("Prompt copiado al editor de la derecha. Haz clic en 'Publicar comportamiento' para guardarlo definitivamente.");
         }}
+
+        function toggleMarkdownPreview(checkbox) {{
+          const editor = document.getElementById('activePromptEditor');
+          const preview = document.getElementById('activePromptPreview');
+          if (checkbox.checked) {{
+            editor.style.display = 'none';
+            preview.style.display = 'block';
+            preview.innerHTML = marked.parse(editor.value);
+          }} else {{
+            editor.style.display = 'block';
+            preview.style.display = 'none';
+          }}
+        }}
       </script>
+      <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     </div>
     
     <!-- 4. TAB PANEL: HORARIOS -->

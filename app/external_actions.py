@@ -297,7 +297,7 @@ async def system_instructions(bot_id: int | None = None) -> str:
         
     try:
         hours_skill = await db.get_bot_skill(bot_id, "business_hours")
-        if hours_skill and hours_skill.get("enabled", True):
+        if hours_skill:
             cfg = hours_skill.get("config") or {}
             if cfg:
                 days_translated = []
