@@ -294,6 +294,36 @@ async def system_instructions(bot_id: int | None = None) -> str:
             "- CRM: cuando el usuario comparta datos de lead o cliente que deban guardarse, "
             'agrega [[CRM_LEAD: {"name": "", "phone": "", "status": "new", "notes": ""}]].'
         )
+        
+    try:
+        hours_skill = await db.get_bot_skill(bot_id, "business_hours")
+        if hours_skill and hours_skill.get("enabled", True):
+            cfg = hours_skill.get("config") or {}
+            if cfg:
+                days_translated = []
+                for day, data in cfg.items():
+                    if data.get("open"):
+                        days_translated.append(f"{day.capitalize()}: {data.get('start', '')} a {data.get('end', '')}")
+                    else:
+                        days_translated.append(f"{day.capitalize()}: Cerrado")
+                if days_translated:
+                    parts.append(
+                        "- Horarios de atencion del negocio:\n  " + "\n  ".join(days_translated) + 
+                        "\n  Usa esta informacion si el usuario pregunta por horarios de apertura o cierre."
+                    )
+                    
+        escalation_skill = await db.get_bot_skill(bot_id, "escalation")
+        if escalation_skill and escalation_skill.get("enabled", True):
+            keywords = escalation_skill.get("config", {}).get("keywords", [])
+            if keywords:
+                parts.append(
+                    "- Reglas de escalado: Si el usuario usa las palabras clave: " + ", ".join(keywords) + 
+                    ", o si detectas urgencia extrema o daño fisico del producto, infórmale de manera amable que lo vas a comunicar "
+                    "con un humano o asesor del equipo."
+                )
+    except Exception:
+        log.exception("Error consultando skills de contexto para bot %s", bot_id)
+
     if not parts:
         return ""
     return (
