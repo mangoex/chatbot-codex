@@ -376,12 +376,13 @@ async def _process_message(payload: dict) -> None:
         
     current_history = history + [{"role": "user", "content": user_text}]
 
-    core_reply = core_replies.maybe_handle(user_text, history)
-    if core_reply:
-        reply = await leads.process_reply(wa_id, core_reply, current_history, bot_id=bot.id)
-        await _send_and_track(bot, wa_id, user_text, reply, history)
-        log.info("Core reply respondio a %s (%d chars)", wa_id, len(reply))
-        return
+    if bot.id == 1:
+        core_reply = core_replies.maybe_handle(user_text, history)
+        if core_reply:
+            reply = await leads.process_reply(wa_id, core_reply, current_history, bot_id=bot.id)
+            await _send_and_track(bot, wa_id, user_text, reply, history)
+            log.info("Core reply respondio a %s (%d chars)", wa_id, len(reply))
+            return
 
     agenda_reply, scheduled = await agenda_guard.maybe_handle(
         wa_id, user_text, current_history, bot_id=bot.id
@@ -393,7 +394,7 @@ async def _process_message(payload: dict) -> None:
         return
 
     try:
-        raw_reply = await openai_client.complete(user_text, history, bot_id=bot.id)
+        raw_reply = await openai_client.complete(user_text, history, bot_id=bot.id, openai_model=bot.openai_model)
     except Exception:
         log.exception("Error llamando al modelo")
         await db.save_message(wa_id, "assistant", AI_ERROR_REPLY, bot_id=bot.id)

@@ -25,15 +25,16 @@ def combine_prompt(base_prompt: str, knowledge_docs: list[dict]) -> str:
 
 
 async def system_prompt_for_bot(bot_id: int | None = None) -> str:
+    fallback = config.SYSTEM_PROMPT if (not bot_id or bot_id == 1) else config.FALLBACK_PROMPT
     if not bot_id:
-        return config.SYSTEM_PROMPT
+        return fallback
     try:
         prompt_row = await db.get_active_bot_prompt(bot_id)
         knowledge_docs = await db.list_bot_knowledge(bot_id, active_only=True)
     except Exception:
         log.exception("No se pudo cargar prompt/conocimiento del bot %s", bot_id)
-        return config.SYSTEM_PROMPT
+        return fallback
 
-    base_prompt = (prompt_row or {}).get("content") or config.SYSTEM_PROMPT
+    base_prompt = (prompt_row or {}).get("content") or fallback
     return combine_prompt(base_prompt, knowledge_docs)
 

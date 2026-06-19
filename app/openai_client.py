@@ -90,9 +90,9 @@ def fit_history(system: str, history: list[dict], user_msg: str,
         kept.pop(0)
 
 
-async def _chat(messages: list[dict]) -> str:
+async def _chat(messages: list[dict], model: str | None = None) -> str:
     kwargs = {
-        "model": config.OPENAI_MODEL,
+        "model": model or config.OPENAI_MODEL,
         "messages": messages,
     }
     if config.OPENAI_MAX_TOKENS > 0:
@@ -112,6 +112,7 @@ async def complete(
     user_message: str,
     history: list[dict],
     bot_id: int | None = None,
+    openai_model: str | None = None,
 ) -> str:
     system = await _system_prompt(bot_id)
     fitted = fit_history(system, history, user_message, config.MAX_PROMPT_TOKENS)
@@ -120,7 +121,7 @@ async def complete(
         + fitted
         + [{"role": "user", "content": user_message}]
     )
-    return await _chat(messages)
+    return await _chat(messages, model=openai_model)
 
 
 async def diagnostics() -> dict:

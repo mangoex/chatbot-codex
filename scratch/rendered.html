@@ -1,0 +1,2045 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Panel - Asistto</title>
+  
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg: #f8fafc;
+    --panel: #ffffff;
+    --ink: #0f172a;
+    --muted: #64748b;
+    --line: #e2e8f0;
+    --line-strong: #cbd5e1;
+    --primary: #0d9488;
+    --primary-dark: #0f766e;
+    --primary-light: #ccfbf1;
+    --amber: #d97706;
+    --red: #e11d48;
+    --blue: #2563eb;
+    --green: #059669;
+    --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+    --font: 'Inter', system-ui, sans-serif;
+    --font-display: 'Outfit', sans-serif;
+    --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    -webkit-font-smoothing: antialiased;
+  }
+  
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    min-height: 100vh;
+  }
+
+  /* Sidebar styling */
+  .sidebar {
+    background: #0f172a;
+    color: #e2e8f0;
+    padding: 24px 18px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    height: 100vh;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+  .brand-logo {
+    width: 38px;
+    height: 38px;
+    background: var(--primary);
+    color: white;
+    font-family: var(--font-display);
+    font-weight: 800;
+    font-size: 16px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    box-shadow: 0 4px 12px rgba(13, 148, 136, 0.3);
+  }
+  .brand-text strong {
+    display: block;
+    font-size: 16px;
+    color: white;
+    font-family: var(--font-display);
+  }
+  .brand-text span {
+    font-size: 11px;
+    color: #94a3b8;
+  }
+  .sidebar-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-grow: 1;
+  }
+  .sidebar-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 11px 14px;
+    color: #94a3b8;
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: var(--transition);
+  }
+  .sidebar-link:hover {
+    background: rgba(255, 255, 255, 0.05);
+    color: white;
+  }
+  .sidebar-link.active {
+    background: var(--primary);
+    color: white;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(13, 148, 136, 0.25);
+  }
+  .sidebar-link svg {
+    width: 18px;
+    height: 18px;
+  }
+  .sidebar-user-profile {
+    margin-top: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+  }
+  .user-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+  .user-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .user-info strong {
+    color: white;
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .user-info span {
+    color: #94a3b8;
+    font-size: 11px;
+  }
+  .icon-btn {
+    background: none;
+    border: none;
+    color: #94a3b8;
+    cursor: pointer;
+    padding: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+    border-radius: 6px;
+  }
+  .icon-btn svg {
+    width: 16px;
+    height: 16px;
+  }
+  .icon-btn:hover {
+    color: white;
+    background: rgba(255, 255, 255, 0.1);
+  }
+  .icon-btn.logout:hover {
+    color: var(--red);
+    background: rgba(239, 68, 68, 0.1);
+  }
+  
+  /* Main Content Area */
+  .main-content {
+    padding: 30px 40px;
+    overflow-y: auto;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 28px;
+  }
+  .header h1 {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 800;
+    margin: 0;
+    color: var(--ink);
+  }
+  .header p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  
+  /* Badges & Widgets */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 9999px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    background: #e2e8f0;
+    color: #475569;
+  }
+  .badge.success { background: #d1fae5; color: #065f46; }
+  .badge.warning { background: #fef3c7; color: #b45309; }
+  .badge.danger { background: #ffe4e6; color: #9f1239; }
+  .badge-toggle {
+    transition: opacity 0.2s ease, transform 0.1s ease;
+  }
+  .badge-toggle:hover {
+    opacity: 0.85;
+    transform: translateY(-1px);
+  }
+  .badge-toggle:active {
+    transform: translateY(0);
+  }
+  
+  /* Tab Panel */
+  .tab-panel {
+    display: none;
+    animation: fadeIn 0.2s ease-in-out;
+  }
+  .tab-panel.active {
+    display: block;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Grid Layouts */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 24px;
+  }
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+  .grid-cards {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr);
+    gap: 24px;
+  }
+
+  /* UI Cards */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 24px;
+    margin-bottom: 24px;
+  }
+  .card-header {
+    margin-bottom: 18px;
+  }
+  .card-header h2 {
+    font-family: var(--font-display);
+    font-size: 18px;
+    font-weight: 700;
+    margin: 0;
+    color: var(--ink);
+  }
+  .card-header p {
+    font-size: 13px;
+    color: var(--muted);
+    margin: 4px 0 0;
+  }
+  
+  /* KPI Widget */
+  .kpi-card {
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 20px;
+    box-shadow: var(--shadow);
+    position: relative;
+    overflow: hidden;
+  }
+  .kpi-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .kpi-value {
+    font-family: var(--font-display);
+    font-size: 28px;
+    font-weight: 800;
+    margin-top: 10px;
+    color: var(--ink);
+  }
+  .kpi-status {
+    font-size: 12px;
+    margin-top: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  
+  /* Form elements */
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+    margin: 14px 0 6px;
+  }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="hidden"]), select, textarea {
+    width: 100%;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    padding: 11px 13px;
+    background: white;
+    color: var(--ink);
+    transition: var(--transition);
+    outline: none;
+  }
+  input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="hidden"]):focus, select:focus, textarea:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
+  }
+  .checkbox-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 12px 0;
+  }
+  .checkbox-group input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary);
+  }
+  
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    background: var(--ink);
+    color: white;
+    border: 1px solid var(--ink);
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: var(--transition);
+  }
+  .btn:hover {
+    background: #1e293b;
+    border-color: #1e293b;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.06);
+  }
+  .btn:active {
+    transform: translateY(0);
+  }
+  .btn.primary-btn {
+    background: var(--primary);
+    border-color: var(--primary);
+    box-shadow: 0 4px 10px rgba(13, 148, 136, 0.2);
+  }
+  .btn.primary-btn:hover {
+    background: var(--primary-dark);
+    border-color: var(--primary-dark);
+  }
+  .btn.secondary {
+    background: white;
+    color: var(--ink);
+    border-color: var(--line-strong);
+  }
+  .btn.secondary:hover {
+    background: #f8fafc;
+  }
+  .btn.whatsapp-btn {
+    background: #128c7e;
+    border-color: #128c7e;
+    box-shadow: 0 4px 10px rgba(18, 140, 126, 0.2);
+  }
+  .btn.whatsapp-btn:hover {
+    background: #075e54;
+    border-color: #075e54;
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+
+  /* Table styling */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  th, td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+  }
+  th {
+    background: #f8fafc;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  tr:hover td {
+    background: rgba(13, 148, 136, 0.01);
+  }
+  
+  /* Alert banners */
+  .notice-banner {
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid transparent;
+  }
+  .notice-banner svg {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+  .notice-banner.success {
+    background: #d1fae5;
+    border-color: #a7f3d0;
+    color: #065f46;
+  }
+  .notice-banner.error {
+    background: #ffe4e6;
+    border-color: #fecdd3;
+    color: #9f1239;
+  }
+  
+  /* Helper Classes */
+  .muted-text { color: var(--muted); font-size: 13px; }
+  .bold-text { font-weight: 600; }
+  .sync-status { font-size: 12px; font-weight: 500; color: var(--muted); margin-top: 8px; }
+  .sync-status.ok { color: var(--green); }
+  .sync-status.err { color: var(--red); }
+  
+  /* Weekday Grid for Schedules */
+  .weekday-row {
+    display: grid;
+    grid-template-columns: 140px 110px 1fr 1fr;
+    gap: 16px;
+    align-items: center;
+    padding: 12px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .weekday-row:last-child {
+    border-bottom: 0;
+  }
+  
+  /* Prompt Assistant block */
+  .prompt-workspace {
+    display: grid;
+    grid-template-columns: 1fr 1.2fr;
+    gap: 20px;
+  }
+  .chat-bubble-container {
+    max-height: 380px;
+    overflow-y: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    background: #f8fafc;
+  }
+  .bubble {
+    max-width: 85%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .bubble.user {
+    background: white;
+    border: 1px solid var(--line);
+  }
+  .bubble.assistant {
+    background: var(--primary-light);
+    color: var(--primary-dark);
+    margin-left: auto;
+    border: 1px solid rgba(13, 148, 136, 0.1);
+  }
+  .bubble-meta {
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  @media (max-width: 1024px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { height: auto; position: static; }
+    .grid-2, .grid-cards, .prompt-workspace { grid-template-columns: 1fr; }
+  }
+  .password-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+  }
+  .password-wrapper input {
+    padding-right: 40px !important;
+  }
+  .password-toggle {
+    position: absolute;
+    right: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--muted);
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+    z-index: 10;
+  }
+  .password-toggle:hover {
+    color: var(--primary);
+  }
+
+  /* Scrollbar styling */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+  /* Chatwoot Layout */
+  .chatwoot-layout {
+    display: grid;
+    grid-template-columns: 300px 1fr 280px;
+    height: calc(100vh - 220px);
+    background: white;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    margin-top: 14px;
+  }
+  .chat-sidebar, .chat-main, .chat-crm {
+    min-height: 0;
+  }
+  .chat-sidebar {
+    border-right: 1px solid var(--line);
+    background: #f8fafc;
+    display: flex;
+    flex-direction: column;
+  }
+  .chat-sidebar-header {
+    padding: 16px;
+    border-bottom: 1px solid var(--line);
+    font-weight: 700;
+    font-size: 15px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .chat-list {
+    overflow-y: auto;
+    flex: 1;
+  }
+  .chat-item {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    transition: var(--transition);
+    text-decoration: none;
+    display: block;
+    color: inherit;
+  }
+  .chat-item:hover { background: rgba(13, 148, 136, 0.05); }
+  .chat-item.active { background: white; border-left: 3px solid var(--primary); }
+  .chat-item-header { display: flex; justify-content: space-between; margin-bottom: 4px; align-items: center; }
+  .chat-item-name { font-weight: 600; color: var(--ink); font-size: 14px; }
+  .chat-item-time { font-size: 11px; color: var(--muted); }
+  .chat-item-preview { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  
+  .chat-main {
+    display: flex;
+    flex-direction: column;
+    background: white;
+  }
+  .chat-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .chat-avatar {
+    width: 36px; height: 36px; border-radius: 50%; background: var(--primary-light); color: var(--primary-dark);
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+  }
+  .chat-header-info { display: flex; flex-direction: column; }
+  .chat-header-info strong { font-size: 15px; }
+  .chat-header-info small { color: var(--muted); font-size: 12px; }
+  .chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: #f8fafc;
+  }
+  .chat-crm {
+    border-left: 1px solid var(--line);
+    background: white;
+    padding: 20px;
+    overflow-y: auto;
+  }
+  .crm-section { margin-bottom: 24px; }
+  .crm-section h3 { font-size: 11px; text-transform: uppercase; color: var(--muted); font-weight: 700; margin: 0 0 12px 0; letter-spacing: 0.05em; }
+
+  .bubble {
+    max-width: min(720px, 85%);
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--line);
+    background: white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+  }
+  .bubble.assistant { margin-left: auto; background: #ccfbf1; border-color: #99f6e4; color: var(--primary-dark); }
+  .bubble .meta { font-size: 11px; color: var(--muted); margin-bottom: 6px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; }
+
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tabs a {
+    border: 1px solid var(--line);
+    background: white;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+    text-decoration: none;
+    transition: var(--transition);
+  }
+  .tabs a:hover { border-color: var(--line-strong); color: var(--ink); }
+  .tabs a.active { background: var(--ink); border-color: var(--ink); color: white; font-weight: 600; }
+
+  .b-en_progreso, .b-pendiente { background: #fef3c7; color: #b45309; }
+  .b-calificado, .b-resuelto { background: #d1fae5; color: #065f46; }
+  .b-descalificado, .b-urgente { background: #ffe4e6; color: #9f1239; }
+</style>
+
+  <script>
+    function togglePasswordVisibility(btn) {
+      const input = btn.previousElementSibling;
+      if (input.type === "password") {
+        input.type = "text";
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+      } else {
+        input.type = "password";
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+      }
+    }
+  </script>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div>
+        <div class="brand">
+          <div class="brand-logo">AH</div>
+          <div class="brand-text">
+            <strong>Asistto</strong>
+            <span>by Humanio</span>
+          </div>
+        </div>
+        <div style="padding: 0 16px; margin: -10px 0 16px; font-size: 11px; color: #94a3b8;">
+          ID del Bot: <strong style="color: #38bdf8;">43</strong>
+        </div>
+        
+        <nav class="sidebar-nav">
+          <div class="sidebar-link active" onclick="switchTab('inicio')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 13h8V3H3v10Z"/><path d="M13 21h8V11h-8v10Z"/><path d="M13 3h8v6h-8V3Z"/><path d="M3 21h8v-6H3v6Z"/></svg><span>Inicio</span></div><div class="sidebar-link " onclick="switchTab('conversations')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v8Z"/></svg><span>Conversaciones</span></div><div class="sidebar-link " onclick="switchTab('crm')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>CRM de Leads</span></div><div class="sidebar-link " onclick="switchTab('contacts')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><circle cx="12" cy="8" r="2"/><path d="M12 11c-2 0-3 1-3 2v1h6v-1c0-1-1-2-3-2Z"/></svg><span>Contactos</span></div><div class="sidebar-link " onclick="switchTab('campaigns')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9Z"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M2 10h4M18 10h4M4 5l2.5 2.5M17.5 7.5L20 5"/></svg><span>Campañas</span></div><div class="sidebar-link " onclick="switchTab('whatsapp')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><span>Conectar WhatsApp</span></div><div class="sidebar-link " onclick="switchTab('prompt')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg><span>Comportamiento (IA)</span></div><div class="sidebar-link " onclick="switchTab('hours')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>Horarios</span></div><div class="sidebar-link " onclick="switchTab('escalate')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Reglas de Escalado</span></div><div class="sidebar-link " onclick="switchTab('knowledge')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg><span>Base de Conocimiento</span></div><div class="sidebar-link " onclick="switchTab('templates')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="9" x2="15" y2="9"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg><span>Plantillas</span></div><div class="sidebar-link " onclick="switchTab('integrations')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg><span>Integraciones</span></div>
+        </nav>
+      </div>
+      <div class="sidebar-user-profile">
+        <div class="user-avatar">CL</div>
+        <div class="user-info" title="client@example.com">
+          <strong>client@example.com</strong>
+          <span style="display:flex; align-items:center; gap:4px; margin-top:2px;">
+             Configuración <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px; height:12px;"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+          </span>
+        </div>
+        <form method="post" action="/admin/logout" style="margin: 0; display: flex;">
+          <button class="icon-btn logout" type="submit" title="Cerrar sesión" style="color:var(--red);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg></button>
+        </form>
+      </div>
+    </aside>
+    <main class="main-content">
+      
+      
+    <div class="header">
+      <div>
+        <h1>Positivala</h1>
+        <p>Configuración del asistente inteligente para tu negocio</p>
+      </div>
+      <div class="header-actions">
+        <span class="badge" style="background: #e0f2fe; color: #0369a1; border: 1px solid #bae6fd;">ID del Bot: 43</span>
+        <form action="/client/bots/43/toggle-status" method="post" class="inline" style="margin:0; padding:0;">
+          <button type="submit" class="badge success badge-toggle" style="border: none; cursor: pointer; display: inline-flex; gap: 6px; align-items: center;" title="Haz clic para PAUSAR el bot (modo humano únicamente)">
+            <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#10b981;"></span>
+            Bot: Activo
+          </button>
+        </form>
+        <span class="badge">WhatsApp: +526869032840</span>
+      </div>
+    </div>
+    
+    <!-- 1. TAF PANEL: INICIO -->
+    <div id="panel-inicio" class="tab-panel active">
+      <div class="grid-3" style="margin-bottom: 24px;">
+        <div class="kpi-card">
+          <div class="kpi-title">Chats Activos</div>
+          <div class="kpi-value">0</div>
+          <div class="kpi-status ok">Historial guardado</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">Mensajes Procesados</div>
+          <div class="kpi-value">0</div>
+          <div class="kpi-status ok">Respuestas autónomas</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-title">Leads Registrados</div>
+          <div class="kpi-value">0</div>
+          <div class="kpi-status ok">CRM de Leads</div>
+        </div>
+      </div>
+      
+      <div class="grid-cards">
+        <div>
+          <div class="card">
+            <div class="card-header">
+              <h2>Conversaciones Recientes</h2>
+              <p>Últimos hilos de chat iniciados en WhatsApp</p>
+            </div>
+            <div style="padding:28px 0; text-align:center; color:var(--muted)">Sin conversaciones registradas todavía.</div>
+          </div>
+        </div>
+        <div>
+          <div class="card">
+            <div class="card-header">
+              <h2>Estado del Asistente</h2>
+              <p>Estado operacional de tus servicios</p>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:12px; margin-top:14px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+                <span class="bold-text" style="font-size:13px;">WhatsApp Cloud API</span>
+                <span class="badge success">
+                  Conectado
+                </span>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+                <span class="bold-text" style="font-size:13px;">Google Calendar</span>
+                <span class="badge warning">
+                  Inactivo
+                </span>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+                <span class="bold-text" style="font-size:13px;">Reglas de Escalado</span>
+                <span class="badge success">
+                  Habilitado
+                </span>
+              </div>
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span class="bold-text" style="font-size:13px;">Base de Conocimiento</span>
+                <span class="badge success">0 Docs</span>
+              </div>
+            </div>
+          </div>
+        </div>
+    </div>
+  </div>
+
+        <div id="panel-conversations" class="tab-panel">
+          <div class="chatwoot-layout">
+            <div class="chat-sidebar">
+              <div class="chat-sidebar-header">
+                Chats activos
+                <span class="badge">0</span>
+              </div>
+              <div class="chat-list">
+                <div class="empty" style="padding: 20px; text-align: center; color: var(--muted);">Aún no hay conversaciones.</div>
+              </div>
+            </div>
+            <div class="chat-main">
+              
+              <div class="chat-messages">
+                <div class="empty" style="padding: 20px; text-align: center; color: var(--muted);">Selecciona una conversación para ver el historial.</div>
+              </div>
+            </div>
+            
+          </div>
+        </div>
+        
+    <!-- 1c. TAB PANEL: CRM -->
+    <div id="panel-crm" class="tab-panel">
+      <div class="card" style="margin-bottom:20px;">
+        <div class="card-header">
+          <h2>CRM de Leads</h2>
+          <p>Mueve prospectos de no cualificados a calificados conforme avanza la venta.</p>
+        </div>
+      </div>
+      <div class="tabs" style="margin-bottom:16px;">
+        <a class="active" href="/client/app?bot_id=43&tab=crm&status=en_progreso">No cualificados (0)</a><a class="" href="/client/app?bot_id=43&tab=crm&status=calificado">Calificados (0)</a><a class="" href="/client/app?bot_id=43&tab=crm&status=descalificado">Descalificados (0)</a><a class="" href="/client/app?bot_id=43&tab=crm&status=todos">Todos (0)</a>
+      </div>
+      <section class="table-wrap" style="background:white; border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow:var(--shadow);">
+        <table style="width:100%; border-collapse:collapse; text-align:left;">
+          <thead>
+            <tr style="background:#f8fafc; border-bottom:1px solid var(--line);">
+              <th style="padding:14px 16px; font-weight:600; color:var(--muted); font-size:13px;">Prospecto</th>
+              <th style="padding:14px 16px; font-weight:600; color:var(--muted); font-size:13px;">Negocio</th>
+              <th style="padding:14px 16px; font-weight:600; color:var(--muted); font-size:13px;">Estado</th>
+              <th style="padding:14px 16px; font-weight:600; color:var(--muted); font-size:13px;">Actualizado</th>
+              <th style="padding:14px 16px; font-weight:600; color:var(--muted); font-size:13px;">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td colspan="5" class="empty" style="text-align:center; padding:20px; color:var(--muted);">No hay leads en esta etapa.</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </div>
+    
+    <!-- 2. TAB PANEL: WHATSAPP -->
+    <div id="panel-whatsapp" class="tab-panel">
+      <div class="grid-cards">
+        <div class="panel">
+          <div class="card">
+            <div class="card-header">
+              <h2>Meta Embedded Signup (Recomendado)</h2>
+              <p>Vincula el número de WhatsApp de tu empresa de forma guiada y segura a través de Asistto como Tech Provider.</p>
+            </div>
+            
+            <div style="margin:20px 0; padding:16px; background:#f0fdfa; border:1px solid #99f6e4; border-radius:8px;">
+              <span class="bold-text" style="color:var(--primary-dark); font-size:14px; display:block; margin-bottom:6px;">Instrucciones para Embedded Signup:</span>
+              <ol style="margin:0; padding-left:20px; font-size:13px; color:#1e293b; line-height:1.6;">
+                <li>Haz clic en el botón verde "Abrir Embedded Signup" abajo.</li>
+                <li>Inicia sesión con tu cuenta de negocio de Facebook.</li>
+                <li>Selecciona el portafolio comercial de tu negocio y el WABA o número a vincular.</li>
+                <li>Una vez completado, los datos de IDs se llenarán automáticamente en el formulario de la derecha. Revísalos y presiona "Guardar conexión".</li>
+              </ol>
+            </div>
+            
+            <div style="margin-top:20px;">
+              <button class="btn whatsapp-btn" type="button" id="launchMetaSignup">Abrir Embedded Signup de Meta</button>
+            </div>
+            <div id="metaSignupStatus" class="sync-status">Esperando inicio de vinculación...</div>
+          </div>
+        </div>
+        
+        <div>
+          <div class="card">
+            <div class="card-header">
+              <h2>Detalles de la Conexión</h2>
+              <p>Completa o edita las credenciales de conexión del bot.</p>
+            </div>
+            <form method="post" action="/client/bots/43/whatsapp/connect">
+              <label>Authorization Code de Meta (si aplica)</label>
+              <input id="metaAuthCode" name="authorization_code" autocomplete="off" placeholder="Llenado automáticamente">
+              
+              <label>Access Token (Manual o Temporal)</label>
+              <div class="password-wrapper">
+                <input type="password" name="access_token" placeholder="EAW..." autocomplete="new-password" value="">
+                <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                </button>
+              </div>
+              
+              <label>Business Portfolio ID</label>
+              <input id="metaBusinessId" name="business_id" value="">
+              
+              <label>WABA ID (WhatsApp Business Account)</label>
+              <input id="metaWabaId" name="waba_id" value="">
+              
+              <label>Phone Number ID</label>
+              <input id="metaPhoneId" name="phone_number_id" value="123" required>
+              
+              <label>Número de WhatsApp Visible</label>
+              <input id="metaDisplayPhone" name="display_phone_number" value="+526869032840" placeholder="+52...">
+              
+              <div style="margin-top:20px;">
+                <button class="btn primary-btn" type="submit" >Guardar conexión cifrada</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+      
+      <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+      <script>
+        (() => {
+          const app_id = "";
+          const config_id = "";
+          const status = document.getElementById("metaSignupStatus");
+          
+          window.fbAsyncInit = function() {
+            if (!app_id) return;
+            FB.init({ appId: app_id, cookie: true, xfbml: true, version: 'v19.0' });
+          };
+          
+          window.addEventListener("message", (event) => {
+            if (!event.origin.endsWith("facebook.com")) return;
+            let data = event.data;
+            try { if (typeof data === "string") data = JSON.parse(data); } catch (_) { return; }
+            const payload = data?.data || data;
+            if (payload?.phone_number_id) document.getElementById("metaPhoneId").value = payload.phone_number_id;
+            if (payload?.waba_id) document.getElementById("metaWabaId").value = payload.waba_id;
+            if (payload?.business_id) document.getElementById("metaBusinessId").value = payload.business_id;
+            if (payload?.display_phone_number) document.getElementById("metaDisplayPhone").value = payload.display_phone_number;
+            if (payload?.phone_number_id) status.innerHTML = "<span class='sync-status ok'>Datos recibidos de Meta. Revisa y pulsa 'Guardar conexión'.</span>";
+          });
+          
+          document.getElementById("launchMetaSignup")?.addEventListener("click", () => {
+            if (!window.FB) {
+              status.innerHTML = "<span class='sync-status err'>Meta SDK no está listo todavía. Inténtalo en un momento.</span>";
+              return;
+            }
+            FB.login((response) => {
+              const code = response?.authResponse?.code;
+              if (code) {
+                document.getElementById("metaAuthCode").value = code;
+                status.innerHTML = "<span class='sync-status ok'>Vínculo inicial exitoso. Completa y guarda.</span>";
+              } else {
+                status.innerHTML = "<span class='sync-status err'>Meta canceló el flujo o no regresó código.</span>";
+              }
+            }, {
+              config_id: config_id,
+              response_type: "code",
+              override_default_response_type: true,
+              extras: { 
+                featureType: "whatsapp_business_app_onboarding",
+                sessionInfoVersion: "3",
+                setup: {}
+              }
+            });
+          });
+        })();
+      </script>
+    </div>
+    
+    <!-- 3. TAB PANEL: COMPORTAMIENTO (PROMPT) -->
+    <div id="panel-prompt" class="tab-panel">
+      <div class="prompt-workspace">
+        <div class="card">
+          <div class="card-header">
+            <h2>Asistente de Prompt con IA</h2>
+            <p>Escribe qué quieres que haga tu bot en WhatsApp y la IA generará el prompt final integrando tu base de conocimientos.</p>
+          </div>
+          <div style="margin-bottom:14px;">
+            <label>Describe el comportamiento que buscas</label>
+            <textarea id="aiPromptInstruction" style="min-height: 120px;" placeholder="Ej. Eres un bot de la Clínica Dental Smile. Tu objetivo es agendar citas de diagnóstico dental. Saluda amablemente, solicita nombre completo y busca un espacio libre. Si tienen urgencias de dolor fuerte, pásalo a humano de inmediato..."></textarea>
+          </div>
+          <div>
+            <button class="btn primary-btn" type="button" id="btnAssistPrompt" onclick="requestAIPrompt()">
+              Generar instrucciones con IA
+            </button>
+            <span id="aiAssistLoader" style="display:none; margin-left:12px; font-size:13px; color:var(--primary); font-weight:600;">Generando prompt óptimo...</span>
+          </div>
+          
+          <div id="promptPreviewBlock" style="margin-top:24px; display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+              <span class="bold-text" style="font-size:13px; color:var(--primary-dark);">Vista previa del prompt generado</span>
+              <button class="btn secondary" style="padding:4px 10px; font-size:11px;" onclick="applyGeneratedPrompt()">Aplicar Preview</button>
+            </div>
+            <textarea id="aiPromptPreview" style="min-height: 240px; background:#f8fafc; font-family:monospace; font-size:12px; border-color:var(--primary-light);" readonly></textarea>
+          </div>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">
+            <h2>Instrucciones del Bot (Prompt de Sistema)</h2>
+            <p>Este es el texto completo con el comportamiento operativo del bot. Puedes editarlo libremente.</p>
+          </div>
+          <form method="post" action="/client/bots/43/prompt/save">
+            <textarea id="activePromptEditor" name="prompt" style="min-height: 380px; font-family:monospace; font-size:12.5px; line-height:1.5;" placeholder="System prompt...">Prompt text</textarea>
+            <div style="margin-top:16px;">
+              <button class="btn" type="submit" >Publicar comportamiento</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      
+      <script>
+        async function requestAIPrompt() {
+          const instruction = document.getElementById("aiPromptInstruction").value.trim();
+          const current = document.getElementById("activePromptEditor").value;
+          if (!instruction) {
+            alert("Por favor escribe una descripción para el comportamiento del bot.");
+            return;
+          }
+          
+          const loader = document.getElementById("aiAssistLoader");
+          const btn = document.getElementById("btnAssistPrompt");
+          const previewBlock = document.getElementById("promptPreviewBlock");
+          const previewArea = document.getElementById("aiPromptPreview");
+          
+          loader.style.display = "inline";
+          btn.disabled = true;
+          
+          const formData = new FormData();
+          formData.append("instruction", instruction);
+          formData.append("current_prompt", current);
+          
+          try {
+            const response = await fetch("/client/bots/43/prompt/assist", {
+              method: "POST",
+              body: formData
+            });
+            if (!response.ok) {
+              const err = await response.json();
+              throw new Error(err.detail || "Error generando el prompt");
+            }
+            const data = await response.json();
+            if (data.ok) {
+              previewArea.value = data.prompt;
+              previewBlock.style.display = "block";
+            } else {
+              alert("Error: " + data.error);
+            }
+          } catch (e) {
+            alert(e.message);
+          } finally {
+            loader.style.display = "none";
+            btn.disabled = false;
+          }
+        }
+        
+        function applyGeneratedPrompt() {
+          const generated = document.getElementById("aiPromptPreview").value;
+          document.getElementById("activePromptEditor").value = generated;
+          document.getElementById("promptPreviewBlock").style.display = "none";
+          alert("Prompt copiado al editor de la derecha. Haz clic en 'Publicar comportamiento' para guardarlo definitivamente.");
+        }
+      </script>
+    </div>
+    
+    <!-- 4. TAB PANEL: HORARIOS -->
+    <div id="panel-hours" class="tab-panel">
+      <div class="card" style="max-width:840px;">
+        <div class="card-header">
+          <h2>Horarios de Atención y Agendado</h2>
+          <p>Define las horas y días laborales del bot en las que está permitido programar llamadas o citas en tu calendario. Fuera de estas horas, el bot avisará de forma determinista al cliente.</p>
+        </div>
+        <form method="post" action="/client/bots/43/hours">
+          <div class="checkbox-group" style="margin-bottom:20px;">
+            <input type="checkbox" name="enabled" id="hoursEnabledToggle" checked>
+            <label for="hoursEnabledToggle" style="margin:0; font-size:14px; font-weight:600; cursor:pointer;">Activar restricción de horarios de atención para agendado</label>
+          </div>
+          
+          <div style="border: 1px solid var(--line); border-radius:8px; overflow:hidden; background:white;">
+            <div class="weekday-row" style="background:#f8fafc; font-weight:700; font-size:11px; text-transform:uppercase; color:var(--muted); border-bottom: 2px solid var(--line);">
+              <div>Día</div>
+              <div>¿Abierto?</div>
+              <div>Hora Inicio</div>
+              <div>Hora Cierre</div>
+            </div>
+            
+            
+        <div class="weekday-row">
+          <div class="bold-text" style="font-size:14px;">Lunes</div>
+          <div>
+            <input type="checkbox" name="open_lunes" checked style="width:18px; height:18px; accent-color:var(--primary); cursor:pointer;">
+          </div>
+          <div>
+            <input type="text" name="start_lunes" value="09:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="09:00">
+          </div>
+          <div>
+            <input type="text" name="end_lunes" value="18:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="18:00">
+          </div>
+        </div>
+        
+        <div class="weekday-row">
+          <div class="bold-text" style="font-size:14px;">Martes</div>
+          <div>
+            <input type="checkbox" name="open_martes" checked style="width:18px; height:18px; accent-color:var(--primary); cursor:pointer;">
+          </div>
+          <div>
+            <input type="text" name="start_martes" value="09:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="09:00">
+          </div>
+          <div>
+            <input type="text" name="end_martes" value="18:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="18:00">
+          </div>
+        </div>
+        
+        <div class="weekday-row">
+          <div class="bold-text" style="font-size:14px;">Miércoles</div>
+          <div>
+            <input type="checkbox" name="open_miercoles" checked style="width:18px; height:18px; accent-color:var(--primary); cursor:pointer;">
+          </div>
+          <div>
+            <input type="text" name="start_miercoles" value="09:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="09:00">
+          </div>
+          <div>
+            <input type="text" name="end_miercoles" value="18:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="18:00">
+          </div>
+        </div>
+        
+        <div class="weekday-row">
+          <div class="bold-text" style="font-size:14px;">Jueves</div>
+          <div>
+            <input type="checkbox" name="open_jueves" checked style="width:18px; height:18px; accent-color:var(--primary); cursor:pointer;">
+          </div>
+          <div>
+            <input type="text" name="start_jueves" value="09:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="09:00">
+          </div>
+          <div>
+            <input type="text" name="end_jueves" value="18:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="18:00">
+          </div>
+        </div>
+        
+        <div class="weekday-row">
+          <div class="bold-text" style="font-size:14px;">Viernes</div>
+          <div>
+            <input type="checkbox" name="open_viernes" checked style="width:18px; height:18px; accent-color:var(--primary); cursor:pointer;">
+          </div>
+          <div>
+            <input type="text" name="start_viernes" value="09:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="09:00">
+          </div>
+          <div>
+            <input type="text" name="end_viernes" value="18:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="18:00">
+          </div>
+        </div>
+        
+        <div class="weekday-row">
+          <div class="bold-text" style="font-size:14px;">Sábado</div>
+          <div>
+            <input type="checkbox" name="open_sabado"  style="width:18px; height:18px; accent-color:var(--primary); cursor:pointer;">
+          </div>
+          <div>
+            <input type="text" name="start_sabado" value="09:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="09:00">
+          </div>
+          <div>
+            <input type="text" name="end_sabado" value="18:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="18:00">
+          </div>
+        </div>
+        
+        <div class="weekday-row">
+          <div class="bold-text" style="font-size:14px;">Domingo</div>
+          <div>
+            <input type="checkbox" name="open_domingo"  style="width:18px; height:18px; accent-color:var(--primary); cursor:pointer;">
+          </div>
+          <div>
+            <input type="text" name="start_domingo" value="09:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="09:00">
+          </div>
+          <div>
+            <input type="text" name="end_domingo" value="18:00" style="max-width:110px; text-align:center; padding:6px 10px;" placeholder="18:00">
+          </div>
+        </div>
+        
+          </div>
+          
+          <div style="margin-top:20px;">
+            <button class="btn primary-btn" type="submit" >Guardar horarios</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    
+    <!-- 5. TAB PANEL: ESCALADO -->
+    <div id="panel-escalate" class="tab-panel">
+      <div class="card" style="max-width: 720px;">
+        <div class="card-header">
+          <h2>Reglas de Escalado Humano</h2>
+          <p>Configura las condiciones bajo las cuales el bot debe detenerse y marcar la conversación para que un asesor humano tome el control en WhatsApp.</p>
+        </div>
+        
+        <form method="post" action="/client/bots/43/escalation">
+          <div class="checkbox-group" style="margin-bottom:18px;">
+            <input type="checkbox" name="enabled" id="escalateEnabledToggle" checked>
+            <label for="escalateEnabledToggle" style="margin:0; font-size:14px; font-weight:600; cursor:pointer;">Activar escalación humana de conversaciones</label>
+          </div>
+          
+          <div style="margin-bottom:20px;">
+            <label>Palabras clave o frases de activación (una por línea o separadas por comas)</label>
+            <textarea name="keywords" style="min-height: 120px;" placeholder="Ej. queja, hablar con humano, operador, urgente, reclamo, costo extra"></textarea>
+            <p class="muted-text" style="margin-top:4px;">Si el usuario escribe cualquiera de estas frases, el bot registrará la escalación y se marcará en color rojo como 'pendiente' en el panel.</p>
+          </div>
+          
+          <div class="checkbox-group">
+            <input type="checkbox" name="escalate_on_media" id="escalateOnMedia" checked>
+            <label for="escalateOnMedia" style="margin:0; font-weight:500; cursor:pointer;">Escalar automáticamente si el cliente envía un archivo (imagen, audio, pdf, etc.)</label>
+          </div>
+          
+          <div style="margin-top:20px;">
+            <button class="btn primary-btn" type="submit" >Guardar reglas de escalado</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    
+    <!-- 6. TAB PANEL: CONOCIMIENTO -->
+    <div id="panel-knowledge" class="tab-panel">
+      <div class="grid-cards">
+        <div class="card">
+          <div class="card-header">
+            <h2>Base de Conocimiento Activa</h2>
+            <p>Información que el bot puede leer como contexto para contestar preguntas sobre precios, servicios, ubicaciones o preguntas frecuentes.</p>
+          </div>
+          <div style="padding:28px 0; text-align:center; color:var(--muted)">No tienes documentos de conocimiento activos. Agrega uno a la derecha.</div>
+        </div>
+        
+        <div>
+          <div class="card">
+            <div class="card-header">
+              <h2>Agregar Documento o Archivo</h2>
+              <p>Sube preguntas frecuentes, menús de servicio o políticas operativas. Puedes escribir texto directamente o subir un archivo.</p>
+            </div>
+            <form method="post" action="/client/bots/43/knowledge" enctype="multipart/form-data">
+              <label>Título del Documento (Opcional si subes archivo)</label>
+              <input name="title" placeholder="Preguntas Frecuentes Dentales">
+              
+              <label>Contenido del Conocimiento (Escribe texto...)</label>
+              <textarea name="content" style="min-height: 140px;" placeholder="Ej. &#10;¿Tienen estacionamiento? Sí, gratuito en plaza.&#10;¿Precios de Limpieza? Desde $500 MXN.&#10;¿Aceptan tarjeta? Sí, Visa y Mastercard."></textarea>
+              
+              <label style="margin-top:14px; display:block; font-weight:600;">...o Sube un Archivo (PDF, Word, MD, Excel, CSV)</label>
+              <input type="file" name="file" accept=".pdf,.docx,.doc,.xlsx,.csv,.md,.txt" style="margin-top:6px; font-size:13px; color:var(--muted);">
+              
+              <div style="margin-top:18px;">
+                <button class="btn primary-btn" type="submit" >Guardar documento</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- 6b. TAB PANEL: PLANTILLAS -->
+    
+    <div id="panel-templates" class="tab-panel">
+      
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h2>Plantillas de Mensajes</h2>
+            <p>Lista de plantillas aprobadas por Meta para iniciar conversaciones fuera de la ventana de 24 horas.</p>
+          </div>
+          
+    <div style="overflow-x:auto;">
+      <table style="width:100%;">
+        <thead>
+          <tr>
+            <th>Plantilla</th>
+            <th>Categoría</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="3" style="text-align:center; padding:20px; color:var(--muted); font-size:13px;">Sin plantillas registradas en Meta para este número.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    
+        </div>
+        
+        <div>
+          <div class="card">
+            <div class="card-header">
+              <h2>Crear Plantilla en Meta</h2>
+              <p>Envía una nueva plantilla para revisión y aprobación de Meta.</p>
+            </div>
+            <form method="post" action="/client/bots/43/whatsapp/templates">
+              <label>Nombre de la Plantilla</label>
+              <input name="name" placeholder="bienvenida_cliente_v1" required style="margin-bottom:12px;" >
+              
+              <label>Idioma</label>
+              <input name="language" value="es_MX" required style="margin-bottom:12px;" >
+              
+              <label>Categoría</label>
+              <select name="category" style="margin-bottom:12px;" >
+                <option value="UTILITY">Utility (Servicio, Seguimiento)</option>
+                <option value="MARKETING">Marketing (Promociones, Ofertas)</option>
+              </select>
+              
+              <label>Cuerpo de la Plantilla</label>
+              <p class="muted-text" style="font-size:12px; margin-top:2px; margin-bottom:6px;">Usa <code>{{1}}</code>, <code>{{2}}</code> para agregar variables. Ejemplo: <i>Hola {{1}}, tu código es {{2}}</i>.</p>
+              <textarea name="body_text" style="min-height: 100px; margin-bottom:12px;" placeholder="Hola {{1}}, tu cita está agendada para el {{2}}." required ></textarea>
+              
+              <div id="clientTemplateVarsContainer" style="display:none; margin-bottom:16px;">
+                <label style="font-weight:600; display:block; margin-top:12px;">Muestras de Variables</label>
+                <p class="muted-text" style="font-size:11px; margin-top:2px; margin-bottom:8px;">Meta requiere un ejemplo real para aprobar cada variable de tu plantilla.</p>
+                <div id="clientTemplateVarsInputs" style="display:flex; flex-direction:column; gap:8px;"></div>
+              </div>
+              
+              <div style="margin-top:14px;">
+                <button class='btn primary-btn' type='submit'>Enviar plantilla</button>
+              </div>
+            </form>
+          </div>
+          
+          <!-- Live Preview Card -->
+          <div class="card" style="margin-top:20px; border:1px solid #bae6fd; background:#f0f9ff; padding:15px; border-radius:8px;">
+            <div class="card-header" style="padding-bottom:8px; border-bottom:1px solid #bae6fd; margin-bottom:10px;">
+              <h3 style="margin:0; font-size:14px; font-weight:700; color:#0369a1; display:flex; align-items:center; gap:6px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px; height:16px;"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                Vista Previa de WhatsApp (Real-time)
+              </h3>
+            </div>
+            <div style="background:#e5ddd5; padding:12px; border-radius:6px; min-height:80px; position:relative; font-family:'Inter', sans-serif;">
+              <div style="background:#ffffff; padding:8px 10px; border-radius:6px; max-width:90%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 0.5px rgba(0,0,0,0.13); position:relative;">
+                <span id="clientTemplatePreviewBody" style="word-break: break-word;">Escribe el texto de tu plantilla...</span>
+                <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <script>
+        (function() {
+          const bodyText = document.querySelector('#panel-templates textarea[name="body_text"]');
+          const varsContainer = document.getElementById('clientTemplateVarsContainer');
+          const varsInputs = document.getElementById('clientTemplateVarsInputs');
+          const previewBody = document.getElementById('clientTemplatePreviewBody');
+
+          function updateTemplatePreview() {
+            let text = bodyText.value || "Escribe el texto de tu plantilla...";
+            
+            const inputs = varsInputs.querySelectorAll('input[name="examples"]');
+            inputs.forEach(input => {
+              const varNum = input.dataset.varNum;
+              const val = input.value.trim() || `{{${varNum}}}`;
+              text = text.replaceAll('{' + varNum + '}', val);
+            });
+
+            let formattedText = text
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/\*([^*]+)\*/g, '<strong>$1</strong>')
+              .replace(/_([^_]+)_/g, '<em>$1</em>')
+              .replace(/~([^~]+)~/g, '<del>$1</del>')
+              .replace(/\n/g, '<br>');
+
+            previewBody.innerHTML = formattedText;
+          }
+
+          if (bodyText) {
+            function detectVariables() {
+              const text = bodyText.value;
+              const regex = /\{\{\s*(\d+)\s*\}\}/g;
+              let match;
+              const detectedVars = new Set();
+              while ((match = regex.exec(text)) !== null) {
+                detectedVars.add(parseInt(match[1]));
+              }
+
+              const sortedVars = Array.from(detectedVars).sort((a, b) => a - b);
+
+              const existingValues = {};
+              varsInputs.querySelectorAll('input[name="examples"]').forEach(input => {
+                existingValues[input.dataset.varNum] = input.value;
+              });
+
+              varsInputs.innerHTML = "";
+              if (sortedVars.length > 0) {
+                varsContainer.style.display = "block";
+                sortedVars.forEach(varNum => {
+                  const row = document.createElement('div');
+                  row.style.cssText = 'display:flex; flex-direction:column; gap:4px; margin-bottom:8px;';
+                  
+                  const label = document.createElement('label');
+                  label.style.cssText = 'margin:0; font-size:12px; font-weight:600; color:var(--muted);';
+                  label.textContent = `Muestra para {{${varNum}}}`;
+
+                  const input = document.createElement('input');
+                  input.type = 'text';
+                  input.name = 'examples';
+                  input.placeholder = `Ej. para {{${varNum}}}`;
+                  input.dataset.varNum = varNum;
+                  input.required = true;
+                  input.value = existingValues[varNum] || "";
+                  input.style.margin = '0';
+                  
+                  input.addEventListener('input', updateTemplatePreview);
+                  
+                  row.appendChild(label);
+                  row.appendChild(input);
+                  varsInputs.appendChild(row);
+                });
+              } else {
+                varsContainer.style.display = "none";
+              }
+
+              updateTemplatePreview();
+            }
+
+            bodyText.addEventListener('input', detectVariables);
+            // Run on load to pick up any prefilled values
+            detectVariables();
+          }
+        })();
+      </script>
+    </div>
+    
+    
+    <!-- 6c. TAB PANEL: CONTACTOS -->
+    
+        <div id="panel-contacts" class="tab-panel">
+          <div class="grid-contacts" style="display:grid; grid-template-columns:1fr 340px; gap:20px; align-items:start;">
+            
+            <!-- Left Side: Table -->
+            <div class="card">
+              <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+                <div>
+                  <h2>Directorio de Contactos</h2>
+                  <p>Catálogo de contactos para campañas de difusión por WhatsApp. Total: <strong>0</strong> contactos.</p>
+                </div>
+              </div>
+              
+              <!-- Filter & Search Bar -->
+              <div style="background:#f8fafc; padding:12px 16px; border-bottom:1px solid var(--line); display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                <form method="get" action="/client/app" style="display:flex; gap:10px; flex:1; margin:0; flex-wrap:wrap;">
+                  <input type="hidden" name="bot_id" value="43">
+                  <input type="hidden" name="tab" value="contacts">
+                  <input name="search_q" placeholder="Buscar por nombre, teléfono..." value="" style="max-width:240px; margin:0; font-size:13px; padding:6px 10px;">
+                  <select name="tag_q" style="max-width:180px; margin:0; font-size:13px; padding:6px 10px;">
+                    <option value="">Todas las etiquetas</option>
+                  </select>
+                  <button class="btn" type="submit" style="padding:6px 14px; font-size:13px;">Filtrar</button>
+                  <a href="/client/app?bot_id=43&tab=contacts" class="btn secondary" style="text-decoration:none; display:inline-flex; align-items:center; padding:6px 14px; font-size:13px;">Limpiar</a>
+                </form>
+                
+                <div id="contactsActionBar" style="display:none; gap:8px;">
+                  <button class="btn" style="background:#2563eb; color:white; border:none; padding:6px 12px; font-size:13px;" onclick="startBroadcastFromSelected()">Crear Difusión ({{count}})</button>
+                  <form method="post" action="/client/bots/43/contacts/delete" id="deleteContactsForm" style="margin:0; padding:0; display:inline;">
+                    <input type="hidden" name="selected_contacts_list" id="selectedContactsListInput">
+                    <button class="btn secondary" type="button" style="color:var(--red); padding:6px 12px; font-size:13px;" onclick="confirmDeleteContacts()">Eliminar</button>
+                  </form>
+                </div>
+              </div>
+
+              <div style="overflow-x:auto;">
+                <table style="width:100%;" id="contactsTable">
+                  <thead>
+                    <tr>
+                      <th style="width: 40px; text-align: center;"><input type="checkbox" id="selectAllContacts" onchange="toggleSelectAllContacts(this)"></th>
+                      <th>Nombre</th>
+                      <th>Teléfono (WA ID)</th>
+                      <th>Negocio</th>
+                      <th>Etiquetas</th>
+                      <th>Registro</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr><td colspan="6" style="text-align:center; padding:30px; color:var(--muted); font-size:13.5px;">No se encontraron contactos en el directorio.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              
+              <!-- Paging footer -->
+              <div style="padding:14px; border-top:1px solid var(--line); display:flex; justify-content:space-between; align-items:center;">
+                <span style="font-size:12.5px; color:var(--muted);">Pág. 1 de 1</span>
+                <div style="display:flex; gap:6px;">
+                  <a href="/client/app?bot_id=43&tab=contacts&search_q=&tag_q=&cpage=0" class="btn secondary disabled" style="padding:5px 12px; font-size:12px; text-decoration:none;">Anterior</a>
+                  <a href="/client/app?bot_id=43&tab=contacts&search_q=&tag_q=&cpage=2" class="btn secondary disabled" style="padding:5px 12px; font-size:12px; text-decoration:none;">Siguiente</a>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Right Side: Import & Manual creation -->
+            <div style="display:flex; flex-direction:column; gap:20px;">
+              <div class="card">
+                <div class="card-header">
+                  <h2>Importar Contactos</h2>
+                  <p>Carga un archivo de Excel (.xlsx) o texto (.csv) con tu lista de contactos para importarlos masivamente.</p>
+                </div>
+                <form method="post" action="/client/bots/43/contacts/upload" enctype="multipart/form-data">
+                  <label>Seleccionar Archivo</label>
+                  <input type="file" name="file" accept=".csv,.xlsx,.xls" required style="font-size:13px; color:var(--muted); margin-bottom:12px;">
+                  <button class="btn primary-btn" type="submit" >Subir y Mapear</button>
+                </form>
+              </div>
+              
+              <div class="card">
+                <div class="card-header">
+                  <h2>Agregar Contacto Nuevo</h2>
+                  <p>Registra un contacto de forma individual en tu directorio.</p>
+                </div>
+                <form method="post" action="/client/bots/43/contacts/create-manual">
+                  <label>Nombre Completo</label>
+                  <input name="name" placeholder="Ej. Juan Pérez" required style="margin-bottom:10px;" >
+                  
+                  <label>Teléfono (WhatsApp con prefijo)</label>
+                  <input name="wa_id" placeholder="Ej. 5216869032840" required style="margin-bottom:10px;" >
+                  
+                  <label>Nombre del Negocio</label>
+                  <input name="business" placeholder="Ej. Tacos El Pastor" style="margin-bottom:10px;" >
+                  
+                  <label>Etiquetas (Separadas por coma)</label>
+                  <input name="tags" placeholder="Ej. VIP, Prospecto" style="margin-bottom:14px;" >
+                  
+                  <button class="btn primary-btn" type="submit" >Registrar Contacto</button>
+                </form>
+              </div>
+            </div>
+            
+          </div>
+          
+          <script>
+            function toggleSelectAllContacts(master) {
+              const checkboxes = document.querySelectorAll('.contact-checkbox');
+              checkboxes.forEach(cb => cb.checked = master.checked);
+              updateSelectedCount();
+            }
+            
+            function updateSelectedCount() {
+              const selected = document.querySelectorAll('.contact-checkbox:checked');
+              const actionBar = document.getElementById('contactsActionBar');
+              if (selected.length > 0) {
+                actionBar.style.display = 'flex';
+                const btn = actionBar.querySelector('button');
+                btn.textContent = `Crear Difusión (${selected.length})`;
+              } else {
+                actionBar.style.display = 'none';
+              }
+            }
+            
+            function startBroadcastFromSelected() {
+              const selected = document.querySelectorAll('.contact-checkbox:checked');
+              const ids = Array.from(selected).map(cb => cb.value);
+              const url = new URL(window.location.href);
+              url.searchParams.set("tab", "campaigns");
+              url.searchParams.set("broadcast_selected", ids.join(","));
+              window.location.href = url.toString();
+            }
+            
+            function confirmDeleteContacts() {
+              if (confirm("¿Estás seguro de que deseas eliminar los contactos seleccionados? Esta acción es irreversible.")) {
+                const selected = document.querySelectorAll('.contact-checkbox:checked');
+                const ids = Array.from(selected).map(cb => cb.value);
+                const form = document.getElementById('deleteContactsForm');
+                
+                ids.forEach(id => {
+                  const input = document.createElement('input');
+                  input.type = 'hidden';
+                  input.name = 'selected_contacts';
+                  input.value = id;
+                  form.appendChild(input);
+                });
+                
+                form.submit();
+              }
+            }
+          </script>
+        </div>
+        
+    
+    <!-- 6d. TAB PANEL: CAMPAÑAS -->
+    
+    <div id="panel-campaigns" class="tab-panel">
+      
+      <!-- List Campaigns View -->
+      <div id="campaignsListView" style="display:block;">
+        <div class="card">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <div>
+              <h2>Campañas de Envío Masivo</h2>
+              <p>Historial y estado de las campañas de difusión por WhatsApp usando plantillas aprobadas.</p>
+            </div>
+            <button class='btn primary-btn' onclick='showNewCampaignForm()'>Nueva Campaña</button>
+          </div>
+          
+          <div style="overflow-x:auto;">
+            <table style="width:100%;">
+              <thead>
+                <tr>
+                  <th>Nombre de Campaña</th>
+                  <th>Plantilla Utilizada</th>
+                  <th>Progreso de Envío</th>
+                  <th>Estado</th>
+                  <th>Fecha de Creación</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="5" style="text-align:center; padding:30px; color:var(--muted); font-size:13.5px;">No se han realizado campañas de envío masivo.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Create Campaign View -->
+      <div id="campaignsCreateView" style="display:none;">
+        <div class="grid-2">
+          
+          <!-- Left side: Configuration -->
+          <div class="card">
+            <div class="card-header">
+              <h2>Configurar Nueva Campaña</h2>
+              <p>Elige tu plantilla y configura el mapeo de variables dinámicas.</p>
+            </div>
+            
+            <form method="post" action="/client/bots/43/campaigns/create">
+              <input type="hidden" name="language_code" id="campaignLangCode" value="es_MX">
+              <input type="hidden" name="vars_count" id="campaignVarsCountInput" value="0">
+              
+              <label>Nombre de la Campaña</label>
+              <input name="campaign_name" placeholder="Ej. Promoción Junio 2026" required style="margin-bottom:12px;">
+              
+              <label>Destinatarios de la Campaña</label>
+              <div style="margin-bottom:12px; display:flex; flex-direction:column; gap:8px;">
+                <div style="display:flex; gap:16px;">
+                  <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0; cursor:pointer;">
+                    <input type="radio" name="recipients_option" value="selected" disabled onchange="toggleRecipientsType(this.value)"> 
+                    Contactos Seleccionados (0)
+                  </label>
+                  <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0; cursor:pointer;">
+                    <input type="radio" name="recipients_option" value="all" checked onchange="toggleRecipientsType(this.value)"> 
+                    Todos los Contactos (0)
+                  </label>
+                </div>
+                <input type="hidden" name="selected_wa_ids" value="">
+              </div>
+              
+              <label>Seleccionar Plantilla Meta</label>
+              <select name="template_name" required style="margin-bottom:16px;" onchange="onTemplateSelected(this)">
+                <option value="" disabled selected>-- Seleccionar plantilla --</option>
+              </select>
+              
+              <!-- Dynamic Variables Container -->
+              <div id="campaignVarsContainer" style="display:none; margin-bottom:20px;">
+                <label style="font-weight:700; margin-bottom:8px; display:block;">Mapear Variables Dinámicas</label>
+                <p class="muted-text" style="font-size:11.5px; margin-top:0; margin-bottom:10px;">Asocia cada marcador <code>{{1}}</code>, <code>{{2}}</code> con campos del contacto.</p>
+                <div id="campaignVarsInputs"></div>
+              </div>
+              
+              <div style="display:flex; gap:10px;">
+                <button class="btn primary-btn" type="submit">Iniciar Campaña Masiva</button>
+                <button class="btn secondary" type="button" onclick="cancelNewCampaign()">Cancelar</button>
+              </div>
+            </form>
+          </div>
+          
+          <!-- Right side: Template details / Preview -->
+          <div class="card" style="border:1px solid #bae6fd; background:#f0f9ff;">
+            <div class="card-header" style="border-bottom:1px solid #bae6fd; padding-bottom:8px; margin-bottom:12px;">
+              <h3 style="margin:0; font-size:14px; font-weight:700; color:#0369a1; display:flex; align-items:center; gap:6px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px; height:16px;"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                Vista de Plantilla Seleccionada
+              </h3>
+            </div>
+            <div style="background:#e5ddd5; padding:16px; border-radius:6px; min-height:100px; position:relative; font-family:'Inter', sans-serif;">
+              <div style="background:#ffffff; padding:10px 12px; border-radius:6px; max-width:90%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 0.5px rgba(0,0,0,0.13); position:relative;">
+                <span id="campaignTemplateText" style="word-break: break-word; color:#333;">Selecciona una plantilla para previsualizar el cuerpo...</span>
+                <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+              </div>
+            </div>
+            <div style="margin-top:14px; font-size:12px; color:#0369a1;">
+              <strong>Nota:</strong> Los destinatarios recibirán el mensaje reemplazando cada variable con sus datos correspondientes. Si la variable está mapeada al Nombre, se reemplazará por su nombre real guardado en el directorio.
+            </div>
+          </div>
+          
+        </div>
+      </div>
+      
+      <script>
+        const metaTemplates = [];
+        
+        function showNewCampaignForm() {
+          document.getElementById('campaignsListView').style.display = 'none';
+          document.getElementById('campaignsCreateView').style.display = 'block';
+        }
+        
+        function cancelNewCampaign() {
+          document.getElementById('campaignsListView').style.display = 'block';
+          document.getElementById('campaignsCreateView').style.display = 'none';
+          const url = new URL(window.location.href);
+          if (url.searchParams.has("broadcast_selected")) {
+            url.searchParams.delete("broadcast_selected");
+            window.location.href = url.toString();
+          }
+        }
+        
+        function toggleRecipientsType(val) {
+          // logic placeholder
+        }
+        
+        function onTemplateSelected(select) {
+          const templateName = select.value;
+          const selectedTpl = metaTemplates.find(t => t.name === templateName);
+          const variablesContainer = document.getElementById('campaignVarsContainer');
+          const variablesInputs = document.getElementById('campaignVarsInputs');
+          const previewText = document.getElementById('campaignTemplateText');
+          
+          if (!selectedTpl) return;
+          
+          document.getElementById('campaignLangCode').value = selectedTpl.language || "es_MX";
+          
+          const bodyComp = selectedTpl.components.find(c => c.type === 'BODY');
+          const bodyText = bodyComp ? bodyComp.text : "";
+          previewText.innerHTML = bodyText.replace(/\n/g, '<br>');
+          
+          const regex = /\{\s*(\d+)\s*\}/g;
+          let match;
+          const vars = new Set();
+          while ((match = regex.exec(bodyText)) !== null) {
+            vars.add(parseInt(match[1]));
+          }
+          
+          const sortedVars = Array.from(vars).sort((a, b) => a - b);
+          document.getElementById('campaignVarsCountInput').value = sortedVars.length;
+          
+          variablesInputs.innerHTML = "";
+          if (sortedVars.length > 0) {
+            variablesContainer.style.display = "block";
+            sortedVars.forEach(varNum => {
+              const div = document.createElement('div');
+              div.style.cssText = 'background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px; margin-bottom:12px;';
+              div.innerHTML = `
+                <label style="font-weight:600; margin-bottom:4px; display:block; font-size:12.5px;">Variable {{${varNum}}}</label>
+                <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                  <select name="var_map_type_${varNum}" style="margin:0; flex:1; max-width:200px;" onchange="toggleVarValueInput(${varNum}, this.value)">
+                    <option value="name">Nombre del Contacto</option>
+                    <option value="business">Negocio del Contacto</option>
+                    <option value="wa_id">Teléfono del Contacto</option>
+                    <option value="fixed">Valor Fijo (Texto estático)</option>
+                  </select>
+                  <input type="text" name="var_map_value_${varNum}" id="var_map_value_input_${varNum}" placeholder="Ej. Clinica Dental" style="display:none; margin:0; flex:2;" required disabled>
+                </div>
+              `;
+              variablesInputs.appendChild(div);
+            });
+          } else {
+            variablesContainer.style.display = "none";
+          }
+        }
+        
+        function toggleVarValueInput(varNum, val) {
+          const input = document.getElementById(`var_map_value_input_${varNum}`);
+          if (val === 'fixed') {
+            input.style.display = 'block';
+            input.required = true;
+            input.disabled = false;
+          } else {
+            input.style.display = 'none';
+            input.required = false;
+            input.disabled = true;
+          }
+        }
+      </script>
+    </div>
+    
+    
+    <!-- 7. TAB PANEL: INTEGRACIONES -->
+    <div id="panel-integrations" class="tab-panel">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h2>Chatwoot (Bandeja Multicanal)</h2>
+            <p>Conecta tu cuenta de Chatwoot para responder manualmente a tus clientes cuando la IA transfiere el chat.</p>
+          </div>
+          
+          <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <span class="bold-text">Estado de Integración</span>
+            <span class="badge warning">
+              Desconectado
+            </span>
+          </div>
+          
+          <form method="post" action="/client/bots/43/integrations/chatwoot">
+            <div class="checkbox-group">
+              <input type="checkbox" name="enabled" id="chatwootToggle" >
+              <label for="chatwootToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar Sincronización con Chatwoot</label>
+            </div>
+            
+            <label>URL Base de Chatwoot</label>
+            <input name="base_url" placeholder="https://app.chatwoot.com" value="">
+            
+            <div style="display:flex; gap:10px;">
+              <div style="flex:1;">
+                <label>Account ID</label>
+                <input name="account_id" placeholder="Ej. 1" value="">
+              </div>
+              <div style="flex:1;">
+                <label>Inbox ID</label>
+                <input name="inbox_id" placeholder="Ej. 12" value="">
+              </div>
+            </div>
+            
+            <label>User API Token</label>
+            <div class="password-wrapper">
+              <input type="password" name="api_token" placeholder="Copia aquí el token" autocomplete="new-password" value="">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            
+            <div style="margin-top:20px; display:flex; gap:10px;">
+              <button class="btn primary-btn" type="submit" >Guardar Chatwoot</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Agenda (Google Calendar)</h2>
+            <p>Conecta la cuenta de Google Calendar de tu negocio para agendar de forma autónoma.</p>
+          </div>
+          
+          <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <span class="bold-text">Habilidad de Calendario</span>
+            <span class="badge warning">
+              Inactiva
+            </span>
+          </div>
+          
+          <form method="post" action="/client/bots/43/integrations/calendar">
+            <div class="checkbox-group">
+              <input type="checkbox" name="enabled" id="calendarSkillToggle" checked>
+              <label for="calendarSkillToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar reserva automática</label>
+            </div>
+            
+            <label>Google Client ID</label>
+            <input name="client_id" placeholder="12345-abcde.apps.googleusercontent.com" value="">
+            
+            <label>Google Client Secret</label>
+            <div class="password-wrapper">
+              <input type="password" name="client_secret" placeholder="********" autocomplete="new-password" value="">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            
+            <label>Google Refresh Token</label>
+            <div class="password-wrapper">
+              <input type="password" name="refresh_token" placeholder="1//0..." autocomplete="new-password" value="">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            
+            <label>Google Calendar ID</label>
+            <input name="calendar_id" placeholder="ej. primary o email@gmail.com" value="primary">
+            
+            <label>Zona Horaria</label>
+            <input name="timezone" placeholder="America/Chihuahua" value="America/Chihuahua">
+            
+            <div style="margin-top:20px; display:flex; gap:10px;">
+              <button class="btn primary-btn" type="submit" >Guardar Agenda</button>
+            </div>
+          </form>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">
+            <h2>Variables de Entorno (API / Webhook)</h2>
+            <p>Configura variables dinámicas (Ej. <code>MERCADOPAGO_TOKEN</code>) para usarlas en llamadas externas reemplazando su nombre con llaves: <code>{MERCADOPAGO_TOKEN}</code>.</p>
+          </div>
+          
+          <form method="post" action="/client/bots/43/integrations/api">
+            <label>URL Base del API (Opcional)</label>
+            <input name="base_url" placeholder="https://api.miclinicadental.com/v1" value="">
+            
+            <div style="margin-top: 16px;">
+              <label>Variables de Entorno</label>
+              <div id="envVarsContainer" style="display:flex; flex-direction:column; gap:8px;">
+                
+              </div>
+              <button type="button" class="btn secondary" style="margin-top:12px; font-size:12px;" onclick="addEnvVarRow()">+ Agregar Variable</button>
+            </div>
+            
+            <div style="margin-top:24px;">
+              <button class="btn primary-btn" type="submit" >Guardar Variables</button>
+            </div>
+          </form>
+          
+          <script>
+            function addEnvVarRow() {
+              const container = document.getElementById('envVarsContainer');
+              const row = document.createElement('div');
+              row.className = 'env-var-row';
+              row.style.cssText = 'display:flex; gap:8px; align-items:center; margin-top:4px;';
+              row.innerHTML = `
+                <input name="env_key" placeholder="KEY (Ej. API_KEY)" style="flex:1; margin:0;" required>
+                <div class="password-wrapper" style="flex:2;">
+                  <input type="password" name="env_val" placeholder="Valor del secreto" autocomplete="new-password" style="margin:0;" required>
+                  <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+                  </button>
+                </div>
+                <button type="button" class="btn secondary" style="padding:8px 12px; color:var(--red);" onclick="this.parentElement.remove()">X</button>
+              `;
+              container.appendChild(row);
+            }
+          </script>
+        </div>
+      </div>
+    </div>
+    
+    </main>
+  </div>
+  
+  <script>
+    function switchTab(tabId) {
+      // Update sidebar links
+      document.querySelectorAll('.sidebar-link').forEach(link => {
+        link.classList.remove('active');
+        const onclickAttr = link.getAttribute('onclick');
+        if (onclickAttr && onclickAttr.includes(tabId)) {
+          link.classList.add('active');
+        }
+      });
+      // Update tab panels
+      document.querySelectorAll('.tab-panel').forEach(panel => {
+        panel.classList.remove('active');
+      });
+      const activePanel = document.getElementById('panel-' + tabId);
+      if (activePanel) {
+        activePanel.classList.add('active');
+      }
+      
+      // Auto-scroll chat messages if switching to conversations tab
+      if (tabId === 'conversations') {
+        const chatMessages = document.querySelector('.chat-messages');
+        if (chatMessages) {
+          chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+      }
+      
+      // Save tab to URL state
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", tabId);
+      window.history.replaceState(null, "", url);
+    }
+    
+    function changeActiveBot(botId) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("bot_id", botId);
+      window.location.href = url.toString();
+    }
+    
+    // Auto-activate tab from URL parameters
+    window.addEventListener('DOMContentLoaded', () => {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get("tab") || "inicio";
+      switchTab(tab);
+      
+      // Auto-scroll chat messages on load
+      const chatMessages = document.querySelector('.chat-messages');
+      if (chatMessages) {
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+    });
+
+    // Auto-refresh chat list and messages in background (Conversations tab)
+    setInterval(async () => {
+      if (document.hidden) return;
+      
+      const chatLayout = document.querySelector('.chatwoot-layout');
+      if (!chatLayout || chatLayout.offsetParent === null) return;
+      
+      try {
+        const response = await fetch(window.location.href);
+        if (response.ok) {
+          const html = await response.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, 'text/html');
+          
+          const newChatList = doc.querySelector('.chat-list');
+          const currentChatList = document.querySelector('.chat-list');
+          if (newChatList && currentChatList) {
+            if (currentChatList.innerHTML !== newChatList.innerHTML) {
+              currentChatList.innerHTML = newChatList.innerHTML;
+            }
+          }
+          
+          const newMessages = doc.querySelector('.chat-messages');
+          const currentMessages = document.querySelector('.chat-messages');
+          if (newMessages && currentMessages) {
+            if (currentMessages.innerHTML !== newMessages.innerHTML) {
+              const hadNewMessages = newMessages.children.length !== currentMessages.children.length;
+              const wasAtBottom = currentMessages.scrollHeight - currentMessages.scrollTop <= currentMessages.clientHeight + 100;
+              
+              currentMessages.innerHTML = newMessages.innerHTML;
+              
+              if (hadNewMessages && wasAtBottom) {
+                currentMessages.scrollTop = currentMessages.scrollHeight;
+              }
+            }
+          }
+          
+          const newCrm = doc.querySelector('.chat-crm');
+          const currentCrm = document.querySelector('.chat-crm');
+          if (newCrm && currentCrm) {
+            if (currentCrm.innerHTML !== newCrm.innerHTML) {
+              currentCrm.innerHTML = newCrm.innerHTML;
+            }
+          }
+
+          const newHeader = doc.querySelector('.chat-header');
+          const currentHeader = document.querySelector('.chat-header');
+          if (newHeader && currentHeader) {
+            if (currentHeader.innerHTML !== newHeader.innerHTML) {
+              currentHeader.innerHTML = newHeader.innerHTML;
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error refreshing conversations:", err);
+      }
+    }, 4000);
+  </script>
+</body>
+</html>
