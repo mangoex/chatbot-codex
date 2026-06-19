@@ -47,6 +47,7 @@ def polish(reply: str, history: list[dict], user_text: str | None = None) -> str
     clean = re.sub(r"\buser\s+safety:\s*\w+", "", clean, flags=re.IGNORECASE)
     clean = re.sub(r"\bresponse\s+safety:\s*\w+", "", clean, flags=re.IGNORECASE)
     clean = re.sub(r"\bsafety:\s*\w+", "", clean, flags=re.IGNORECASE)
+    clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.IGNORECASE | re.DOTALL)
     clean = clean.strip()
 
     if looks_broken(clean):
