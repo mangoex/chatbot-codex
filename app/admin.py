@@ -2291,7 +2291,7 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
     session = _require_login(request)
     bot = await _require_bot_access(session, bot_id)
     prompt = await db.get_active_bot_prompt(bot_id)
-    content = (prompt or {}).get("content") or config.SYSTEM_PROMPT
+    content = (prompt or {}).get("content") or (config.SYSTEM_PROMPT if bot_id == 1 else config.FALLBACK_PROMPT)
     source = "Postgres" if prompt else "Archivo base"
     can_edit = _is_agency(session) or session.get("role") == "client_admin"
     notice = '<div class="trend">Prompt publicado.</div>' if saved else ""

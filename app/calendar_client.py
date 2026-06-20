@@ -56,6 +56,7 @@ class CalendarRuntime:
     location: str
     source: str
     integration_id: int | None = None
+    bot_name: str = "Asistto"
 
 
 def enabled() -> bool:
@@ -81,6 +82,7 @@ def _global_runtime() -> CalendarRuntime:
         summary_prefix=config.GOOGLE_APPOINTMENT_SUMMARY_PREFIX,
         location=config.GOOGLE_APPOINTMENT_LOCATION,
         source="env",
+        bot_name="Asistto",
     )
 
 
@@ -103,6 +105,15 @@ def _int_config(data: dict, key: str, default: int) -> int:
 
 
 async def _runtime(bot_id: int | None = None) -> CalendarRuntime:
+    bot_name = "Asistto"
+    if bot_id:
+        try:
+            bot_data = await db.get_bot(bot_id)
+            if bot_data and bot_data.get("name"):
+                bot_name = bot_data["name"]
+        except Exception:
+            pass
+
     if bot_id:
         integration = await db.get_active_bot_integration(bot_id, "google_calendar")
         if integration:
@@ -116,6 +127,13 @@ async def _runtime(bot_id: int | None = None) -> CalendarRuntime:
             refresh_token = _secret(secrets, "refresh_token", "google_refresh_token")
             calendar_id = str(cfg.get("calendar_id") or "primary").strip()
             timezone = str(cfg.get("timezone") or config.GOOGLE_CALENDAR_TIMEZONE).strip()
+
+            summary_prefix = str(cfg.get("summary_prefix") or "").strip()
+            if not summary_prefix:
+                summary_prefix = config.GOOGLE_APPOINTMENT_SUMMARY_PREFIX
+                if summary_prefix == "Llamada Asistto" and bot_name != "Asistto":
+                    summary_prefix = f"Llamada {bot_name}"
+
             return CalendarRuntime(
                 enabled=bool(client_id and client_secret and refresh_token and calendar_id),
                 client_id=client_id,
@@ -133,14 +151,32 @@ async def _runtime(bot_id: int | None = None) -> CalendarRuntime:
                     "buffer_minutes",
                     config.GOOGLE_APPOINTMENT_BUFFER_MINUTES,
                 ),
-                summary_prefix=str(
-                    cfg.get("summary_prefix") or config.GOOGLE_APPOINTMENT_SUMMARY_PREFIX
-                ).strip(),
+                summary_prefix=summary_prefix,
                 location=str(cfg.get("location") or "").strip(),
                 source="bot_integration",
                 integration_id=int(integration["id"]),
+                bot_name=bot_name,
             )
-    return _global_runtime()
+
+    global_rt = _global_runtime()
+    summary_prefix = global_rt.summary_prefix
+    if summary_prefix == "Llamada Asistto" and bot_name != "Asistto":
+        summary_prefix = f"Llamada {bot_name}"
+
+    return CalendarRuntime(
+        enabled=global_rt.enabled,
+        client_id=global_rt.client_id,
+        client_secret=global_rt.client_secret,
+        refresh_token=global_rt.refresh_token,
+        calendar_id=global_rt.calendar_id,
+        timezone=global_rt.timezone,
+        duration_minutes=global_rt.duration_minutes,
+        buffer_minutes=global_rt.buffer_minutes,
+        summary_prefix=summary_prefix,
+        location=global_rt.location,
+        source=global_rt.source,
+        bot_name=bot_name,
+    )
 
 
 def config_status() -> dict[str, bool | str]:
@@ -376,13 +412,13 @@ async def _insert_event(
 ) -> dict:
     calendar_id = quote(runtime.calendar_id, safe="")
     attendee_name = str(data.get("attendee_name") or "Prospecto").strip()
-    topic = str(data.get("topic") or "Revisar Asistto").strip()
+    topic = str(data.get("topic") or f"Revisar {runtime.bot_name}").strip()
     title = str(data.get("title") or "").strip()
     summary = title or f"{runtime.summary_prefix} - {attendee_name}"
     body = {
         "summary": summary[:180],
         "description": (
-            "Cita creada desde el bot de WhatsApp Asistto.\n"
+            f"Cita creada desde el bot de WhatsApp {runtime.bot_name}.\n"
             f"Nombre: {attendee_name}\n"
             f"Objetivo: {topic}\n"
             f"Origen: WhatsApp {data.get('wa_id', '')}\n"
@@ -482,7 +518,7 @@ async def _candidate_from_db(
         candidates.append(
             {
                 "id": row["google_event_id"],
-                "summary": row.get("attendee_name") or row.get("topic") or "Llamada Asistto",
+                "summary": row.get("attendee_name") or row.get("topic") or f"Llamada {runtime.bot_name if runtime else 'Asistto'}",
                 "start": {"dateTime": row["start_at"].isoformat()},
                 "_db": True,
             }

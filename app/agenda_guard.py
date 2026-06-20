@@ -526,7 +526,7 @@ def _extract_cancel_start(text: str, history: list[dict]) -> datetime | None:
     return None
 
 
-def _topic(user_text: str, history: list[dict]) -> str:
+def _topic(user_text: str, history: list[dict], bot_name: str = "Asistto") -> str:
     joined = f"{_history_text(history)}\n{user_text}".lower()
     if "consult" in joined:
         return "Automatizar atencion por WhatsApp para consultoria"
@@ -534,7 +534,7 @@ def _topic(user_text: str, history: list[dict]) -> str:
         return "Automatizar WhatsApp y citas"
     if "whatsapp" in joined:
         return "Automatizar atencion por WhatsApp"
-    return "Conocer Asistto y revisar automatizacion"
+    return f"Conocer {bot_name} y revisar automatizacion"
 
 
 async def maybe_handle(
@@ -587,12 +587,26 @@ async def maybe_handle(
         display_name = _first_name(name) or name
         return f"Gracias, {display_name}. ¿Qué día y hora quieres para la llamada?", False
 
+    bot_name = "Asistto"
+    if bot_id:
+        try:
+            from app import db
+            bot_data = await db.get_bot(bot_id)
+            if bot_data and bot_data.get("name"):
+                bot_name = bot_data["name"]
+        except Exception:
+            pass
+
+    summary_prefix = config.GOOGLE_APPOINTMENT_SUMMARY_PREFIX
+    if summary_prefix == "Llamada Asistto" and bot_name != "Asistto":
+        summary_prefix = f"Llamada {bot_name}"
+
     data = {
-        "title": f"{config.GOOGLE_APPOINTMENT_SUMMARY_PREFIX} con {name}",
+        "title": f"{summary_prefix} con {name}",
         "start": start.isoformat(),
         "duration_minutes": config.GOOGLE_APPOINTMENT_DURATION_MINUTES,
         "attendee_name": name,
-        "topic": _topic(user_text, history),
+        "topic": _topic(user_text, history, bot_name=bot_name),
     }
     marker = f"[[CALENDAR_EVENT: {json.dumps(data, ensure_ascii=False)}]]"
     return await calendar_client.process_reply(
