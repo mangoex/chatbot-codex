@@ -2585,39 +2585,39 @@ async def client_app(
       </script>
       <style>
         /* Estilos para hacer EasyMDE más presentable y acorde al diseño */
-        .editor-toolbar {
+        .editor-toolbar {{
           border: 1px solid var(--border-color) !important;
           border-bottom: none !important;
           border-radius: 8px 8px 0 0 !important;
           opacity: 1 !important;
           background: #f8fafc;
-        }
-        .CodeMirror {
+        }}
+        .CodeMirror {{
           border: 1px solid var(--border-color) !important;
           border-radius: 0 0 8px 8px !important;
           font-family: 'Inter', system-ui, sans-serif !important;
           font-size: 13.5px !important;
           line-height: 1.6 !important;
           color: var(--text-main) !important;
-        }
+        }}
         /* Reducir el tamaño gigantesco de los headers dentro del editor */
-        .cm-s-easymde .cm-header-1 { font-size: 1.35em !important; font-weight: 700 !important; color: var(--primary-dark) !important; }
-        .cm-s-easymde .cm-header-2 { font-size: 1.25em !important; font-weight: 700 !important; color: var(--primary-dark) !important; }
-        .cm-s-easymde .cm-header-3 { font-size: 1.15em !important; font-weight: 600 !important; }
-        .cm-s-easymde .cm-header-4 { font-size: 1.05em !important; font-weight: 600 !important; }
-        .editor-preview {
+        .cm-s-easymde .cm-header-1 {{ font-size: 1.35em !important; font-weight: 700 !important; color: var(--primary-dark) !important; }}
+        .cm-s-easymde .cm-header-2 {{ font-size: 1.25em !important; font-weight: 700 !important; color: var(--primary-dark) !important; }}
+        .cm-s-easymde .cm-header-3 {{ font-size: 1.15em !important; font-weight: 600 !important; }}
+        .cm-s-easymde .cm-header-4 {{ font-size: 1.05em !important; font-weight: 600 !important; }}
+        .editor-preview {{
           font-family: 'Inter', system-ui, sans-serif !important;
           font-size: 14px !important;
           line-height: 1.6 !important;
           background: #f8fafc !important;
-        }
-        .editor-preview h1 { font-size: 1.5em !important; margin-bottom: 0.5em; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
-        .editor-preview h2 { font-size: 1.3em !important; margin-bottom: 0.5em; }
-        .editor-preview h3 { font-size: 1.1em !important; margin-bottom: 0.5em; }
-        .editor-toolbar button.active, .editor-toolbar button:hover {
+        }}
+        .editor-preview h1 {{ font-size: 1.5em !important; margin-bottom: 0.5em; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }}
+        .editor-preview h2 {{ font-size: 1.3em !important; margin-bottom: 0.5em; }}
+        .editor-preview h3 {{ font-size: 1.1em !important; margin-bottom: 0.5em; }}
+        .editor-toolbar button.active, .editor-toolbar button:hover {{
           background: var(--bg-hover) !important;
           border-radius: 4px;
-        }
+        }}
       </style>
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
       <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
