@@ -1,57 +1,65 @@
-import sys
-import types
-# Mock dotenv module
-sys.modules['dotenv'] = types.SimpleNamespace(load_dotenv=lambda: None)
-
 import os
 import asyncio
+import asyncpg
 
 # Parse .env file manually
+env_vars = {}
 if os.path.exists(".env"):
     with open(".env", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 key, val = line.split("=", 1)
-                os.environ[key.strip()] = val.strip().strip('"').strip("'")
+                env_vars[key.strip()] = val.strip().strip('"').strip("'")
 
-from app import db
+DATABASE_URL = env_vars.get("DATABASE_URL") or os.environ.get("DATABASE_URL")
+print(f"Connecting to database (length of URL: {len(DATABASE_URL) if DATABASE_URL else 0})...")
 
 async def main():
-    await db.init_pool()
+    if not DATABASE_URL:
+        print("Error: DATABASE_URL not found in .env or environment")
+        return
+    conn = await asyncpg.connect(DATABASE_URL)
     try:
-        async with db._pool.acquire() as conn:
-            print("=== BOTS ===")
-            bots = await conn.fetch("SELECT id, name, slug FROM bots")
-            for b in bots:
-                print(f"Bot ID: {b['id']}, Name: {b['name']}, Slug: {b['slug']}")
+        print("=== BOTS ===")
+        bots = await conn.fetch("SELECT id, name, slug, status, openai_model FROM bots")
+        for b in bots:
+            print(f"Bot ID: {b['id']}, Name: {b['name']}, Slug: {b['slug']}, Status: {b['status']}, Model: {b['openai_model']}")
             
-            print("\n=== BOT WHATSAPP NUMBERS ===")
-            numbers = await conn.fetch("SELECT id, bot_id, phone_number_id, display_phone_number, status, business_id, waba_id FROM bot_whatsapp_numbers")
-            for n in numbers:
-                print(f"ID: {n['id']}, Bot ID: {n['bot_id']}, Phone ID: {n['phone_number_id']}, Display: {n['display_phone_number']}, Status: {n['status']}, Business: {n['business_id']}, WABA: {n['waba_id']}")
+            # Fetch from bot_whatsapp_numbers
+            wa = await conn.fetchrow("SELECT phone_number_id, display_phone_number, status, whatsapp_access_token FROM bot_whatsapp_numbers WHERE bot_id = $1", b['id'])
+            if wa:
+                token_preview = (wa['whatsapp_access_token'][:15] + "...") if wa['whatsapp_access_token'] else "None"
+                print(f"  WhatsApp Connection: Phone ID: {wa['phone_number_id']}, Number: {wa['display_phone_number']}, Status: {wa['status']}, Token: {token_preview}")
+            else:
+                print("  WhatsApp Connection: None")
+            
+            # Fetch integrations
+            integrations = await conn.fetch("SELECT id, name, integration_type, enabled FROM bot_integrations WHERE bot_id = $1", b['id'])
+            print(f"  Integrations ({len(integrations)}):")
+            for inte in integrations:
+                print(f"    - ID: {inte['id']}, Name: {inte['name']}, Type: {inte['integration_type']}, Enabled: {inte['enabled']}")
+            
+            # Fetch active prompt
+            prompt = await conn.fetchrow("SELECT id, status, content FROM bot_prompts WHERE bot_id = $1 AND status = 'active' LIMIT 1", b['id'])
+            if prompt:
+                print(f"  Active Prompt ID: {prompt['id']}, Length: {len(prompt['content']) if prompt['content'] else 0}")
+            else:
+                print("  Active Prompt: None")
                 
-            print("\n=== BOT INTEGRATIONS ===")
-            integrations = await conn.fetch("SELECT id, bot_id, integration_type, name, enabled FROM bot_integrations")
-            for i in integrations:
-                print(f"ID: {i['id']}, Bot ID: {i['bot_id']}, Type: {i['integration_type']}, Name: {i['name']}, Enabled: {i['enabled']}")
-                
-            print("\n=== LEADS ===")
-            leads = await conn.fetch("SELECT id, bot_id, wa_id, nombre, qualification_status FROM leads ORDER BY id DESC LIMIT 10")
-            for l in leads:
-                print(f"ID: {l['id']}, Bot ID: {l['bot_id']}, WA ID: {l['wa_id']}, Name: {l['nombre']}, Status: {l['qualification_status']}")
-                
-            print("\n=== CONVERSATIONS (LAST 10) ===")
-            convs = await conn.fetch("SELECT id, bot_id, wa_id, role, content, created_at FROM conversations ORDER BY id DESC LIMIT 10")
-            for c in convs:
-                print(f"ID: {c['id']}, Bot ID: {c['bot_id']}, WA ID: {c['wa_id']}, Role: {c['role']}, Content: {c['content']}, Date: {c['created_at']}")
-                
-            print("\n=== ESCALATIONS ===")
-            escalations = await conn.fetch("SELECT id, bot_id, wa_id, status, reason FROM escalations ORDER BY id DESC LIMIT 10")
-            for e in escalations:
-                print(f"ID: {e['id']}, Bot ID: {e['bot_id']}, WA ID: {e['wa_id']}, Status: {e['status']}, Reason: {e['reason']}")
+            # Fetch knowledge documents
+            docs = await conn.fetch("SELECT id, title, status FROM bot_knowledge WHERE bot_id = $1", b['id'])
+            print(f"  Knowledge Docs ({len(docs)}):")
+            for d in docs:
+                print(f"    - ID: {d['id']}, Title: {d['title']}, Status: {d['status']}")
+            print("----------------")
+            
+        print("\n=== Bot WhatsApp Numbers raw ===")
+        all_wa = await conn.fetch("SELECT * FROM bot_whatsapp_numbers")
+        for w in all_wa:
+            print(dict(w))
     finally:
-        await db.close_pool()
+        await conn.close()
 
 if __name__ == "__main__":
     asyncio.run(main())

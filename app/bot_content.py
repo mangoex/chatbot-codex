@@ -35,6 +35,12 @@ async def system_prompt_for_bot(bot_id: int | None = None) -> str:
         log.exception("No se pudo cargar prompt/conocimiento del bot %s", bot_id)
         return fallback
 
+    log.info(
+        "Cargando prompt para bot_id=%s. ¿Se encontró row activo?: %s, Documentos de conocimiento: %d",
+        bot_id,
+        prompt_row is not None,
+        len(knowledge_docs),
+    )
     base_prompt = (prompt_row or {}).get("content") or fallback
     return combine_prompt(base_prompt, knowledge_docs)
 

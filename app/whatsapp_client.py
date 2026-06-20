@@ -33,6 +33,16 @@ async def send_text(
     }
     async with httpx.AsyncClient(timeout=20) as c:
         r = await c.post(url, headers=headers, json=payload)
+        if r.status_code >= 400:
+            import logging
+            log = logging.getLogger("whatsapp-bot")
+            log.error(
+                "Error en la API de WhatsApp (%d): %s. URL: %s, Payload: %s",
+                r.status_code,
+                r.text,
+                url,
+                payload,
+            )
         r.raise_for_status()
         return r.json()
 

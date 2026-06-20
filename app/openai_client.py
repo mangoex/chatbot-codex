@@ -121,6 +121,16 @@ async def complete(
         + fitted
         + [{"role": "user", "content": user_message}]
     )
+    import logging
+    logger = logging.getLogger("whatsapp-bot")
+    logger.info(
+        "Llamada completada a OpenAI. bot_id=%s, model=%s, largo_system_prompt=%d, mensajes_historial=%d, preview_system_prompt=%r",
+        bot_id,
+        openai_model or config.OPENAI_MODEL,
+        len(system),
+        len(fitted),
+        system[:300]
+    )
     return await _chat(messages, model=openai_model)
 
 

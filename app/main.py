@@ -236,7 +236,8 @@ async def _send_and_track(
     history: list[dict],
     scheduled: bool = False,
 ) -> None:
-    reply = reply_safety.polish(reply, history, user_text=user_text)
+    reply = reply_safety.polish(reply, history, user_text=user_text, bot_name=bot.name)
+    log.info("Sending polished reply to %s: %r", wa_id, reply)
     await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
     await whatsapp_client.send_text(
         wa_id,
@@ -283,7 +284,17 @@ async def _process_message(payload: dict) -> None:
         return
 
     wa_id = msg["wa_id"]
-    bot = await bots.resolve_by_phone_number_id(msg.get("phone_number_id"))
+    phone_id = msg.get("phone_number_id")
+    bot = await bots.resolve_by_phone_number_id(phone_id)
+    
+    log.info(
+        "--- INICIO PROCESAMIENTO --- wa_id=%s, phone_number_id=%s, resolved_bot_id=%s, resolved_bot_name=%s, bot_status=%s",
+        wa_id,
+        phone_id,
+        bot.id,
+        bot.name,
+        bot.status,
+    )
     if await db.was_processed(msg["message_id"]):
         log.info("Mensaje duplicado, ignorado: %s", msg["message_id"])
         return
