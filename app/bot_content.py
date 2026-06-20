@@ -25,7 +25,19 @@ def combine_prompt(base_prompt: str, knowledge_docs: list[dict]) -> str:
 
 
 async def system_prompt_for_bot(bot_id: int | None = None) -> str:
-    fallback = config.SYSTEM_PROMPT if (not bot_id or bot_id == 1) else config.FALLBACK_PROMPT
+    bot_name = "Asistto"
+    if bot_id and bot_id != 1:
+        try:
+            bot_data = await db.get_bot(bot_id)
+            if bot_data and bot_data.get("name"):
+                bot_name = bot_data["name"]
+        except Exception:
+            pass
+
+    fallback = config.SYSTEM_PROMPT
+    if bot_name != "Asistto":
+        fallback = fallback.replace("Asistto", bot_name).replace("asistto", bot_name.lower())
+
     if not bot_id:
         return fallback
     try:
