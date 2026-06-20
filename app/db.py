@@ -318,6 +318,10 @@ async def run_migrations() -> None:
             await conn.execute(
                 f"ALTER TABLE bot_whatsapp_numbers ADD COLUMN IF NOT EXISTS {column} {definition}"
             )
+        # Onetime fix for stolen phone number id (stolen back to bot 1 by startup default seeding)
+        await conn.execute(
+            "UPDATE bot_whatsapp_numbers SET bot_id = 43 WHERE phone_number_id = '1173938019132326' AND bot_id = 1"
+        )
     await ensure_default_bot()
 
 
@@ -979,9 +983,7 @@ async def ensure_default_bot() -> int:
                 """
                 INSERT INTO bot_whatsapp_numbers(bot_id, phone_number_id, display_phone_number)
                 VALUES($1, $2, '')
-                ON CONFLICT (phone_number_id) DO UPDATE SET
-                    bot_id = EXCLUDED.bot_id,
-                    updated_at = now()
+                ON CONFLICT (phone_number_id) DO NOTHING
                 """,
                 bot["id"],
                 config.WHATSAPP_PHONE_NUMBER_ID,
