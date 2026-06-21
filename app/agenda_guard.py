@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Guardrails deterministicos para el flujo de agenda antes de llamar al modelo."""
 import calendar
 import json

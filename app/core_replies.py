@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Deterministic replies for core Asistto explanations.
 
 These answers are intentionally handled before the model. They are product

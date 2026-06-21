@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Bot configuration resolution for multi-bot routing."""
 from dataclasses import dataclass
 
@@ -66,4 +67,27 @@ async def resolve_by_phone_number_id(phone_number_id: str | None) -> BotContext:
             if not row.get("whatsapp_access_token"):
                 row = {**row, "whatsapp_access_token": await _whatsapp_cloud_token(int(row["bot_id"]))}
             return _from_row(row)
+    return default_bot()
+
+
+async def resolve_by_bot_id(bot_id: int | None) -> BotContext:
+    if bot_id and bot_id != 1:
+        row = await db.get_bot(bot_id)
+        if row:
+            token = await _whatsapp_cloud_token(bot_id)
+            wa_row = await db.get_bot_whatsapp_number(bot_id)
+            phone_number_id = wa_row.get("phone_number_id", "") if wa_row else ""
+            display_num = wa_row.get("display_phone_number", "") if wa_row else ""
+            full_row = {
+                "bot_id": bot_id,
+                "client_id": row.get("client_id"),
+                "slug": row.get("slug"),
+                "name": row.get("name"),
+                "phone_number_id": phone_number_id,
+                "whatsapp_access_token": token,
+                "display_phone_number": display_num,
+                "openai_model": row.get("openai_model"),
+                "status": row.get("status"),
+            }
+            return _from_row(full_row)
     return default_bot()

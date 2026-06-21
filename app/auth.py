@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Password hashing helpers for admin/client login."""
 import hashlib
 import hmac

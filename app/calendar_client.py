@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Creacion de citas en Google Calendar usando OAuth refresh token."""
 import json
 import logging

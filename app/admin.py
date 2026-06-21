@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Admin frontend: login, dashboard, conversations, CRM and escalations."""
 import html
 import json
@@ -3351,6 +3352,31 @@ async def bot_skills_page(request: Request, bot_id: int, saved: str | None = Non
             </div>
             """
         )
+
+    from app.skill_templates import SKILL_TEMPLATES
+    template_cards = []
+    for key, tpl in SKILL_TEMPLATES.items():
+        disabled_attr = "" if can_edit else "disabled"
+        btn = (
+            f'<button class="btn primary-btn" type="submit">Instalar Plantilla</button>'
+            if can_edit else
+            '<span class="badge">Solo lectura</span>'
+        )
+        template_cards.append(
+            f"""
+            <div class="panel editor" style="border: 1px dashed var(--line-strong); display:flex; flex-direction:column; justify-content:space-between;">
+              <div>
+                <h2 style="color:var(--primary); margin-bottom:6px;">{html.escape(tpl["name"])}</h2>
+                <p style="font-size:12.5px; color:var(--muted); line-height:1.4; margin-bottom:14px;">{tpl["description"]}</p>
+              </div>
+              <form method="post" action="/admin/bots/{bot_id}/skills/templates/install" style="margin-top:auto;">
+                <input type="hidden" name="template_key" value="{html.escape(key)}">
+                <div class="actions">{btn}</div>
+              </form>
+            </div>
+            """
+        )
+
     notice = '<div class="trend">Cambios guardados.</div>' if saved else ""
     body = f"""
     <div class="topbar">
@@ -3359,8 +3385,38 @@ async def bot_skills_page(request: Request, bot_id: int, saved: str | None = Non
     <section class="grid split">
       {''.join(cards)}
     </section>
+    
+    <div style="margin-top: 40px; margin-bottom: 20px;">
+      <h1 style="font-family:Outfit; font-size:24px; font-weight:700;">Catálogo de Habilidades Pre-construidas</h1>
+      <p style="color:var(--muted); font-size:14px; margin-top:4px;">Instala plantillas listas para usar que automatizan integraciones comunes.</p>
+    </div>
+    <section class="grid split" style="margin-top: 15px;">
+      {''.join(template_cards)}
+    </section>
     """
     return HTMLResponse(_layout("Habilidades", "bots", body))
+
+
+@router.post("/bots/{bot_id}/skills/templates/install")
+async def install_bot_skill_template_page(
+    request: Request,
+    bot_id: int,
+    template_key: str = Form(...),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    from app.skill_templates import SKILL_TEMPLATES
+    if template_key not in SKILL_TEMPLATES:
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    
+    tpl = SKILL_TEMPLATES[template_key]
+    await db.upsert_bot_skill(
+        bot_id=bot_id,
+        skill_type=tpl["skill_type"],
+        enabled=True,
+        config_data=tpl["config"],
+    )
+    return RedirectResponse(f"/admin/bots/{bot_id}/skills?saved=1", status_code=302)
 
 
 @router.post("/bots/{bot_id}/skills/{skill_type}")

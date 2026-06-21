@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Final cleanup and safety checks for WhatsApp replies."""
 import re
 

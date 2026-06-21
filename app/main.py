@@ -1,3 +1,4 @@
+from __future__ import annotations
 """FastAPI app: /webhook (GET handshake + POST mensajes), /health, /reload, /admin."""
 import asyncio
 import logging
@@ -263,7 +264,7 @@ async def _send_and_track(
     )
     lead = await db.get_lead(wa_id, bot_id=bot.id)
     if not lead or lead.get("qualification_status") == "en_progreso":
-        await follow_ups.schedule(wa_id)
+        await follow_ups.schedule(wa_id, bot_id=bot.id)
 
 
 async def forward_payload_to_external_webhook(webhook_url: str, payload: dict, auth_token: str) -> None:
@@ -372,7 +373,7 @@ async def _process_message(payload: dict) -> None:
             history=history,
             bot_id=bot.id,
         )
-        await follow_ups.schedule(wa_id)
+        await follow_ups.schedule(wa_id, bot_id=bot.id)
         log.info("Media recibida de %s (%s)", wa_id, media_type)
         return
 

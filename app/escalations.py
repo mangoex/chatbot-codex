@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Detección y registro de casos que requieren atención humana."""
 import re
 import logging

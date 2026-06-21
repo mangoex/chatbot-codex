@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Verificación de firma HMAC X-Hub-Signature-256 de Meta."""
 import hmac
 import hashlib

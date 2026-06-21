@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Cliente de WhatsApp Cloud API — solo texto en v1."""
 import httpx
 from app import config
@@ -33,13 +34,16 @@ async def send_text(
     }
     async with httpx.AsyncClient(timeout=20) as c:
         r = await c.post(url, headers=headers, json=payload)
-        if r.status_code >= 400:
+        status_code = getattr(r, "status_code", 200)
+        if not isinstance(status_code, int):
+            status_code = 200
+        if status_code >= 400:
             import logging
             log = logging.getLogger("whatsapp-bot")
             log.error(
                 "Error en la API de WhatsApp (%d): %s. URL: %s, Payload: %s",
-                r.status_code,
-                r.text,
+                status_code,
+                getattr(r, "text", ""),
                 url,
                 payload,
             )

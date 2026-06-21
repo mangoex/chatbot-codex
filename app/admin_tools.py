@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Herramientas administrativas pequenas para mantenimiento del bot."""
 import html
 

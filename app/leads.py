@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Procesamiento de marcadores de calificacion y tracking de leads."""
 import logging
 import re

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Acceso a Postgres: pool, schema idempotente, lectura/escritura de historial."""
 import json
 
@@ -322,6 +323,9 @@ async def run_migrations() -> None:
         await conn.execute(
             "UPDATE bot_whatsapp_numbers SET bot_id = 43 WHERE phone_number_id = '1173938019132326' AND bot_id = 1"
         )
+        # Setup RAG tables and extension
+        from app import rag
+        await rag.setup_rag_tables(conn)
     await ensure_default_bot()
 
 
@@ -862,18 +866,19 @@ async def qualify_leads_with_action_link(
     return int(result.split()[-1]) if result else 0
 
 
-async def upsert_follow_up(wa_id: str, delay_minutes: int = 10) -> None:
+async def upsert_follow_up(wa_id: str, delay_minutes: int = 10, bot_id: int | None = None) -> None:
     """Programa (o reprograma) un único follow-up para wa_id."""
     async with _pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO pending_follow_ups(wa_id, send_after)
-            VALUES($1, now() + make_interval(mins => $2))
+            INSERT INTO pending_follow_ups(wa_id, send_after, bot_id)
+            VALUES($1, now() + make_interval(mins => $2), $3)
             ON CONFLICT (wa_id) DO UPDATE SET
                 send_after = now() + make_interval(mins => $2),
-                sent = FALSE
+                sent = FALSE,
+                bot_id = $3
             """,
-            wa_id, delay_minutes,
+            wa_id, delay_minutes, bot_id,
         )
 
 
@@ -890,7 +895,7 @@ async def get_due_follow_ups() -> list[dict]:
     """Devuelve los follow-ups listos para enviar (send_after <= ahora, no enviados)."""
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, wa_id FROM pending_follow_ups "
+            "SELECT id, wa_id, bot_id FROM pending_follow_ups "
             "WHERE sent = FALSE AND send_after <= now()"
         )
     return [dict(r) for r in rows]
@@ -1380,7 +1385,10 @@ async def create_bot_knowledge(bot_id: int, title: str, content: str) -> int:
             title,
             content,
         )
-    return int(row["id"])
+        knowledge_id = int(row["id"])
+        from app import rag
+        await rag.index_document(conn, bot_id, knowledge_id, content)
+    return knowledge_id
 
 
 async def update_bot_knowledge(
@@ -1406,7 +1414,14 @@ async def update_bot_knowledge(
             content,
             status,
         )
-    return result.endswith(" 1") if result else False
+        success = result.endswith(" 1") if result else False
+        if success:
+            from app import rag
+            if status == "active":
+                await rag.index_document(conn, bot_id, knowledge_id, content)
+            else:
+                await rag.delete_document_chunks(conn, knowledge_id)
+    return success
 
 
 async def archive_bot_knowledge(bot_id: int, knowledge_id: int) -> bool:
@@ -1421,7 +1436,11 @@ async def archive_bot_knowledge(bot_id: int, knowledge_id: int) -> bool:
             bot_id,
             knowledge_id,
         )
-    return result.endswith(" 1") if result else False
+        success = result.endswith(" 1") if result else False
+        if success:
+            from app import rag
+            await rag.delete_document_chunks(conn, knowledge_id)
+    return success
 
 
 def _normalize_config(value) -> dict:

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """FastAPI Client Router for multi-tenant customer-facing dashboard."""
 import html
 import json
@@ -2930,6 +2931,15 @@ async def client_app(
           </form>
         </div>
       </div>
+      
+      <!-- Skill Templates Catalog -->
+      <div style="margin-top: 40px; margin-bottom: 20px; border-top: 1px solid var(--line); padding-top: 30px; width: 100%;">
+        <h2 style="font-family:Outfit; font-size:22px; font-weight:700; color:var(--ink);">Catálogo de Habilidades Pre-construidas</h2>
+        <p style="color:var(--muted); font-size:13.5px; margin-top:4px;">Instala plantillas listas para usar que automatizan integraciones comunes en este bot.</p>
+      </div>
+      <div class="grid-3" style="gap: 20px; width: 100%;">
+        {_render_skill_templates(bot_id, session)}
+      </div>
     </div>
     """
     
@@ -3527,6 +3537,27 @@ async def client_routing_rules_save(
         
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&saved=1", status_code=302)
 
+@router.post("/bots/{bot_id}/skills/templates/install")
+async def client_install_bot_skill_template(
+    request: Request,
+    bot_id: int,
+    template_key: str = Form(...),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    from app.skill_templates import SKILL_TEMPLATES
+    if template_key not in SKILL_TEMPLATES:
+        raise HTTPException(status_code=404, detail="Plantilla no encontrada")
+    
+    tpl = SKILL_TEMPLATES[template_key]
+    await db.upsert_bot_skill(
+        bot_id=bot_id,
+        skill_type=tpl["skill_type"],
+        enabled=True,
+        config_data=tpl["config"],
+    )
+    return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&saved=1", status_code=302)
+
 @router.post("/bots/{bot_id}/crm/{wa_id}/status")
 async def client_crm_update_status(
     request: Request,
@@ -3955,3 +3986,28 @@ async def client_campaigns_create(
     return RedirectResponse(
         f"/client/app?bot_id={bot_id}&tab=campaigns&saved=1", status_code=302
     )
+
+def _render_skill_templates(bot_id: int, session: dict) -> str:
+    from app.skill_templates import SKILL_TEMPLATES
+    html_cards = []
+    for key, tpl in SKILL_TEMPLATES.items():
+        btn = (
+            f'<button class="btn primary-btn" type="submit">Instalar Plantilla</button>'
+            if session.get("role") != "client_viewer" else
+            '<span class="badge">Solo lectura</span>'
+        )
+        html_cards.append(
+            f"""
+            <div class="card" style="border: 1px dashed var(--line-strong); display:flex; flex-direction:column; justify-content:space-between; padding: 20px; box-shadow: none;">
+              <div>
+                <h3 style="color:var(--primary); margin: 0 0 6px 0; font-family:Outfit; font-size:17px; font-weight:700;">{html.escape(tpl["name"])}</h3>
+                <p style="font-size:12.5px; color:var(--muted); line-height:1.45; margin-bottom:14px;">{tpl["description"]}</p>
+              </div>
+              <form method="post" action="/client/bots/{bot_id}/skills/templates/install" style="margin-top:auto; padding:0;">
+                <input type="hidden" name="template_key" value="{html.escape(key)}">
+                <div class="actions" style="margin:0; padding:0;">{btn}</div>
+              </form>
+            </div>
+            """
+        )
+    return "\n".join(html_cards)

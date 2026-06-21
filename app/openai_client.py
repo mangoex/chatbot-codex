@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Cliente OpenAI con control de tokens."""
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -27,6 +28,16 @@ def _get_client() -> AsyncOpenAI:
     return _client
 
 
+async def get_embedding(text: str) -> list[float]:
+    """Genera embeddings utilizando el modelo text-embedding-3-small de OpenAI."""
+    client = _get_client()
+    resp = await client.embeddings.create(
+        input=text,
+        model="text-embedding-3-small"
+    )
+    return resp.data[0].embedding
+
+
 def _encoder():
     """Siempre usar cl100k_base: funciona para gpt-4o/4o-mini y es un proxy razonable
     para modelos nuevos. El control de tokens no necesita ser exacto, solo acotado."""
@@ -54,8 +65,8 @@ def _runtime_context() -> str:
     )
 
 
-async def _system_prompt(bot_id: int | None = None) -> str:
-    prompt = await bot_content.system_prompt_for_bot(bot_id)
+async def _system_prompt(bot_id: int | None = None, query: str | None = None) -> str:
+    prompt = await bot_content.system_prompt_for_bot(bot_id, query)
     extra = await external_actions.system_instructions(bot_id)
     if extra:
         return f"{prompt}\n\n--- contexto_runtime ---\n{_runtime_context()}\n\n{extra}"
@@ -114,7 +125,7 @@ async def complete(
     bot_id: int | None = None,
     openai_model: str | None = None,
 ) -> str:
-    system = await _system_prompt(bot_id)
+    system = await _system_prompt(bot_id, query=user_message)
     fitted = fit_history(system, history, user_message, config.MAX_PROMPT_TOKENS)
     messages = (
         [{"role": "system", "content": system}]

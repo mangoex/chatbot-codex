@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Encrypted storage helpers for integration secrets."""
 import base64
 import hashlib

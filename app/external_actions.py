@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Runtime actions for bot-specific external integrations."""
 import json
 import logging
