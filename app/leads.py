@@ -76,14 +76,20 @@ async def process_reply(
     negocio = _extract_negocio(history)
 
     clean_reply, offered_action = _replace_action_markers(reply)
+
+    lead_fields = {}
+    if nombre is not None:
+        lead_fields["nombre"] = nombre
+    if negocio is not None:
+        lead_fields["negocio"] = negocio
+
     if offered_action:
         await db.upsert_lead(
             wa_id,
             bot_id=bot_id,
             qualification_status="calificado",
             action_link_sent=True,
-            nombre=nombre,
-            negocio=negocio,
+            **lead_fields
         )
         log.info("Lead CALIFICADO: wa_id=%s negocio=%s", wa_id, negocio)
         return clean_reply
@@ -97,8 +103,7 @@ async def process_reply(
             bot_id=bot_id,
             qualification_status="descalificado",
             disqualify_reason=reason,
-            nombre=nombre,
-            negocio=negocio,
+            **lead_fields
         )
         log.info("Lead DESCALIFICADO: wa_id=%s motivo=%s", wa_id, reason)
         return clean_reply
@@ -107,7 +112,6 @@ async def process_reply(
         wa_id,
         bot_id=bot_id,
         qualification_status="en_progreso",
-        nombre=nombre,
-        negocio=negocio,
+        **lead_fields
     )
     return reply

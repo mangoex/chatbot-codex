@@ -406,7 +406,13 @@ async def _process_message(payload: dict) -> None:
         return
 
     try:
-        raw_reply = await openai_client.complete(user_text, history, bot_id=bot.id, openai_model=bot.openai_model)
+        raw_reply = await openai_client.complete(
+            user_text,
+            history,
+            bot_id=bot.id,
+            openai_model=bot.openai_model,
+            wa_id=wa_id,
+        )
     except Exception:
         log.exception("Error llamando al modelo")
         await db.save_message(wa_id, "assistant", AI_ERROR_REPLY, bot_id=bot.id)

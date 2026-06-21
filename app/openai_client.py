@@ -47,7 +47,7 @@ def _encoder():
         return tiktoken.get_encoding("cl100k_base")
 
 
-def _runtime_context() -> str:
+def _runtime_context(lead_info: dict | None = None) -> str:
     tz_name = config.GOOGLE_CALENDAR_TIMEZONE or "America/Chihuahua"
     try:
         now = datetime.now(ZoneInfo(tz_name))
@@ -55,8 +55,20 @@ def _runtime_context() -> str:
         tz_name = "America/Chihuahua"
         now = datetime.now(ZoneInfo(tz_name))
     calendar_state = "activo" if config.GOOGLE_CALENDAR_ENABLED else "inactivo"
+    
+    lead_context = ""
+    if lead_info:
+        parts = []
+        if lead_info.get("nombre"):
+            parts.append(f"- Nombre del cliente: {lead_info['nombre']}")
+        if lead_info.get("negocio"):
+            parts.append(f"- Negocio/Giro del cliente: {lead_info['negocio']}")
+        if parts:
+            lead_context = "\n".join(parts) + "\n"
+            
     return (
         "Contexto operativo actual:\n"
+        f"{lead_context}"
         f"- Fecha y hora actual: {now.isoformat(timespec='minutes')}\n"
         f"- Zona horaria: {tz_name}\n"
         f"- Google Calendar: {calendar_state}\n"
@@ -65,12 +77,13 @@ def _runtime_context() -> str:
     )
 
 
-async def _system_prompt(bot_id: int | None = None, query: str | None = None) -> str:
+async def _system_prompt(bot_id: int | None = None, query: str | None = None, lead_info: dict | None = None) -> str:
     prompt = await bot_content.system_prompt_for_bot(bot_id, query)
     extra = await external_actions.system_instructions(bot_id)
+    runtime = _runtime_context(lead_info)
     if extra:
-        return f"{prompt}\n\n--- contexto_runtime ---\n{_runtime_context()}\n\n{extra}"
-    return f"{prompt}\n\n--- contexto_runtime ---\n{_runtime_context()}"
+        return f"{prompt}\n\n--- contexto_runtime ---\n{runtime}\n\n{extra}"
+    return f"{prompt}\n\n--- contexto_runtime ---\n{runtime}"
 
 
 def _safe_error(exc: Exception) -> str:
@@ -124,8 +137,16 @@ async def complete(
     history: list[dict],
     bot_id: int | None = None,
     openai_model: str | None = None,
+    wa_id: str | None = None,
 ) -> str:
-    system = await _system_prompt(bot_id, query=user_message)
+    lead_info = None
+    if wa_id:
+        try:
+            lead_info = await db.get_lead(wa_id, bot_id)
+        except Exception:
+            pass
+
+    system = await _system_prompt(bot_id, query=user_message, lead_info=lead_info)
     fitted = fit_history(system, history, user_message, config.MAX_PROMPT_TOKENS)
     messages = (
         [{"role": "system", "content": system}]
