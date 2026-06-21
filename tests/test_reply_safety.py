@@ -61,6 +61,28 @@ class ReplySafetyTests(unittest.TestCase):
             "¿Qué tipo de negocio quieres automatizar?",
         )
 
+    def test_strips_exposed_reasoning_english(self):
+        reasoning_text = (
+            "We need to continue the conversation. The user says \"Hola\". "
+            "We must respond politely, brief, WhatsApp style. "
+            "We can respond \"¡Hola!\""
+        )
+        self.assertEqual(
+            reply_safety.polish(reasoning_text, []),
+            "¡Hola!",
+        )
+
+    def test_strips_exposed_reasoning_spanish(self):
+        reasoning_text = (
+            "El usuario nos está saludando.\n"
+            "Debemos responder brevemente.\n"
+            "¡Hola! Bienvenidos a nuestra clínica."
+        )
+        self.assertEqual(
+            reply_safety.polish(reasoning_text, []),
+            "¡Hola! Bienvenidos a nuestra clínica.",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

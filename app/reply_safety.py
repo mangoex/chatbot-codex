@@ -40,6 +40,72 @@ def looks_broken(reply: str) -> bool:
     return False
 
 
+_REASONING_INDICATORS = [
+    # English patterns
+    r"^\s*(?:we|i)\s+(?:need|must|should|can|will|have|already|am|would|do)\b",
+    r"^\s*the\s+(?:user|customer|client|bot|agent|conversation|prompt)\s+(?:says|asked|wants|is|requested|asks|has|should|needs|will|tells|corrects)\b",
+    r"^\s*according\s+to\s+(?:the\s+)?rules\b",
+    r"^\s*this\s+is\s+a\s+(?:request|greeting|case|message|follow-up)\b",
+    r"^\s*thus\s+(?:we|i)\b",
+    r"^\s*therefore\b",
+    r"^\s*possibly\s+(?:we|i)\b",
+    r"^\s*but\s+(?:we|i|there)\b",
+    r"^\s*so\s+(?:we|i)\b",
+    r"^\s*let's\s+(?:analyze|check|respond|say|keep|see)\b",
+    r"^\s*the\s+conversation\b",
+    r"^\s*in\s+this\s+case\b",
+    r"^\s*they\s+(?:want|asked|said|are|need|asked)\b",
+    r"^\s*(?:thought|reasoning|analysis|thinking\s+process)\s*:\s*",
+    # Spanish patterns
+    r"^\s*(?:necesitamos|debemos|podemos|tengo\s+que|voy\s+a|quiero|vamos\s+a)\s+(?:continuar|responder|preguntar|analizar|decir|hacer|buscar|dar|explicar|saludar|ser|seguir)\b",
+    r"^\s*el\s+(?:usuario|cliente|bot|agente)\s+(?:dice|quiere|pregunta|ha\s+dicho|pide|está|nos\s+está|saluda|escribe|se\s+dirige|necesita)\b",
+    r"^\s*según\s+(?:las\s+)?reglas\b",
+    r"^\s*en\s+este\s+caso\b",
+    r"^\s*para\s+responder\b",
+    r"^\s*la\s+conversación\b",
+    r"^\s*mi\s+respuesta\s+(?:debe|va\s+a)\b",
+    r"^\s*(?:entonces|por\s+lo\s+tanto)\s*(?:podemos|debemos|necesitamos|voy|vamos)\b",
+]
+
+_REASONING_REGEX = re.compile("|".join(_REASONING_INDICATORS), re.IGNORECASE)
+
+_QUOTED_REASONING_RE = re.compile(
+    r"(?:respond|say|reply|write|answer|send|responder|decir|enviar|escribir)"
+    r"(?:\s+with|\s+to\s+the\s+user|\s+con|\s+al\s+usuario)?\s*[:,-]?\s*"
+    r"[\"'“]([^\n\"'“”]+)[\"'“”]?\s*$",
+    re.IGNORECASE
+)
+
+
+def _strip_reasoning(clean: str) -> str:
+    # Quoted extraction for reasoning endings in English or Spanish
+    # Matches patterns like: We can respond "¡Hola! or responder: "¡Hola!"
+    quote_match = _QUOTED_REASONING_RE.search(clean)
+    if quote_match:
+        return quote_match.group(1).strip()
+
+    # Otherwise, split by lines and filter out reasoning lines from the beginning
+    lines = clean.split("\n")
+    cleaned_lines = []
+    in_reasoning = True
+    for line in lines:
+        stripped_line = line.strip()
+        if not stripped_line:
+            if in_reasoning:
+                continue
+            else:
+                cleaned_lines.append(line)
+                continue
+
+        if in_reasoning and _REASONING_REGEX.search(stripped_line):
+            continue
+
+        in_reasoning = False
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines).strip()
+
+
 def polish(reply: str, history: list[dict], user_text: str | None = None, bot_name: str = "Asistto") -> str:
     clean = (reply or "").strip()
 
@@ -50,6 +116,8 @@ def polish(reply: str, history: list[dict], user_text: str | None = None, bot_na
     clean = re.sub(r"\bsafety:\s*\w+", "", clean, flags=re.IGNORECASE)
     clean = re.sub(r"<think>.*?</think>", "", clean, flags=re.IGNORECASE | re.DOTALL)
     clean = clean.strip()
+
+    clean = _strip_reasoning(clean)
 
     if looks_broken(clean):
         if bot_name == "Asistto":
