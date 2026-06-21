@@ -78,6 +78,12 @@ _RESCHEDULE_CONFIRM_RE = re.compile(
     r"^(?:s[ií]|ok|va|dale|claro|perfecto|se puede|sí se puede)[?!.¡¿\s]*$",
     re.IGNORECASE,
 )
+_BYPASS_FLOW_RE = re.compile(
+    r"\b(?:precio|costo|costa|cuesta|cobran|valor|tarifa|paquete|plan|planes|paquetes|diferencia)\b"
+    r"|\b(?:c[oó]mo funciona|de qu[eé] se trata|explic\w*|informaci[oó]n|saber m[aá]s)\b"
+    r"|\b(?:antes|primero|pero)\b",
+    re.IGNORECASE,
+)
 _SAME_TIME_RE = re.compile(r"\b(misma hora|la misma hora|igual hora|esa hora)\b", re.IGNORECASE)
 _TEST_APPOINTMENT_RE = re.compile(r"\b(probar|prueba|simular|simulacion|simulación)\b", re.IGNORECASE)
 _ASSISTANT_NAME_RE = re.compile(
@@ -284,6 +290,20 @@ def _clean_name(name: str) -> str | None:
     stop = re.search(r"\b(doy|tengo|quiero|necesito|para|porque|con|y|de|mañana|manana|lunes|martes|miércoles|miercoles|jueves|viernes|sábado|sabado|domingo)\b", clean, re.IGNORECASE)
     if stop:
         clean = clean[: stop.start()].strip(" .,;:¡!¿?")
+    
+    # Filtrar pronombres, palabras de preguntas, y términos comerciales comunes
+    lower_name = clean.lower()
+    forbidden_names = {
+        "que", "qué", "como", "cómo", "cuánto", "cuanto", "cuál", "cual", "quién", "quien",
+        "dime", "antes", "precio", "costo", "paquetes", "precios", "hola", "ver", "saber",
+        "info", "información", "informacion", "paquete", "servicio", "servicios", "costa",
+        "cuesta", "pregunta", "duda", "ayuda", "llamada", "cita", "reunion", "reunión",
+        "demo", "contacto", "asesor", "humano", "persona", "negocio", "empresa", "sistema",
+        "asistto", "robot", "bot", "ia", "artificial", "inteligencia", "gracias"
+    }
+    if lower_name in forbidden_names:
+        return None
+
     if len(clean) < 2 or len(clean) > 60:
         return None
     if any(ch.isdigit() for ch in clean):
@@ -572,7 +592,12 @@ async def maybe_handle(
     if not _in_schedule_flow(user_text, history):
         return None, False
 
-    if "?" in user_text and not _extract_start_with_context(user_text, history):
+    # Si el usuario pregunta algo (tiene '?') o pide información/precios/paquetes explícitamente,
+    # dejamos que la IA responda en lugar de forzar el flujo determinista de la agenda.
+    if (
+        "?" in user_text 
+        or _BYPASS_FLOW_RE.search(user_text)
+    ) and not _extract_start_with_context(user_text, history):
         return None, False
 
     name = _extract_name(user_text, history)
