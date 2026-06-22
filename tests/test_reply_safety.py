@@ -92,6 +92,17 @@ class ReplySafetyTests(unittest.TestCase):
         reasoning_only = "We need to continue the conversation. The user says \"Hola\"."
         reply2 = reply_safety.polish(reasoning_only, [])
         self.assertIn("Asistto conecta el WhatsApp", reply2)
+    def test_does_not_strip_valid_spanish_conversational_phrases(self):
+        valid_replies = [
+            "Para responder a tu pregunta, la integración de WhatsApp tiene un costo mensual.",
+            "En este caso, podemos ofrecerte una demostración personalizada.",
+            "Entonces podemos agendar para el lunes por la tarde, ¿te parece bien?",
+            "El bot está diseñado para ayudarte a optimizar ventas y soporte.",
+            "El agente se pondrá en contacto contigo pronto.",
+        ]
+        for reply in valid_replies:
+            polished = reply_safety.polish(reply, [])
+            self.assertEqual(polished, reply)
 
 
 if __name__ == "__main__":

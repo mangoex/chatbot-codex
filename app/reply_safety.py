@@ -57,14 +57,11 @@ _REASONING_INDICATORS = [
     r"^\s*they\s+(?:want|asked|said|are|need|asked)\b",
     r"^\s*(?:thought|reasoning|analysis|thinking\s+process)\s*:\s*",
     # Spanish patterns
-    r"^\s*(?:necesitamos|debemos|podemos|tengo\s+que|voy\s+a|quiero|vamos\s+a)\s+(?:continuar|responder|preguntar|analizar|decir|hacer|buscar|dar|explicar|saludar|ser|seguir)\b",
-    r"^\s*el\s+(?:usuario|cliente|bot|agente)\s+(?:dice|quiere|pregunta|ha\s+dicho|pide|está|nos\s+está|saluda|escribe|se\s+dirige|necesita)\b",
-    r"^\s*según\s+(?:las\s+)?reglas\b",
-    r"^\s*en\s+este\s+caso\b",
-    r"^\s*para\s+responder\b",
-    r"^\s*la\s+conversación\b",
-    r"^\s*mi\s+respuesta\s+(?:debe|va\s+a)\b",
-    r"^\s*(?:entonces|por\s+lo\s+tanto)\s*(?:podemos|debemos|necesitamos|voy|vamos)\b",
+    r"^\s*(?:necesitamos|debemos|tengo\s+que|voy\s+a)\s+(?:responder|preguntar|analizar|saludar)\b",
+    r"^\s*el\s+(?:usuario|cliente)\s+(?:nos\s+)?(?:está\s+)?(?:saludando|preguntando|diciendo|pidiendo|saluda|dice|quiere|pregunta|pide|necesita|escribe)\b",
+    r"^\s*según\s+(?:las\s+reglas|las\s+instrucciones|el\s+contexto)\b",
+    r"^\s*mi\s+respuesta\s+debe\b",
+    r"^\s*(?:pensamiento|razonamiento|análisis|proceso\s+de\s+pensamiento)\s*:\s*",
 ]
 
 _REASONING_REGEX = re.compile("|".join(_REASONING_INDICATORS), re.IGNORECASE)
