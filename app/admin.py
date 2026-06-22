@@ -3606,6 +3606,7 @@ async def conversations(request: Request, wa_id: str | None = None, bot_id: int 
             <div style="font-weight:600;font-size:15px;margin-bottom:4px;">{name_display}</div>
             <div style="color:var(--muted);font-size:13px;margin-bottom:12px;">{html.escape((lead or {}).get("negocio") or "Sin negocio")}</div>
             <a class="btn whatsapp" href="{_wa_link(selected)}" target="_blank" style="width:100%; justify-content:center;">{ICONS["wa"]} Contactar</a>
+            <a class="btn secondary" href="/admin/reset-contact?wa_id={html.escape(selected)}" style="width:100%; justify-content:center; margin-top:8px; border-color:#95322d; color:#95322d;">🗑️ Limpiar memoria</a>
           </div>
           <div class="crm-section">
             <h3>Estado del Lead</h3>
