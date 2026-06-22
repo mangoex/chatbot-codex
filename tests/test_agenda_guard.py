@@ -428,6 +428,45 @@ class AgendaGuardTests(unittest.TestCase):
         import asyncio
         asyncio.run(run())
 
+    def test_does_not_hijack_non_booking_name_requests(self):
+        async def run():
+            history = [
+                {"role": "user", "content": "Hola"},
+                {"role": "assistant", "content": "Para darte una orientación más precisa, ¿me podrías decir tu nombre y a qué te dedicas?"},
+            ]
+            reply, scheduled = await agenda_guard.maybe_handle(
+                "5215550000000",
+                "Miguel Gonzalez y soy consultor en inteligencia artificial",
+                history,
+                bot_id=1,
+            )
+            # No debe secuestrar el flujo (debe retornar None)
+            self.assertIsNone(reply)
+            self.assertFalse(scheduled)
+
+        import asyncio
+        asyncio.run(run())
+
+    def test_extracts_composite_name_from_sentence_start(self):
+        async def run():
+            history = [
+                {"role": "user", "content": "quiero agendar una cita"},
+                {"role": "assistant", "content": "Claro. ¿A nombre de quién agendo la llamada?"},
+            ]
+            reply, scheduled = await agenda_guard.maybe_handle(
+                "5215550000000",
+                "Miguel Gonzalez y soy consultor en inteligencia artificial",
+                history,
+                bot_id=1,
+            )
+            # Debe proceder a pedir el día/hora con el nombre extraído
+            self.assertFalse(scheduled)
+            self.assertIn("Gracias, Miguel.", reply)
+            self.assertIn("Qué día y hora", reply)
+
+        import asyncio
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()

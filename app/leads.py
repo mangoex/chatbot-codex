@@ -29,14 +29,34 @@ def _extract_nombre(history: list[dict]) -> str | None:
     ]
     for pattern in patterns:
         match = re.search(pattern, joined, re.IGNORECASE)
-        if not match:
-            continue
-        candidate = match.group(1).strip()
-        if _INVALID_NAME_RE.search(candidate):
-            continue
-        if len(candidate) < 2 or len(candidate) > 45:
-            continue
-        return candidate.title()
+        if match:
+            candidate = match.group(1).strip()
+            if not _INVALID_NAME_RE.search(candidate) and 2 <= len(candidate) <= 45:
+                return candidate.title()
+
+    # Nuevo: Extraer si el asistente pidió el nombre y el siguiente mensaje del usuario
+    # empieza directamente con un nombre compuesto (ej: "Miguel Gonzalez y soy...")
+    _ASKED_NAME_RE = re.compile(
+        r"\b(nombre completo|dime tu nombre|tu nombre|a nombre de qui[eé]n|nombre)\b",
+        re.IGNORECASE,
+    )
+    previous_assistant_asked_name = False
+    for item in history:
+        role = item.get("role")
+        content = item.get("content", "")
+        if role == "assistant":
+            previous_assistant_asked_name = bool(_ASKED_NAME_RE.search(content))
+        elif role == "user" and previous_assistant_asked_name:
+            content_clean = content.strip()
+            start_match = re.match(r"^([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){1,2})", content_clean)
+            if start_match:
+                candidate = start_match.group(1).strip()
+                stop = re.search(r"\b(y|de|soy|tengo|con)\b", candidate, re.IGNORECASE)
+                if stop:
+                    candidate = candidate[:stop.start()].strip()
+                if not _INVALID_NAME_RE.search(candidate) and len(candidate) >= 2:
+                    return candidate.title()
+            previous_assistant_asked_name = False
     return None
 
 

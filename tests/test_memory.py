@@ -78,6 +78,24 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs.get("nombre"), "Miguel Gonzales")
         self.assertNotIn("negocio", kwargs)
 
+    def test_extract_nombre_from_composite_phrase_after_name_prompt(self):
+        history = [
+            {"role": "user", "content": "Hola"},
+            {"role": "assistant", "content": "Para darte una orientación más precisa, ¿me podrías decir tu nombre y a qué te dedicas?"},
+            {"role": "user", "content": "Miguel Gonzalez y soy consultor en inteligencia artificial"}
+        ]
+        nombre = leads._extract_nombre(history)
+        self.assertEqual(nombre, "Miguel Gonzalez")
+
+    def test_extract_nombre_does_not_extract_business_as_name(self):
+        history = [
+            {"role": "user", "content": "Hola"},
+            {"role": "assistant", "content": "¿Qué tipo de negocio tienes?"},
+            {"role": "user", "content": "Una consultoría en inteligencia artificial"}
+        ]
+        nombre = leads._extract_nombre(history)
+        self.assertIsNone(nombre)
+
 
 if __name__ == "__main__":
     unittest.main()

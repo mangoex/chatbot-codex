@@ -66,6 +66,10 @@ _SINGLE_NAME_RE = re.compile(
     r"([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]{2,30})\s*$",
     re.IGNORECASE,
 )
+_START_NAME_RE = re.compile(
+    r"^\s*([a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+(?:\s+[a-zA-ZÁÉÍÓÚÜÑáéíóúüñ]+){0,2})",
+    re.IGNORECASE
+)
 _ASKED_NAME_RE = re.compile(
     r"\b(nombre completo|dime tu nombre|tu nombre|a nombre de qui[eé]n|nombre)\b",
     re.IGNORECASE,
@@ -272,6 +276,14 @@ def _looks_like_service_scheduling(user_text: str, history: list[dict]) -> bool:
     return bool(_SERVICE_CONTEXT_RE.search(last_assistant))
 
 
+def _is_booking_context(text: str) -> bool:
+    return bool(re.search(
+        r"\b(?:agend\w*|cit[as]\w*|llamada\w*|demo\w*|reuni\w*|reserv\w*|calendario\w*|d[ií]a\s*y\s*hora|fecha\s*y\s*hora|horario\w*)\b",
+        text,
+        re.IGNORECASE
+    ))
+
+
 def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
     """Agenda solo si el usuario la pide o si ya estamos pidiendo datos de cita."""
     last_assistant = _last_assistant_text(history)
@@ -283,10 +295,11 @@ def _in_schedule_flow(user_text: str, history: list[dict]) -> bool:
         return True
     if _is_reschedule_continuation(user_text, history):
         return True
-    if _ASKED_NAME_RE.search(last_assistant) or _ASKED_DATETIME_RE.search(last_assistant):
-        return True
-    if _RETRY_DATETIME_RE.search(last_assistant) and _extract_time(user_text):
-        return True
+    if _is_booking_context(last_assistant):
+        if _ASKED_NAME_RE.search(last_assistant) or _ASKED_DATETIME_RE.search(last_assistant):
+            return True
+        if _RETRY_DATETIME_RE.search(last_assistant) and _extract_time(user_text):
+            return True
     return False
 
 
@@ -349,12 +362,19 @@ def _testing_appointment_context(user_text: str, history: list[dict]) -> bool:
 def _extract_name(text: str, history: list[dict]) -> str | None:
     current = _NAME_RE.search(text)
     if current:
-        return _clean_name(current.group(1))
+        name = _clean_name(current.group(1))
+        if name:
+            return name
 
     if _ASKED_NAME_RE.search(_last_assistant_text(history)):
         direct = _direct_name_after_prompt(text)
         if direct:
             return direct
+        start_match = _START_NAME_RE.match(text)
+        if start_match:
+            candidate = _clean_name(start_match.group(1))
+            if candidate:
+                return candidate
 
     # Buscar primero expresiones explicitas en mensajes recientes.
     for item in reversed(history[-20:]):
