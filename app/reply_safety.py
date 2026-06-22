@@ -119,7 +119,7 @@ def polish(reply: str, history: list[dict], user_text: str | None = None, bot_na
 
     clean = _strip_reasoning(clean)
 
-    if looks_broken(clean):
+    if not clean.strip() or looks_broken(clean):
         if bot_name == "Asistto":
             clean = _FALLBACK_REPLY
         else:

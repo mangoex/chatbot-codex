@@ -83,6 +83,16 @@ class ReplySafetyTests(unittest.TestCase):
             "¡Hola! Bienvenidos a nuestra clínica.",
         )
 
+    def test_returns_fallback_when_empty_or_only_reasoning(self):
+        # Empty string should yield fallback
+        reply = reply_safety.polish("", [])
+        self.assertIn("Asistto conecta el WhatsApp", reply)
+
+        # Reasoning-only that gets fully stripped should yield fallback
+        reasoning_only = "We need to continue the conversation. The user says \"Hola\"."
+        reply2 = reply_safety.polish(reasoning_only, [])
+        self.assertIn("Asistto conecta el WhatsApp", reply2)
+
 
 if __name__ == "__main__":
     unittest.main()
