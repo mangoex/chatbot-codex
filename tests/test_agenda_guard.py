@@ -390,6 +390,44 @@ class AgendaGuardTests(unittest.TestCase):
         import asyncio
         asyncio.run(run())
 
+    def test_capability_inquiries_bypass_agenda_guard(self):
+        async def run():
+            history = [
+                {"role": "user", "content": "Hola"},
+                {"role": "assistant", "content": "¡Hola! Soy Asistto. ¿En qué te puedo ayudar?"},
+            ]
+            
+            # Capability queries should return (None, False), allowing the LLM to reply
+            reply1, scheduled1 = await agenda_guard.maybe_handle(
+                "5215550000000",
+                "Puede agendar citas en mi calendario",
+                history,
+                bot_id=1,
+            )
+            self.assertIsNone(reply1)
+            self.assertFalse(scheduled1)
+
+            reply2, scheduled2 = await agenda_guard.maybe_handle(
+                "5215550000000",
+                "Quiero saber si mis clientes pueden agendar citas conmigo",
+                history,
+                bot_id=1,
+            )
+            self.assertIsNone(reply2)
+            self.assertFalse(scheduled2)
+
+            reply3, scheduled3 = await agenda_guard.maybe_handle(
+                "5215550000000",
+                "Quiero saber si puede el bot atender citas para mi, agendarlas",
+                history,
+                bot_id=1,
+            )
+            self.assertIsNone(reply3)
+            self.assertFalse(scheduled3)
+
+        import asyncio
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()

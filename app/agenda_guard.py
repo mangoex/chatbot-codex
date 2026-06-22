@@ -82,7 +82,11 @@ _RESCHEDULE_CONFIRM_RE = re.compile(
 _BYPASS_FLOW_RE = re.compile(
     r"\b(?:precio|costo|costa|cuesta|cobran|valor|tarifa|paquete|plan|planes|paquetes|diferencia)\b"
     r"|\b(?:c[oó]mo funciona|de qu[eé] se trata|explic\w*|informaci[oó]n|saber m[aá]s)\b"
-    r"|\b(?:antes|primero|pero)\b",
+    r"|\b(?:antes|primero|pero)\b"
+    r"|\b(?:el\s+bot|el\s+sistema|la\s+ia|tu\s+plataforma|tu\s+servicio|el\s+servicio)\b"
+    r"|\b(?:mi\s+calendario|mis\s+clientes|mi\s+negocio|mis\s+citas|mi\s+empresa|conmigo|para\s+m[ií])\b"
+    r"|\b(?:saber\s+si|pregunta\s+si|saber\s+c[oó]mo)\b"
+    r"|\b(?:puede|pueden|se\s+puede)\s+(?:agendar|hacer|atender|conectar|funcionar|servir)\b",
     re.IGNORECASE,
 )
 _SAME_TIME_RE = re.compile(r"\b(misma hora|la misma hora|igual hora|esa hora)\b", re.IGNORECASE)
