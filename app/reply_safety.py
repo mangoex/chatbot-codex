@@ -116,8 +116,12 @@ def polish(reply: str, history: list[dict], user_text: str | None = None, bot_na
 
     clean = _strip_reasoning(clean)
 
+    has_prior_assistant = any(item.get("role") == "assistant" for item in history)
+
     if not clean.strip() or looks_broken(clean):
-        if bot_name == "Asistto":
+        if has_prior_assistant:
+            clean = "Entendido. Si tienes alguna otra duda o deseas continuar más adelante, escríbeme y con gusto lo revisamos."
+        elif bot_name == "Asistto":
             clean = _FALLBACK_REPLY
         else:
             clean = (
@@ -128,7 +132,6 @@ def polish(reply: str, history: list[dict], user_text: str | None = None, bot_na
 
     clean = _MISSING_SPACE_AFTER_COMMA_RE.sub(", ", clean)
 
-    has_prior_assistant = any(item.get("role") == "assistant" for item in history)
     current_message_is_greeting = bool(_GREETING_RE.match((user_text or "").strip()))
     
     # Check standard Asistto intro removal

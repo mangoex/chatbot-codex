@@ -47,7 +47,7 @@ class ReplySafetyTests(unittest.TestCase):
     def test_replaces_broken_model_output(self):
         reply = reply_safety.polish(
             "Como aparece en la página principal: AutoObetendrá conexión a essays-offer sharepoint",
-            [{"role": "assistant", "content": "Hola"}],
+            [],
         )
 
         self.assertIn("Asistto conecta el WhatsApp", reply)
@@ -103,6 +103,17 @@ class ReplySafetyTests(unittest.TestCase):
         for reply in valid_replies:
             polished = reply_safety.polish(reply, [])
             self.assertEqual(polished, reply)
+
+    def test_returns_polite_mid_conversation_fallback_when_conversation_active(self):
+        history = [{"role": "assistant", "content": "Hola, ¿cómo estás?"}]
+        
+        # Empty string with prior history should yield polite mid-conversation fallback
+        reply = reply_safety.polish("", history)
+        self.assertEqual(reply, "Entendido. Si tienes alguna otra duda o deseas continuar más adelante, escríbeme y con gusto lo revisamos.")
+
+        # Broken response with prior history should also yield polite mid-conversation fallback
+        reply2 = reply_safety.polish("AutoObetendrá essays-offer", history)
+        self.assertEqual(reply2, "Entendido. Si tienes alguna otra duda o deseas continuar más adelante, escríbeme y con gusto lo revisamos.")
 
 
 if __name__ == "__main__":
