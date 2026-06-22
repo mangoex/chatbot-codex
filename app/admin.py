@@ -947,9 +947,6 @@ def _nav(active: str, session: dict | None = None) -> str:
         ("users", "Usuarios", "/admin/users", ICONS["crm"], {"manager_only": True}),
         ("bots", "Bots", "/admin/bots", ICONS["building"], {}),
         ("tech-provider", "Tech Provider", "/admin/tech-provider/review", ICONS["wa"], {"agency_only": True}),
-        ("conversations", "Conversaciones", "/admin/conversations", ICONS["chat"], {}),
-        ("crm", "CRM", "/admin/crm", ICONS["crm"], {}),
-        ("escalations", "Escalaciones", "/admin/escalations", ICONS["alert"], {"agency_only": True}),
     ]
     visible = [
         (key, label, href, icon)

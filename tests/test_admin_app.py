@@ -105,11 +105,13 @@ class AdminControlAppTests(unittest.TestCase):
         viewer_html = admin._nav("app", {"role": "client_viewer"})
 
         self.assertIn("/admin/clients", agency_html)
-        self.assertIn("/admin/escalations", agency_html)
         self.assertNotIn("/admin/clients", client_admin_html)
-        self.assertNotIn("/admin/escalations", client_admin_html)
         self.assertIn("/admin/users", client_admin_html)
         self.assertNotIn("/admin/users", viewer_html)
+        # Verify scoped views are not in global admin nav
+        self.assertNotIn("/admin/conversations", agency_html)
+        self.assertNotIn("/admin/crm", agency_html)
+        self.assertNotIn("/admin/escalations", agency_html)
 
     def test_admin_api_bot_includes_desktop_app_links(self):
         bot = admin._admin_api_bot(
