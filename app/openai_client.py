@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import tiktoken
 from openai import AsyncOpenAI
-from app import bot_content, config, external_actions
+from app import bot_content, config, db, external_actions
 
 _client: AsyncOpenAI | None = None
 

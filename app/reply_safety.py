@@ -79,7 +79,7 @@ _QUOTED_REASONING_RE = re.compile(
 
 # Helper to detect if a line looks like English reasoning
 _ENGLISH_DETECT_RE = re.compile(
-    r"\b(?:the|and|that|have|for|not|with|you|this|but|his|from|they|she|him|her|its|our|their|will|would|about|there|their|what|out|about|who|get|which|go|me|guidelines|guideline|rules)\b",
+    r"\b(?:the|and|that|have|for|not|with|you|this|but|his|from|they|she|him|her|its|our|their|will|would|about|there|their|what|out|about|who|get|which|go|guidelines|guideline|rules)\b",
     re.IGNORECASE
 )
 

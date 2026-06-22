@@ -99,6 +99,10 @@ class ReplySafetyTests(unittest.TestCase):
             "Entonces podemos agendar para el lunes por la tarde, ¿te parece bien?",
             "El bot está diseñado para ayudarte a optimizar ventas y soporte.",
             "El agente se pondrá en contacto contigo pronto.",
+            "Me parece muy bien.",
+            "Me alegra mucho que quieras mas leads.",
+            "Me parece que me gustaría que me digas más.",
+            "Claro, me gustaria explicarte como funciona.",
         ]
         for reply in valid_replies:
             polished = reply_safety.polish(reply, [])
