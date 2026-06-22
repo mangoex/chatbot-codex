@@ -115,6 +115,16 @@ class ReplySafetyTests(unittest.TestCase):
         reply2 = reply_safety.polish("AutoObetendrá essays-offer", history)
         self.assertEqual(reply2, "Entendido. Si tienes alguna otra duda o deseas continuar más adelante, escríbeme y con gusto lo revisamos.")
 
+    def test_strips_english_reasoning_paragraphs_completely(self):
+        reasoning_text = (
+            "Okay, the user just said “Quiero información” which means they want information. "
+            "I need to respond based on the guidelines.\n"
+            "First, I shouldn't repeat my initial greeting...\n"
+            "Hola, ¿en qué te puedo ayudar hoy?"
+        )
+        reply = reply_safety.polish(reasoning_text, [])
+        self.assertEqual(reply, "Hola, ¿en qué te puedo ayudar hoy?")
+
 
 if __name__ == "__main__":
     unittest.main()

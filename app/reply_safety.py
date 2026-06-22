@@ -56,6 +56,10 @@ _REASONING_INDICATORS = [
     r"^\s*in\s+this\s+case\b",
     r"^\s*they\s+(?:want|asked|said|are|need|asked)\b",
     r"^\s*(?:thought|reasoning|analysis|thinking\s+process)\s*:\s*",
+    r"^\s*(?:okay|ok|well|now|here|first|second)\b",
+    r"^\s*since\s+they\b",
+    r"^\s*my\s+response\b",
+    r"^\s*let\s+me\s+check\b",
     # Spanish patterns
     r"^\s*(?:necesitamos|debemos|tengo\s+que|voy\s+a)\s+(?:responder|preguntar|analizar|saludar)\b",
     r"^\s*el\s+(?:usuario|cliente)\s+(?:nos\s+)?(?:está\s+)?(?:saludando|preguntando|diciendo|pidiendo|saluda|dice|quiere|pregunta|pide|necesita|escribe)\b",
@@ -70,6 +74,12 @@ _QUOTED_REASONING_RE = re.compile(
     r"(?:respond|say|reply|write|answer|send|responder|decir|enviar|escribir)"
     r"(?:\s+with|\s+to\s+the\s+user|\s+con|\s+al\s+usuario)?\s*[:,-]?\s*"
     r"[\"'“]([^\n\"'“”]+)[\"'“”]?\s*$",
+    re.IGNORECASE
+)
+
+# Helper to detect if a line looks like English reasoning
+_ENGLISH_DETECT_RE = re.compile(
+    r"\b(?:the|and|that|have|for|not|with|you|this|but|his|from|they|she|him|her|its|our|their|will|would|about|there|their|what|out|about|who|get|which|go|me|guidelines|guideline|rules)\b",
     re.IGNORECASE
 )
 
@@ -94,8 +104,16 @@ def _strip_reasoning(clean: str) -> str:
                 cleaned_lines.append(line)
                 continue
 
-        if in_reasoning and _REASONING_REGEX.search(stripped_line):
-            continue
+        # If we are in reasoning mode, check indicators or if the line has heavy English vocabulary
+        if in_reasoning:
+            if _REASONING_REGEX.search(stripped_line):
+                continue
+            
+            # Since the user language is Spanish, if the line contains typical English words,
+            # we treat it as reasoning and skip it.
+            english_words = len(_ENGLISH_DETECT_RE.findall(stripped_line))
+            if english_words >= 3 or (english_words >= 1 and not re.search(r"[áéíóúüñ¿¡]", stripped_line)):
+                continue
 
         in_reasoning = False
         cleaned_lines.append(line)
