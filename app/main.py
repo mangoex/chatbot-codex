@@ -76,13 +76,7 @@ async def csrf_protection(request: Request, call_next):
     exempt = path in {"/admin/login"} or path.startswith("/admin/meta/oauth/")
     if protected and not exempt and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         expected = request.session.get("_csrf_token")
-        provided = request.headers.get("X-CSRF-Token")
-        if not provided:
-            try:
-                form = await request.form()
-                provided = str(form.get("csrf_token") or "")
-            except Exception:
-                provided = ""
+        provided = request.headers.get("X-CSRF-Token") or request.query_params.get("csrf_token")
         if not expected or not provided or not py_secrets.compare_digest(str(expected), provided):
             return PlainTextResponse("Invalid CSRF token", status_code=403)
     return await call_next(request)

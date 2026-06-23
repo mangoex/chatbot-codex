@@ -914,6 +914,11 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
     document.addEventListener("submit", function(event) {{
       const form = event.target;
       if (!form || String(form.method || "").toLowerCase() !== "post") return;
+      try {{
+        const actionUrl = new URL(form.action || window.location.href);
+        actionUrl.searchParams.set("csrf_token", "{html.escape(csrf_token)}");
+        form.action = actionUrl.pathname + actionUrl.search;
+      }} catch (e) {{}}
       if (form.querySelector('input[name="csrf_token"]')) return;
       const input = document.createElement("input");
       input.type = "hidden";
