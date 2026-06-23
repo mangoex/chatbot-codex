@@ -30,12 +30,14 @@ def _require_login(request: Request) -> dict:
     user = request.session.get("user")
     if not user:
         raise HTTPException(status_code=302, headers={"Location": "/admin/login"})
+    csrf_token = request.session.setdefault("_csrf_token", secrets.token_urlsafe(32))
     session = {
         "user": user,
         "role": request.session.get("role", "agency_admin"),
         "client_id": request.session.get("client_id"),
         "user_id": request.session.get("user_id"),
         "name": request.session.get("name") or user,
+        "_csrf_token": csrf_token,
     }
     _current_session.set(session)
     return session
@@ -973,9 +975,10 @@ def _nav(active: str, session: dict | None = None) -> str:
 
 
 def _layout(title: str, active: str, body: str, session: dict | None = None) -> str:
+    s = session or _current_session.get()
     csrf_token = ""
-    if session is not None:
-        csrf_token = session.setdefault("_csrf_token", secrets.token_urlsafe(32))
+    if s is not None:
+        csrf_token = s.get("_csrf_token") or ""
     return f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">

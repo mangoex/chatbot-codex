@@ -793,12 +793,14 @@ def _require_client_login(request: Request) -> dict:
     user = request.session.get("user")
     if not user:
         raise HTTPException(status_code=302, headers={"Location": "/admin/login"})
+    csrf_token = request.session.setdefault("_csrf_token", secrets.token_urlsafe(32))
     session = {
         "user": user,
         "role": request.session.get("role", "client_viewer"),
         "client_id": request.session.get("client_id"),
         "user_id": request.session.get("user_id"),
         "name": request.session.get("name") or user,
+        "_csrf_token": csrf_token,
     }
     if session["role"] == "agency_admin" and not session["client_id"]:
         # Superadmin preview: fallback to first client if none in session
