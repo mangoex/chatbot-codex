@@ -44,6 +44,7 @@ _REASONING_INDICATORS = [
     # English patterns
     r"^\s*(?:we|i)\s+(?:need|must|should|can|will|have|already|am|would|do)\b",
     r"^\s*the\s+(?:user|customer|client|bot|agent|conversation|prompt)\s+(?:says|asked|wants|is|requested|asks|has|should|needs|will|tells|corrects)\b",
+    r"^\s*(?:prompt|rule|instruction|guideline)\s+(?:says|asked|wants|is|requested|asks|has|should|needs|will|tells|corrects)\b",
     r"^\s*according\s+to\s+(?:the\s+)?rules\b",
     r"^\s*this\s+is\s+a\s+(?:request|greeting|case|message|follow-up)\b",
     r"^\s*thus\s+(?:we|i)\b",
@@ -86,7 +87,7 @@ _QUOTED_REASONING_RE = re.compile(
 
 # Helper to detect if a line looks like English reasoning
 _ENGLISH_DETECT_RE = re.compile(
-    r"\b(?:the|and|that|have|for|not|with|you|this|but|his|from|they|she|him|her|its|our|their|will|would|about|there|their|what|out|about|who|get|which|go|guidelines|guideline|rules|let|lets|let's|draft|drafts|drafting|response|responses|reply|replies|here|is|are|hello|writing|saying|telling|need|must|should|can|could|already|done|been|was|were|am|are|of|on|at|by|an|as|first|i|my|we|our|us|your|shouldn't|don't|didn't|doesn't|won't|can't|couldn't|isn't|aren't|wasn't|weren't|haven't|hasn't|hadn't)\b",
+    r"\b(?:the|and|that|have|for|not|with|you|this|but|his|from|they|she|him|her|its|our|their|will|would|about|there|their|what|out|about|who|get|which|go|guidelines|guideline|rules|let|lets|let's|draft|drafts|drafting|response|responses|reply|replies|here|is|are|hello|writing|saying|telling|need|must|should|can|could|already|done|been|was|were|am|are|of|on|at|by|an|as|first|i|my|we|our|us|your|shouldn't|don't|didn't|doesn't|won't|can't|couldn't|isn't|aren't|wasn't|weren't|haven't|hasn't|hadn't|prompt|prompts|says|say|ask|asks|asking|option|options|list|listing|rule|rules|guideline|guidelines|instruction|instructions|context)\b",
     re.IGNORECASE
 )
 
@@ -97,6 +98,14 @@ def _strip_reasoning(clean: str) -> str:
     quote_match = _QUOTED_REASONING_RE.search(clean)
     if quote_match:
         return quote_match.group(1).strip()
+
+    # Pre-clean inline reasoning prefixes at the very start of the text
+    clean = re.sub(
+        r"^\s*(?:prompt|rule|instruction|guideline|system|let's|draft|reasoning|thinking|thought|analysis)\s+(?:says|asked|wants|is|requested|asks|has|should|needs|will|tells|corrects|draft|write|think|process|analysis)?\b[^.!?\n]*[.!?]\s*",
+        "",
+        clean,
+        flags=re.IGNORECASE
+    )
 
     # Otherwise, split by lines and filter out reasoning lines from the beginning
     lines = clean.split("\n")

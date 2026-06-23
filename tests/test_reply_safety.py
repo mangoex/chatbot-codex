@@ -142,6 +142,11 @@ class ReplySafetyTests(unittest.TestCase):
         polished = reply_safety.polish(text, [])
         self.assertEqual(polished, text)
 
+    def test_strips_inline_reasoning_prefix(self):
+        text = "Prompt says ask before listing options.¡Claro! En los sándwiches podemos usar cuernito o baguette."
+        reply = reply_safety.polish(text, [])
+        self.assertEqual(reply, "¡Claro! En los sándwiches podemos usar cuernito o baguette.")
+
 
 if __name__ == "__main__":
     unittest.main()
