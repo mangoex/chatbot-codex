@@ -22,7 +22,7 @@ _CANCEL_RE = re.compile(
 )
 _RESCHEDULE_RE = re.compile(
     r"\b(cambiar|cambiarla|cambiarlo|mover|moverla|moverlo|reagendar|reagenda|"
-    r"reprogramar|reprograma|modificar|modifica|pasar|posponer|no\s+voy\s+a\s+poder|"
+    r"reprogramar|reprograma|modificar|modifica|posponer|no\s+voy\s+a\s+poder|"
     r"no\s+voy\s+a\s+estar|no\s+estare|no\s+estar[eé]|no\s+podre|no\s+podré|"
     r"mejor|ese\s+d[ií]a\s+no|ese\s+dia\s+no|esa\s+fecha\s+no)\b",
     re.IGNORECASE,

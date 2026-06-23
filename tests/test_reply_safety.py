@@ -147,6 +147,11 @@ class ReplySafetyTests(unittest.TestCase):
         reply = reply_safety.polish(text, [])
         self.assertEqual(reply, "¡Claro! En los sándwiches podemos usar cuernito o baguette.")
 
+    def test_does_not_flag_messages_with_multiple_emojis(self):
+        text = "¡Perfecto! Añadimos un Café Solo ($50.00). Resumen del pedido: - Sándwich baguette de atún ($110.00) 🥝🥖. ¿Confirmas?"
+        polished = reply_safety.polish(text, [])
+        self.assertEqual(polished, text)
+
 
 if __name__ == "__main__":
     unittest.main()

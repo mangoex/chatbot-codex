@@ -26,6 +26,23 @@ _FALLBACK_REPLY = (
 )
 
 
+def _is_emoji(ch: str) -> bool:
+    o = ord(ch)
+    # Check common emoji and symbol blocks:
+    # - Miscellaneous Symbols (2600-26FF)
+    # - Dingbats (2700-27BF)
+    # - Miscellaneous Symbols and Arrows (2B00-2BFF)
+    # - Supplemental Arrows-B (2900-297F)
+    # - Emoticons (1F600-1F64F)
+    # - Miscellaneous Symbols and Pictographs (1F300-1F5FF)
+    # - Transport and Map Symbols (1F680-1F6FF)
+    # - Supplemental Symbols and Pictographs (1F900-1F9FF)
+    # - Symbols and Pictographs Extended-A (1FA70-1FAFF)
+    if (0x2600 <= o <= 0x27BF) or (0x2B00 <= o <= 0x2BFF) or (0x1F000 <= o <= 0x1FAFF):
+        return True
+    return False
+
+
 def looks_broken(reply: str) -> bool:
     clean = reply or ""
     if any(pattern.search(clean) for pattern in _BROKEN_PATTERNS):
@@ -34,7 +51,7 @@ def looks_broken(reply: str) -> bool:
         return True
     words = clean.split()
     if len(words) > 10:
-        non_ascii_symbols = sum(1 for ch in clean if ord(ch) > 10000)
+        non_ascii_symbols = sum(1 for ch in clean if ord(ch) > 10000 and not _is_emoji(ch))
         if non_ascii_symbols >= 2:
             return True
     return False

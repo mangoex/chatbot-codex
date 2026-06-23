@@ -444,14 +444,16 @@ async def _process_message(payload: dict) -> None:
             log.info("Core reply respondio a %s (%d chars)", wa_id, len(reply))
             return
 
-    agenda_reply, scheduled = await agenda_guard.maybe_handle(
-        wa_id, user_text, current_history, bot_id=bot.id
-    )
-    if agenda_reply:
-        reply = await leads.process_reply(wa_id, agenda_reply, current_history, bot_id=bot.id)
-        await _send_and_track(bot, wa_id, user_text, reply, history, scheduled=scheduled)
-        log.info("Agenda guard respondio a %s (%d chars)", wa_id, len(reply))
-        return
+    from app import skill_runtime
+    if await skill_runtime.calendar_skill_enabled(bot.id):
+        agenda_reply, scheduled = await agenda_guard.maybe_handle(
+            wa_id, user_text, current_history, bot_id=bot.id
+        )
+        if agenda_reply:
+            reply = await leads.process_reply(wa_id, agenda_reply, current_history, bot_id=bot.id)
+            await _send_and_track(bot, wa_id, user_text, reply, history, scheduled=scheduled)
+            log.info("Agenda guard respondio a %s (%d chars)", wa_id, len(reply))
+            return
 
     try:
         raw_reply = await openai_client.complete(
