@@ -47,7 +47,7 @@ def looks_broken(reply: str) -> bool:
     clean = reply or ""
     if any(pattern.search(clean) for pattern in _BROKEN_PATTERNS):
         return True
-    if clean.endswith((",", ":", ";")):
+    if clean.endswith((",", ";")):
         return True
     words = clean.split()
     if len(words) > 10:

@@ -152,6 +152,11 @@ class ReplySafetyTests(unittest.TestCase):
         polished = reply_safety.polish(text, [])
         self.assertEqual(polished, text)
 
+    def test_does_not_flag_messages_ending_with_colon(self):
+        text = "Perfecto, elegiste cuernito. ¿Qué bebida te gustaría añadir de las siguientes:"
+        polished = reply_safety.polish(text, [])
+        self.assertEqual(polished, text)
+
 
 if __name__ == "__main__":
     unittest.main()
