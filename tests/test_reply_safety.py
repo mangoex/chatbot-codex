@@ -137,6 +137,11 @@ class ReplySafetyTests(unittest.TestCase):
         reply = reply_safety.polish(text, [])
         self.assertEqual(reply, "¡Claro! El sandwich de pollo cuesta $115.")
 
+    def test_does_not_strip_valid_spanish_phrases_starting_with_ok(self):
+        text = "Ok, entiendo. ¿Para llevar o recoger?"
+        polished = reply_safety.polish(text, [])
+        self.assertEqual(polished, text)
+
 
 if __name__ == "__main__":
     unittest.main()

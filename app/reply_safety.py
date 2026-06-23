@@ -62,7 +62,6 @@ _REASONING_INDICATORS = [
     r"^\s*in\s+this\s+case\b",
     r"^\s*they\s+(?:want|asked|said|are|need|asked)\b",
     r"^\s*(?:thought|reasoning|analysis|thinking\s+process)\s*:\s*",
-    r"^\s*(?:okay|ok|well|now|here|first|second)\b",
     r"^\s*since\s+they\b",
     r"^\s*my\s+response\b",
     r"^\s*let\s+me\s+check\b",
@@ -87,7 +86,7 @@ _QUOTED_REASONING_RE = re.compile(
 
 # Helper to detect if a line looks like English reasoning
 _ENGLISH_DETECT_RE = re.compile(
-    r"\b(?:the|and|that|have|for|not|with|you|this|but|his|from|they|she|him|her|its|our|their|will|would|about|there|their|what|out|about|who|get|which|go|guidelines|guideline|rules|let|lets|let's|draft|drafts|drafting|response|responses|reply|replies|here|is|are|hello|writing|saying|telling|need|must|should|can|could|already|done|been|was|were|am|are|of|on|at|by|an|as)\b",
+    r"\b(?:the|and|that|have|for|not|with|you|this|but|his|from|they|she|him|her|its|our|their|will|would|about|there|their|what|out|about|who|get|which|go|guidelines|guideline|rules|let|lets|let's|draft|drafts|drafting|response|responses|reply|replies|here|is|are|hello|writing|saying|telling|need|must|should|can|could|already|done|been|was|were|am|are|of|on|at|by|an|as|first|i|my|we|our|us|your|shouldn't|don't|didn't|doesn't|won't|can't|couldn't|isn't|aren't|wasn't|weren't|haven't|hasn't|hadn't)\b",
     re.IGNORECASE
 )
 
