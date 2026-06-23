@@ -14,6 +14,8 @@ def _require_login(request: Request) -> str:
     user = request.session.get("user")
     if not user:
         raise HTTPException(status_code=302, headers={"Location": "/admin/login"})
+    import secrets
+    request.session.setdefault("_csrf_token", secrets.token_urlsafe(32))
     return user
 
 
@@ -50,13 +52,14 @@ def _yesno(value: object) -> str:
 @router.get("/reset-contact", response_class=HTMLResponse)
 async def reset_contact_page(request: Request, wa_id: str = ""):
     _require_login(request)
+    csrf_token = request.session.get("_csrf_token") or ""
     clean_wa_id = "".join(ch for ch in wa_id if ch.isdigit())
     body = f"""
     <section class="panel">
       <h1>Limpiar conversacion</h1>
       <p>Esto borra historial, CRM, escalaciones y follow-ups pendientes de un contacto para probar desde cero.</p>
       <p class="danger">No borra mensajes dentro de WhatsApp; solo la memoria del bot y el panel.</p>
-      <form method="post" action="/admin/reset-contact">
+      <form method="post" action="/admin/reset-contact?csrf_token={html.escape(csrf_token)}">
         <label>WhatsApp ID o telefono con lada</label>
         <input name="wa_id" value="{html.escape(clean_wa_id)}" placeholder="521667..." required autofocus>
         <div class="actions">

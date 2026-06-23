@@ -436,6 +436,43 @@ class AdminControlAppTests(unittest.TestCase):
         finally:
             admin.db.delete_bot = original_delete_bot
 
+    def test_reset_contact_flow(self):
+        from app import admin_tools
+
+        class Request:
+            session = {
+                "user": "admin@example.com",
+                "role": "agency_admin",
+            }
+
+        # 1. Test GET /reset-contact page sets CSRF and displays form
+        req = Request()
+        resp = asyncio.run(admin_tools.reset_contact_page(req, wa_id="12345"))
+        self.assertIsNotNone(resp)
+        self.assertIn("_csrf_token", req.session)
+        token = req.session["_csrf_token"]
+        self.assertIn(f'action="/admin/reset-contact?csrf_token={token}"', resp.body.decode("utf-8"))
+
+        # 2. Test POST /reset-contact submit clears data
+        async def fake_clear_contact_data(wa_ids):
+            self.assertEqual(wa_ids, ["12345"])
+            return True
+
+        original_clear = admin_tools.db.clear_contact_data
+        admin_tools.db.clear_contact_data = fake_clear_contact_data
+        try:
+            resp_post = asyncio.run(admin_tools.reset_contact_submit(Request(), wa_id="12345"))
+            self.assertIsNotNone(resp_post)
+            if hasattr(resp_post, "headers") and "location" in resp_post.headers:
+                self.assertEqual(resp_post.headers["location"], "/admin/conversations")
+            elif hasattr(resp_post, "content"):
+                self.assertEqual(resp_post.content, "/admin/conversations")
+            elif hasattr(resp_post, "body"):
+                # fallback for RedirectResponse body if headers are not structure-matching standard
+                self.assertEqual(resp_post.headers.get("location"), "/admin/conversations")
+        finally:
+            admin_tools.db.clear_contact_data = original_clear
+
 
 if __name__ == "__main__":
     unittest.main()
