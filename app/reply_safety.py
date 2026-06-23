@@ -51,7 +51,13 @@ _REASONING_INDICATORS = [
     r"^\s*possibly\s+(?:we|i)\b",
     r"^\s*but\s+(?:we|i|there)\b",
     r"^\s*so\s+(?:we|i)\b",
-    r"^\s*let's\s+(?:analyze|check|respond|say|keep|see)\b",
+    r"^\s*let's\s+(?:analyze|check|respond|say|keep|see|draft|write)\b",
+    r"^\s*drafting\s+(?:a\s+)?(?:response|reply)\b",
+    r"^\s*sure!?\s*,?\s*(?:here\s+is|here's)\b",
+    r"^\s*(?:i\s+will|i'll)\s+(?:respond|reply|write|say)\b",
+    r"^\s*(?:response|reply)\s*:\s*",
+    r"^\s*answering\s+the\s+user\b",
+    r"^\s*here\s+is\s+a\s+draft\b",
     r"^\s*the\s+conversation\b",
     r"^\s*in\s+this\s+case\b",
     r"^\s*they\s+(?:want|asked|said|are|need|asked)\b",
@@ -66,6 +72,8 @@ _REASONING_INDICATORS = [
     r"^\s*según\s+(?:las\s+reglas|las\s+instrucciones|el\s+contexto)\b",
     r"^\s*mi\s+respuesta\s+debe\b",
     r"^\s*(?:pensamiento|razonamiento|análisis|proceso\s+de\s+pensamiento)\s*:\s*",
+    r"^\s*(?:aquí\s+está\s+mi\s+respuesta|aquí\s+tienes\s+la\s+respuesta)\b",
+    r"^\s*(?:redactando\s+respuesta|escribiendo\s+respuesta)\b",
 ]
 
 _REASONING_REGEX = re.compile("|".join(_REASONING_INDICATORS), re.IGNORECASE)
@@ -79,7 +87,7 @@ _QUOTED_REASONING_RE = re.compile(
 
 # Helper to detect if a line looks like English reasoning
 _ENGLISH_DETECT_RE = re.compile(
-    r"\b(?:the|and|that|have|for|not|with|you|this|but|his|from|they|she|him|her|its|our|their|will|would|about|there|their|what|out|about|who|get|which|go|guidelines|guideline|rules)\b",
+    r"\b(?:the|and|that|have|for|not|with|you|this|but|his|from|they|she|him|her|its|our|their|will|would|about|there|their|what|out|about|who|get|which|go|guidelines|guideline|rules|let|lets|let's|draft|drafts|drafting|response|responses|reply|replies|here|is|are|hello|writing|saying|telling|need|must|should|can|could|already|done|been|was|were|am|are|of|on|at|by|an|as)\b",
     re.IGNORECASE
 )
 

@@ -73,7 +73,8 @@ def _runtime_context(lead_info: dict | None = None) -> str:
         f"- Zona horaria: {tz_name}\n"
         f"- Google Calendar: {calendar_state}\n"
         f"- Duracion por defecto de llamada: {config.GOOGLE_APPOINTMENT_DURATION_MINUTES} minutos\n"
-        "- Responde muy breve para WhatsApp."
+        "- Responde muy breve para WhatsApp.\n"
+        "- IMPORTANTE: Responde en español (o el idioma del usuario). Tu respuesta debe ser EXCLUSIVAMENTE el mensaje final que leerá el usuario. NUNCA escribas pensamientos, explicaciones en inglés, 'Let's draft' ni razonamientos internos en la respuesta."
     )
 
 

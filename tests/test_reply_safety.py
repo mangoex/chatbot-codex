@@ -129,6 +129,14 @@ class ReplySafetyTests(unittest.TestCase):
         reply = reply_safety.polish(reasoning_text, [])
         self.assertEqual(reply, "Hola, ¿en qué te puedo ayudar hoy?")
 
+    def test_strips_lets_draft_reasoning_prefix(self):
+        text = (
+            "Let's draft:\n"
+            "¡Claro! El sandwich de pollo cuesta $115."
+        )
+        reply = reply_safety.polish(text, [])
+        self.assertEqual(reply, "¡Claro! El sandwich de pollo cuesta $115.")
+
 
 if __name__ == "__main__":
     unittest.main()
