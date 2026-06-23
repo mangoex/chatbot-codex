@@ -11,7 +11,8 @@ _ACTION_MARKERS = ("[[ACTION_LINK]]", "[[AGENDA_LINK]]")
 _DISQUALIFY_RE = re.compile(r"\[\[DESCALIFICADO(?::\s*([^\]]+))?\]\]", re.IGNORECASE)
 _INVALID_NAME_RE = re.compile(
     r"\b(quien|quien toma|toma|decision|decisi[oó]n|due[nñ]o|socio|negocio|"
-    r"empresa|encargado|responsable|yo|nosotros|equipo)\b",
+    r"empresa|encargado|responsable|yo|nosotros|equipo|"
+    r"si|sí|no|claro|ok|okay|vale|listo|bien|va|perfecto|correcto|entendido|bueno|as[ií])\b",
     re.IGNORECASE,
 )
 
@@ -54,6 +55,14 @@ def _extract_nombre(history: list[dict]) -> str | None:
                 stop = re.search(r"\b(y|de|soy|tengo|con)\b", candidate, re.IGNORECASE)
                 if stop:
                     candidate = candidate[:stop.start()].strip()
+                
+                # Eliminar palabras de respuesta o confirmación al inicio
+                while True:
+                    new_candidate = re.sub(r"^(?:si|sí|no|claro|ok|okay|vale|bien|perfecto|bueno)\b\s*,?\s*", "", candidate, flags=re.IGNORECASE)
+                    if new_candidate == candidate:
+                        break
+                    candidate = new_candidate
+
                 if not _INVALID_NAME_RE.search(candidate) and len(candidate) >= 2:
                     return candidate.title()
             previous_assistant_asked_name = False

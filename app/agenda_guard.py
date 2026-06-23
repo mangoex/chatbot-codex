@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 from app import calendar_client, config
 
 _SCHEDULE_RE = re.compile(
-    r"\b(?:quiero|quisiera|necesito|me interesa|puedo|podemos|ay[uú]dame|ayudame|vamos a|deseo|me gustar[ií]a)\b"
+    r"\b(?:quiero|quisiera|necesito|me interesa|puedo|podemos|ay[uú]dame|ayudame|vamos a|deseo|me gustar[ií]a|ponme|dame|hazme|ag[eé]ndame|crear?|programar?|reservar?|hacer|haz)\b"
     r".{0,60}\b(?:agend\w*|cita|llamada|demo|reuni[oó]n)\b"
     r"|\b(?:agendar|agendemos|agenda una|programar una|reservar una)\b",
     re.IGNORECASE | re.DOTALL,
@@ -278,7 +278,7 @@ def _looks_like_service_scheduling(user_text: str, history: list[dict]) -> bool:
 
 def _is_booking_context(text: str) -> bool:
     return bool(re.search(
-        r"\b(?:agend\w*|cit[as]\w*|llamada\w*|demo\w*|reuni\w*|reserv\w*|calendario\w*|d[ií]a\s*y\s*hora|fecha\s*y\s*hora|horario\w*)\b",
+        r"\b(?:agend\w*|cit[as]\w*|llamada\w*|demo\b|demostr\w*|reuni\w*|reserv\w*|calendario\w*|d[ií]a\s*y\s*hora|fecha\s*y\s*hora|horario\w*)\b",
         text,
         re.IGNORECASE
     ))
@@ -309,6 +309,16 @@ def _clean_name(name: str) -> str | None:
     if stop:
         clean = clean[: stop.start()].strip(" .,;:¡!¿?")
     
+    # Eliminar palabras de respuesta o confirmación al inicio (ej: "Sí, claro, Miguel" -> "Miguel")
+    while True:
+        new_clean = re.sub(r"^(?:si|sí|no|claro|ok|okay|vale|bien|perfecto|bueno)\b\s*,?\s*", "", clean, flags=re.IGNORECASE)
+        if new_clean == clean:
+            break
+        clean = new_clean
+
+    if not clean.strip():
+        return None
+
     # Filtrar pronombres, palabras de preguntas, y términos comerciales comunes
     lower_name = clean.lower()
     forbidden_names = {
@@ -317,7 +327,9 @@ def _clean_name(name: str) -> str | None:
         "info", "información", "informacion", "paquete", "servicio", "servicios", "costa",
         "cuesta", "pregunta", "duda", "ayuda", "llamada", "cita", "reunion", "reunión",
         "demo", "contacto", "asesor", "humano", "persona", "negocio", "empresa", "sistema",
-        "asistto", "robot", "bot", "ia", "artificial", "inteligencia", "gracias"
+        "asistto", "robot", "bot", "ia", "artificial", "inteligencia", "gracias",
+        "si", "sí", "no", "claro", "ok", "okay", "vale", "listo", "bien", "va", "perfecto",
+        "correcto", "entendido", "bueno", "así", "asi"
     }
     if lower_name in forbidden_names:
         return None

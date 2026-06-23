@@ -467,6 +467,60 @@ class AgendaGuardTests(unittest.TestCase):
         import asyncio
         asyncio.run(run())
 
+    def test_ponme_una_cita_triggers_agenda_flow(self):
+        async def run():
+            reply, scheduled = await agenda_guard.maybe_handle(
+                "5215550000000",
+                "Ponme una cita para mañana a las 11",
+                [],
+                bot_id=1,
+            )
+            # Should intercept and ask for the name
+            self.assertFalse(scheduled)
+            self.assertIn("A nombre de quién", reply)
+
+        import asyncio
+        asyncio.run(run())
+
+    def test_si_claro_does_not_extract_as_name(self):
+        async def run():
+            history = [
+                {"role": "user", "content": "quiero agendar una cita"},
+                {"role": "assistant", "content": "Claro. ¿A nombre de quién agendo la llamada?"},
+            ]
+            reply, scheduled = await agenda_guard.maybe_handle(
+                "5215550000000",
+                "Sí claro",
+                history,
+                bot_id=1,
+            )
+            # Should ask again or not recognize it as a name (meaning it doesn't proceed to ask for date/time with 'Sí')
+            self.assertFalse(scheduled)
+            self.assertIn("A nombre de quién", reply)
+            self.assertNotIn("Gracias, Sí", reply)
+
+        import asyncio
+        asyncio.run(run())
+
+    def test_demoras_does_not_trigger_booking_context(self):
+        async def run():
+            history = [
+                {"role": "user", "content": "Hola"},
+                {"role": "assistant", "content": "Atendemos sin demoras de ningún tipo."},
+            ]
+            # Since 'demoras' contains 'demo', make sure it doesn't trick the bot into booking context
+            reply, scheduled = await agenda_guard.maybe_handle(
+                "5215550000000",
+                "Sí claro",
+                history,
+                bot_id=1,
+            )
+            self.assertIsNone(reply)
+            self.assertFalse(scheduled)
+
+        import asyncio
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()
