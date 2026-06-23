@@ -2,6 +2,7 @@ from __future__ import annotations
 """FastAPI app: /webhook (GET handshake + POST mensajes), /health, /reload, /admin."""
 import asyncio
 import logging
+import secrets as py_secrets
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header, Query
 from fastapi.responses import PlainTextResponse
@@ -26,6 +27,7 @@ from app import (
     openai_client,
     public_pages,
     reply_safety,
+    secure_store,
     signature,
     whatsapp_client,
 )
@@ -64,6 +66,9 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan, title="Asistto by Humanio")
 
+if config.APP_ENV in {"production", "prod"} and not config.SESSION_SECRET:
+    raise RuntimeError("SESSION_SECRET is required for admin/client sessions.")
+
 # Sessions (para /admin). Si SESSION_SECRET está vacío, el panel no funcionará.
 app.add_middleware(
     SessionMiddleware,
@@ -72,6 +77,25 @@ app.add_middleware(
     https_only=True,
     max_age=60 * 60 * 8,  # 8 horas
 )
+
+
+@app.middleware("http")
+async def csrf_protection(request: Request, call_next):
+    path = request.url.path
+    protected = path.startswith(("/admin", "/client"))
+    exempt = path in {"/admin/login"} or path.startswith("/admin/meta/oauth/")
+    if protected and not exempt and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        expected = request.session.get("_csrf_token")
+        provided = request.headers.get("X-CSRF-Token")
+        if not provided:
+            try:
+                form = await request.form()
+                provided = str(form.get("csrf_token") or "")
+            except Exception:
+                provided = ""
+        if not expected or not provided or not py_secrets.compare_digest(str(expected), provided):
+            return PlainTextResponse("Invalid CSRF token", status_code=403)
+    return await call_next(request)
 
 app.include_router(admin.router)
 app.include_router(admin_tools.router)
@@ -95,11 +119,11 @@ def verify_webhook(
     hub_challenge: str = Query(None, alias="hub.challenge"),
 ):
     """Handshake de Meta: verifica el token y devuelve el challenge."""
-    log.info("Handshake webhook Meta recibido: mode=%s, token=%s, challenge=%s", hub_mode, hub_verify_token, hub_challenge)
+    log.info("Handshake webhook Meta recibido: mode=%s, challenge_present=%s", hub_mode, bool(hub_challenge))
     if hub_mode == "subscribe" and hub_verify_token == config.VERIFY_TOKEN:
         log.info("Handshake exitoso. Verificacion de Meta correcta.")
         return PlainTextResponse(hub_challenge or "")
-    log.warning("Fallo en verificacion de handshake: token recibido=%s, esperado=%s", hub_verify_token, config.VERIFY_TOKEN)
+    log.warning("Fallo en verificacion de handshake de Meta.")
     raise HTTPException(status_code=403, detail="Verification failed")
 
 
@@ -107,19 +131,47 @@ def verify_webhook(
 @app.post("/webhooks/whatsapp")
 async def receive_webhook(request: Request, bg: BackgroundTasks):
     body = await request.body()
-    log.info("Mensaje webhook POST recibido. Body: %s", body.decode('utf-8', errors='ignore')[:1000])
+    log.info("Mensaje webhook POST recibido. bytes=%s", len(body))
     sig = request.headers.get("X-Hub-Signature-256")
-    log.info("Cabecera X-Hub-Signature-256: %s", sig)
     if not signature.verify(sig, body):
-        log.warning("Firma invalida de webhook. Signature: %s", sig)
+        log.warning("Firma invalida de webhook.")
         raise HTTPException(status_code=403, detail="Invalid signature")
     payload = await request.json()
     bg.add_task(_process_message_safe, payload)
     return {"status": "received"}
 
 @app.post("/webhooks/chatwoot/{bot_id}")
-async def receive_chatwoot_webhook(request: Request, bot_id: int):
+async def receive_chatwoot_webhook(
+    request: Request,
+    bot_id: int,
+    x_asistto_webhook_secret: str = Header(None),
+):
+    integration = await db.get_active_bot_integration(bot_id, "chatwoot")
+    if not integration:
+        raise HTTPException(status_code=403, detail="Chatwoot integration disabled")
+    encrypted = await db.get_integration_secret_values(int(integration["id"]))
+    expected_secret = ""
+    for key in ("webhook_secret", "chatwoot_webhook_secret", "secret_token"):
+        if encrypted.get(key):
+            expected_secret = secure_store.decrypt_secret(encrypted[key]) or ""
+            break
+    if not expected_secret or not x_asistto_webhook_secret:
+        raise HTTPException(status_code=403, detail="Missing webhook secret")
+    if not py_secrets.compare_digest(expected_secret, x_asistto_webhook_secret):
+        raise HTTPException(status_code=403, detail="Invalid webhook secret")
+
     payload = await request.json()
+    cfg = integration.get("config") or {}
+    expected_inbox = str(cfg.get("inbox_id") or "").strip()
+    if expected_inbox:
+        payload_inbox = str(
+            payload.get("inbox", {}).get("id")
+            or payload.get("conversation", {}).get("inbox_id")
+            or payload.get("conversation", {}).get("inbox", {}).get("id")
+            or ""
+        ).strip()
+        if payload_inbox and payload_inbox != expected_inbox:
+            raise HTTPException(status_code=403, detail="Webhook inbox mismatch")
     
     event = payload.get("event")
     
@@ -165,23 +217,19 @@ async def receive_chatwoot_webhook(request: Request, bot_id: int):
     # Clean phone number
     wa_id = wa_id.lstrip("+")
     
-    bot = await db.get_bot(bot_id)
+    bot = await bots.resolve_by_bot_id(bot_id)
     if not bot:
         return {"status": "error_bot_not_found"}
-        
-    # Send message to WhatsApp via Asistto
-    from app import whatsapp_client
-    from app.bots import _whatsapp_cloud_token
-    
-    token = await _whatsapp_cloud_token(bot_id) or config.WHATSAPP_API_TOKEN
-    phone_id = bot.get("phone_number_id") or config.WHATSAPP_PHONE_NUMBER_ID
+    if not bot.whatsapp_access_token or not bot.whatsapp_phone_number_id:
+        log.error("Chatwoot webhook blocked for bot %s: missing WhatsApp credentials", bot_id)
+        return {"status": "error_missing_whatsapp_credentials"}
     
     try:
         await whatsapp_client.send_text(
             to_wa_id=wa_id,
             body=content,
-            phone_number_id=phone_id,
-            access_token=token
+            phone_number_id=bot.whatsapp_phone_number_id,
+            access_token=bot.whatsapp_access_token
         )
         # Also save to local conversations to keep history synced, without syncing back to Chatwoot
         await db.save_message(wa_id, "assistant", content, bot_id=bot_id, sync_chatwoot=False)
@@ -238,7 +286,7 @@ async def _send_and_track(
     scheduled: bool = False,
 ) -> None:
     reply = reply_safety.polish(reply, history, user_text=user_text, bot_name=bot.name)
-    log.info("Sending polished reply to %s: %r", wa_id, reply)
+    log.info("Sending polished reply to %s (%d chars)", wa_id, len(reply))
     await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
     await whatsapp_client.send_text(
         wa_id,
@@ -287,6 +335,12 @@ async def _process_message(payload: dict) -> None:
     wa_id = msg["wa_id"]
     phone_id = msg.get("phone_number_id")
     bot = await bots.resolve_by_phone_number_id(phone_id)
+    if bot is None:
+        log.warning("unknown_phone_number_id=%s wa_id=%s: message ignored", phone_id, wa_id)
+        return
+    if not bot.whatsapp_phone_number_id or not bot.whatsapp_access_token:
+        log.error("Bot %s cannot reply: missing WhatsApp phone id or access token", bot.id)
+        return
     
     log.info(
         "--- INICIO PROCESAMIENTO --- wa_id=%s, phone_number_id=%s, resolved_bot_id=%s, resolved_bot_name=%s, bot_status=%s",
@@ -331,7 +385,7 @@ async def _process_message(payload: dict) -> None:
                         )
                         
                         # Cancel follow-ups
-                        await follow_ups.cancel(wa_id)
+                        await follow_ups.cancel(wa_id, bot.id)
                         
                         # Optionally save history
                         if rule.get("save_history"):
@@ -344,7 +398,7 @@ async def _process_message(payload: dict) -> None:
         log.error("Error al procesar reglas de enrutamiento: %s", exc)
 
     # El usuario escribió → cancelar cualquier follow-up pendiente
-    await follow_ups.cancel(wa_id)
+    await follow_ups.cancel(wa_id, bot.id)
 
     history = await db.get_history(wa_id, config.HISTORY_WINDOW, bot_id=bot.id)
 
@@ -437,33 +491,17 @@ async def _process_message(payload: dict) -> None:
 
 @app.get("/debug-waba/{bot_id}")
 async def debug_waba(
+    request: Request,
     bot_id: int,
-    subscribe: bool = Query(False),
-    x_reload_token: str = Header(None),
-    reload_token: str = Query(None),
 ):
-    if not config.RELOAD_TOKEN or (x_reload_token != config.RELOAD_TOKEN and reload_token != config.RELOAD_TOKEN):
-        raise HTTPException(status_code=403, detail="Forbidden")
+    admin._require_agency(request)
 
     from app import meta_provider, db
 
-    subscription_result = None
-    if subscribe:
-        try:
-            subscription_result = await meta_provider.subscribe_app_to_waba(bot_id)
-        except Exception as e:
-            subscription_result = {"error": str(e)}
-
-    # 1. Run standard meta provider connection diagnostics
     diag = await meta_provider.diagnose_bot_connection(bot_id)
-
-    # 2. Get the decrypted access token if available, check length
     runtime = await meta_provider.get_bot_whatsapp_runtime(bot_id)
     token = runtime.get("access_token")
-    token_len = len(token) if token else 0
-    token_prefix = token[:10] + "..." if token and len(token) > 10 else ""
 
-    # 3. Retrieve database records for this bot
     async with db._pool.acquire() as conn:
         bot_row = await conn.fetchrow("SELECT * FROM bots WHERE id = $1", bot_id)
         number_row = await conn.fetchrow("SELECT * FROM bot_whatsapp_numbers WHERE bot_id = $1", bot_id)
@@ -471,8 +509,8 @@ async def debug_waba(
             "SELECT id, bot_id, integration_type, name, enabled, config FROM bot_integrations WHERE bot_id = $1",
             bot_id
         )
-        last_messages = await conn.fetch(
-            "SELECT id, wa_id, role, content, created_at FROM conversations WHERE bot_id = $1 ORDER BY created_at DESC LIMIT 10",
+        message_counts = await conn.fetch(
+            "SELECT role, COUNT(*) AS count FROM conversations WHERE bot_id = $1 GROUP BY role",
             bot_id
         )
         processed_msgs = await conn.fetch(
@@ -480,7 +518,6 @@ async def debug_waba(
             bot_id
         )
 
-    # Convert records to dicts for JSON serialization, handling datetime
     def serialize_record(record):
         from datetime import datetime as dt
         if not record:
@@ -493,19 +530,27 @@ async def debug_waba(
 
     return {
         "bot_id": bot_id,
-        "subscription_action_result": subscription_result,
         "diagnostics": diag,
         "token_info": {
             "has_token": bool(token),
-            "length": token_len,
-            "prefix": token_prefix
         },
         "database": {
             "bot": serialize_record(bot_row),
             "whatsapp_number": serialize_record(number_row),
             "integrations": [serialize_record(r) for r in integration_rows],
-            "last_conversations": [serialize_record(r) for r in last_messages],
+            "conversation_counts": [serialize_record(r) for r in message_counts],
             "last_processed_messages": [serialize_record(r) for r in processed_msgs]
         }
     }
+
+
+@app.post("/debug-waba/{bot_id}/subscribe")
+async def debug_waba_subscribe(request: Request, bot_id: int):
+    admin._require_agency(request)
+    from app import meta_provider
+
+    try:
+        return await meta_provider.subscribe_app_to_waba(bot_id)
+    except Exception as exc:
+        return {"error": str(exc)}
 

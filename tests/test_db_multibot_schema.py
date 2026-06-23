@@ -40,6 +40,11 @@ class MultiBotSchemaTests(unittest.TestCase):
         self.assertIn("idx_conv_bot_wa_ts", sql)
         self.assertIn("idx_leads_bot_status", sql)
         self.assertIn("idx_calendar_appts_bot_status", sql)
+        self.assertNotIn("wa_id TEXT UNIQUE NOT NULL", sql)
+        self.assertIn("idx_leads_bot_wa_unique", sql)
+        self.assertIn("idx_follow_ups_bot_wa_unique", sql)
+        self.assertIn("external_action_runs", sql)
+        self.assertNotIn("1173938019132326", inspect.getsource(db.run_migrations))
 
     def test_bot_lookup_helper_exists(self):
         self.assertTrue(callable(db.get_bot_by_phone_number_id))

@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS integration_secrets (
 CREATE TABLE IF NOT EXISTS leads (
     id BIGSERIAL PRIMARY KEY,
     bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
-    wa_id TEXT UNIQUE NOT NULL,
+    wa_id TEXT NOT NULL,
     nombre TEXT,
     negocio TEXT,
     qualification_status TEXT NOT NULL DEFAULT 'en_progreso'
@@ -138,17 +138,21 @@ CREATE TABLE IF NOT EXISTS leads (
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_bot_wa_unique
+    ON leads(bot_id, wa_id);
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(qualification_status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_leads_bot_status ON leads(bot_id, qualification_status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS pending_follow_ups (
     id BIGSERIAL PRIMARY KEY,
     bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
-    wa_id TEXT UNIQUE NOT NULL,
+    wa_id TEXT NOT NULL,
     send_after TIMESTAMPTZ NOT NULL,
     sent BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_follow_ups_bot_wa_unique
+    ON pending_follow_ups(bot_id, wa_id);
 CREATE INDEX IF NOT EXISTS idx_follow_ups_due
     ON pending_follow_ups(send_after) WHERE sent = FALSE;
 
@@ -215,6 +219,24 @@ CREATE INDEX IF NOT EXISTS idx_esc_status_ts
     ON escalations(status, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_esc_wa_status
     ON escalations(wa_id, status);
+CREATE INDEX IF NOT EXISTS idx_esc_bot_wa_status
+    ON escalations(bot_id, wa_id, status);
+
+CREATE TABLE IF NOT EXISTS external_action_runs (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
+    wa_id TEXT,
+    action_type TEXT NOT NULL,
+    integration_id BIGINT REFERENCES bot_integrations(id) ON DELETE SET NULL,
+    operation TEXT,
+    status TEXT NOT NULL CHECK (status IN ('success','rejected','failed')),
+    request_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    response_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+    error_message TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_external_action_runs_bot_ts
+    ON external_action_runs(bot_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS contacts (
     id BIGSERIAL PRIMARY KEY,
@@ -319,14 +341,48 @@ async def run_migrations() -> None:
             await conn.execute(
                 f"ALTER TABLE bot_whatsapp_numbers ADD COLUMN IF NOT EXISTS {column} {definition}"
             )
-        # Onetime fix for stolen phone number id (stolen back to bot 1 by startup default seeding)
-        await conn.execute(
-            "UPDATE bot_whatsapp_numbers SET bot_id = 43 WHERE phone_number_id = '1173938019132326' AND bot_id = 1"
-        )
+        await _migrate_tenant_scoped_contact_state(conn)
         # Setup RAG tables and extension
         from app import rag
         await rag.setup_rag_tables(conn)
     await ensure_default_bot()
+
+
+async def _migrate_tenant_scoped_contact_state(conn) -> None:
+    """Move legacy globally-unique contact state to bot-scoped uniqueness."""
+    for table in ("leads", "pending_follow_ups"):
+        await conn.execute(
+            f"UPDATE {table} SET bot_id = 1 WHERE bot_id IS NULL"
+        )
+
+    await conn.execute(
+        """
+        DELETE FROM leads a
+        USING leads b
+        WHERE a.id < b.id
+          AND a.wa_id = b.wa_id
+          AND a.bot_id IS NOT DISTINCT FROM b.bot_id
+        """
+    )
+    await conn.execute(
+        """
+        DELETE FROM pending_follow_ups a
+        USING pending_follow_ups b
+        WHERE a.id < b.id
+          AND a.wa_id = b.wa_id
+          AND a.bot_id IS NOT DISTINCT FROM b.bot_id
+        """
+    )
+    await conn.execute("ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_wa_id_key")
+    await conn.execute(
+        "ALTER TABLE pending_follow_ups DROP CONSTRAINT IF EXISTS pending_follow_ups_wa_id_key"
+    )
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_bot_wa_unique ON leads(bot_id, wa_id)"
+    )
+    await conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_follow_ups_bot_wa_unique ON pending_follow_ups(bot_id, wa_id)"
+    )
 
 
 async def purge_old(ttl_days: int) -> int:
@@ -411,7 +467,12 @@ async def list_conversation_threads(limit: int = 100, bot_id: int | None = None)
                 leads.qualification_status
             FROM last_messages lm
             JOIN counts ON counts.wa_id = lm.wa_id
-            LEFT JOIN leads ON leads.wa_id = lm.wa_id
+            LEFT JOIN leads
+              ON leads.wa_id = lm.wa_id
+             AND (
+                leads.bot_id = $1
+                OR ($1 = 1 AND leads.bot_id IS NULL)
+             )
             ORDER BY lm.created_at DESC
             LIMIT $2
             """,
@@ -472,12 +533,13 @@ async def save_message(
         asyncio.create_task(sync_message_to_chatwoot(bot_id, wa_id, name or wa_id, content, role))
 
 
-async def find_pending_escalation(wa_id: str) -> dict | None:
+async def find_pending_escalation(wa_id: str, bot_id: int) -> dict | None:
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT * FROM escalations WHERE wa_id=$1 AND status='pendiente' "
+            "SELECT * FROM escalations WHERE wa_id=$1 AND bot_id=$2 AND status='pendiente' "
             "ORDER BY created_at DESC LIMIT 1",
             wa_id,
+            bot_id,
         )
     return dict(row) if row else None
 
@@ -591,6 +653,8 @@ async def escalation_counts() -> dict:
 
 async def upsert_lead(wa_id: str, bot_id: int | None = None, **kwargs) -> None:
     """Crea o actualiza el registro de lead. Solo actualiza los campos pasados."""
+    if bot_id is None:
+        raise ValueError("bot_id is required to upsert a lead")
     fields = {k: v for k, v in kwargs.items()
               if k in ("nombre", "negocio", "qualification_status",
                        "disqualify_reason", "action_link_sent")}
@@ -605,9 +669,8 @@ async def upsert_lead(wa_id: str, bot_id: int | None = None, **kwargs) -> None:
             f"""
             INSERT INTO leads(wa_id, bot_id, {", ".join(fields)})
             VALUES($1, $2, {", ".join(f"${i+3}" for i in range(len(fields)))})
-            ON CONFLICT (wa_id) DO UPDATE SET
+            ON CONFLICT (bot_id, wa_id) DO UPDATE SET
                 {set_clause},
-                bot_id = COALESCE($2, leads.bot_id),
                 updated_at = now()
             """,
             wa_id, bot_id, *values,
@@ -615,6 +678,8 @@ async def upsert_lead(wa_id: str, bot_id: int | None = None, **kwargs) -> None:
 
 
 async def get_lead(wa_id: str, bot_id: int | None = None) -> dict | None:
+    if bot_id is None:
+        raise ValueError("bot_id is required to read a lead")
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -698,7 +763,7 @@ async def list_active_calendar_appointments(
     return [dict(r) for r in rows]
 
 
-async def mark_calendar_appointment_cancelled(google_event_id: str) -> None:
+async def mark_calendar_appointment_cancelled(google_event_id: str, bot_id: int) -> None:
     async with _pool.acquire() as conn:
         await conn.execute(
             """
@@ -707,8 +772,10 @@ async def mark_calendar_appointment_cancelled(google_event_id: str) -> None:
                 cancelled_at = now(),
                 updated_at = now()
             WHERE google_event_id = $1
+              AND bot_id = $2
             """,
             google_event_id,
+            bot_id,
         )
 
 
@@ -739,8 +806,11 @@ async def update_lead_status(
     wa_id: str,
     status: str,
     disqualify_reason: str | None = None,
+    bot_id: int | None = None,
 ) -> None:
     """Mueve un lead entre estados del CRM."""
+    if bot_id is None:
+        raise ValueError("bot_id is required to update a lead")
     async with _pool.acquire() as conn:
         await conn.execute(
             """
@@ -752,10 +822,12 @@ async def update_lead_status(
                 END,
                 updated_at = now()
             WHERE wa_id = $1
+              AND bot_id = $4
             """,
             wa_id,
             status,
             disqualify_reason,
+            bot_id,
         )
 
 
@@ -873,21 +945,21 @@ async def upsert_follow_up(wa_id: str, delay_minutes: int = 10, bot_id: int | No
             """
             INSERT INTO pending_follow_ups(wa_id, send_after, bot_id)
             VALUES($1, now() + make_interval(mins => $2), $3)
-            ON CONFLICT (wa_id) DO UPDATE SET
+            ON CONFLICT (bot_id, wa_id) DO UPDATE SET
                 send_after = now() + make_interval(mins => $2),
-                sent = FALSE,
-                bot_id = $3
+                sent = FALSE
             """,
             wa_id, delay_minutes, bot_id,
         )
 
 
-async def cancel_follow_up(wa_id: str) -> None:
+async def cancel_follow_up(wa_id: str, bot_id: int) -> None:
     """Elimina el follow-up pendiente cuando el usuario vuelve a escribir."""
     async with _pool.acquire() as conn:
         await conn.execute(
-            "DELETE FROM pending_follow_ups WHERE wa_id = $1 AND sent = FALSE",
+            "DELETE FROM pending_follow_ups WHERE wa_id = $1 AND bot_id = $2 AND sent = FALSE",
             wa_id,
+            bot_id,
         )
 
 
@@ -918,29 +990,31 @@ async def mark_all_follow_ups_sent() -> int:
     return int(result.split()[-1]) if result else 0
 
 
-async def clear_contact_data(wa_ids: list[str]) -> dict[str, int]:
+async def clear_contact_data(wa_ids: list[str], bot_id: int | None = None) -> dict[str, int]:
     """Borra estado conversacional y comercial de una lista de contactos."""
+    bot_filter = "" if bot_id is None else " AND bot_id = $2"
+    args: list = [wa_ids] if bot_id is None else [wa_ids, bot_id]
     async with _pool.acquire() as conn:
         results = {
             "conversations": await conn.execute(
-                "DELETE FROM conversations WHERE wa_id = ANY($1::text[])",
-                wa_ids,
+                f"DELETE FROM conversations WHERE wa_id = ANY($1::text[]){bot_filter}",
+                *args,
             ),
             "leads": await conn.execute(
-                "DELETE FROM leads WHERE wa_id = ANY($1::text[])",
-                wa_ids,
+                f"DELETE FROM leads WHERE wa_id = ANY($1::text[]){bot_filter}",
+                *args,
             ),
             "escalations": await conn.execute(
-                "DELETE FROM escalations WHERE wa_id = ANY($1::text[])",
-                wa_ids,
+                f"DELETE FROM escalations WHERE wa_id = ANY($1::text[]){bot_filter}",
+                *args,
             ),
             "pending_follow_ups": await conn.execute(
-                "DELETE FROM pending_follow_ups WHERE wa_id = ANY($1::text[])",
-                wa_ids,
+                f"DELETE FROM pending_follow_ups WHERE wa_id = ANY($1::text[]){bot_filter}",
+                *args,
             ),
             "calendar_appointments": await conn.execute(
-                "DELETE FROM calendar_appointments WHERE wa_id = ANY($1::text[])",
-                wa_ids,
+                f"DELETE FROM calendar_appointments WHERE wa_id = ANY($1::text[]){bot_filter}",
+                *args,
             ),
         }
     return {
@@ -955,6 +1029,39 @@ async def clear_conversation_history(wa_id: str, bot_id: int) -> None:
         await conn.execute(
             "DELETE FROM conversations WHERE wa_id = $1 AND bot_id = $2",
             wa_id, bot_id
+        )
+
+
+async def record_external_action_run(
+    *,
+    bot_id: int | None,
+    wa_id: str | None,
+    action_type: str,
+    integration_id: int | None,
+    operation: str | None,
+    status: str,
+    request_data: dict | None = None,
+    response_data: dict | None = None,
+    error_message: str | None = None,
+) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO external_action_runs(
+                bot_id, wa_id, action_type, integration_id, operation,
+                status, request_data, response_data, error_message
+            )
+            VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9)
+            """,
+            bot_id,
+            wa_id,
+            action_type,
+            integration_id,
+            operation,
+            status,
+            json.dumps(request_data or {}),
+            json.dumps(response_data or {}),
+            error_message,
         )
 
 

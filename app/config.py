@@ -26,6 +26,7 @@ def _int(name: str, default: str) -> int:
 
 
 PORT = int(_env("PORT", default="8000"))
+APP_ENV = _env("APP_ENV", "ENVIRONMENT", default="development").lower()
 DEFAULT_BOT_SLUG = _env("DEFAULT_BOT_SLUG", default="asistto")
 
 WEBHOOK_DOMAIN = _env("WEBHOOK_DOMAIN", "PUBLIC_BASE_URL")
@@ -49,6 +50,7 @@ OPENROUTER_SITE_URL = _env("OPENROUTER_SITE_URL", "PUBLIC_BASE_URL")
 OPENROUTER_APP_NAME = _env("OPENROUTER_APP_NAME", default="Asistto by Humanio")
 OPENAI_TIMEOUT_SECONDS = _int("OPENAI_TIMEOUT_SECONDS", "45")
 OPENAI_MAX_TOKENS = _int("OPENAI_MAX_TOKENS", "450")
+EMBEDDING_DIMENSIONS = _int("EMBEDDING_DIMENSIONS", "1536")
 
 # Asistente opcional del panel para crear/editar prompts. Si se dejan vacias,
 # usa la configuracion global de OpenAI/OpenRouter.
@@ -78,6 +80,9 @@ ADMIN_USER = os.getenv("ADMIN_USER", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 INTEGRATION_SECRET_KEY = os.getenv("INTEGRATION_SECRET_KEY", "")
+KNOWLEDGE_UPLOAD_MAX_BYTES = _int("KNOWLEDGE_UPLOAD_MAX_BYTES", str(10 * 1024 * 1024))
+CONTACTS_UPLOAD_MAX_BYTES = _int("CONTACTS_UPLOAD_MAX_BYTES", str(5 * 1024 * 1024))
+CAMPAIGN_MAX_RECIPIENTS = _int("CAMPAIGN_MAX_RECIPIENTS", "500")
 
 # URL opcional para leads calificados: agenda, formulario, landing, checkout, etc.
 QUALIFIED_CTA_URL = os.getenv("QUALIFIED_CTA_URL", "")
@@ -144,6 +149,7 @@ def validate() -> list[str]:
         "ADMIN_USER",
         "ADMIN_PASSWORD",
         "SESSION_SECRET",
+        "INTEGRATION_SECRET_KEY",
     ):
         if not globals().get(key):
             missing.append(key)

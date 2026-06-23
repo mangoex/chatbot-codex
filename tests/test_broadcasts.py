@@ -253,7 +253,8 @@ async def test_client_campaigns_create(
         language_code="es_MX",
         recipients_option="selected",
         selected_wa_ids="5216869032840",
-        vars_count=2
+        vars_count=2,
+        confirm_send="CONFIRMAR",
     )
 
     assert response.status_code == 302

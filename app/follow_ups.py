@@ -19,9 +19,9 @@ async def schedule(wa_id: str, bot_id: int | None = None) -> None:
     await db.upsert_follow_up(wa_id, delay, bot_id)
 
 
-async def cancel(wa_id: str) -> None:
+async def cancel(wa_id: str, bot_id: int) -> None:
     """Cancela el follow-up cuando el usuario escribe antes de que se dispare."""
-    await db.cancel_follow_up(wa_id)
+    await db.cancel_follow_up(wa_id, bot_id)
 
 
 async def _process_due() -> None:
@@ -36,6 +36,10 @@ async def _process_due() -> None:
         bot_id = row.get("bot_id")
         try:
             bot = await bots.resolve_by_bot_id(bot_id)
+            if bot is None:
+                log.warning("Follow-up omitido para %s: bot_id %s no existe.", wa_id, bot_id)
+                await db.mark_follow_up_sent(row["id"])
+                continue
             if bot.status != "active":
                 log.info("Follow-up omitido para %s: el bot %s está pausado.", wa_id, bot.id)
                 await db.mark_follow_up_sent(row["id"])

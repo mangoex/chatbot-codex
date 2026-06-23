@@ -189,7 +189,11 @@ async def record_if_escalated(
         "conversation_excerpt": excerpt,
     }
 
-    existing = await db.find_pending_escalation(wa_id)
+    if bot_id is None:
+        log.warning("Escalation ignored for %s because bot_id is missing", wa_id)
+        return None
+
+    existing = await db.find_pending_escalation(wa_id, bot_id)
     if existing:
         # Actualiza la escalation pendiente (no creamos duplicados)
         bump = {

@@ -33,13 +33,17 @@ def default_bot() -> BotContext:
 
 
 def _from_row(row: dict) -> BotContext:
+    bot_id = int(row["bot_id"])
+    token = row.get("whatsapp_access_token") or ""
+    if bot_id == 1 and not token:
+        token = config.WHATSAPP_API_TOKEN
     return BotContext(
-        id=int(row["bot_id"]),
+        id=bot_id,
         client_id=int(row["client_id"]) if row.get("client_id") else None,
         slug=row["slug"],
         name=row["name"],
         whatsapp_phone_number_id=row["phone_number_id"],
-        whatsapp_access_token=row.get("whatsapp_access_token") or config.WHATSAPP_API_TOKEN,
+        whatsapp_access_token=token,
         display_phone_number=row.get("display_phone_number") or "",
         openai_model=row.get("openai_model") or config.OPENAI_MODEL,
         status=row.get("status") or "active",
@@ -60,17 +64,17 @@ async def _whatsapp_cloud_token(bot_id: int) -> str:
     return ""
 
 
-async def resolve_by_phone_number_id(phone_number_id: str | None) -> BotContext:
+async def resolve_by_phone_number_id(phone_number_id: str | None) -> BotContext | None:
     if phone_number_id:
         row = await db.get_bot_by_phone_number_id(phone_number_id)
         if row:
             if not row.get("whatsapp_access_token"):
                 row = {**row, "whatsapp_access_token": await _whatsapp_cloud_token(int(row["bot_id"]))}
             return _from_row(row)
-    return default_bot()
+    return None
 
 
-async def resolve_by_bot_id(bot_id: int | None) -> BotContext:
+async def resolve_by_bot_id(bot_id: int | None) -> BotContext | None:
     if bot_id and bot_id != 1:
         row = await db.get_bot(bot_id)
         if row:
@@ -90,4 +94,7 @@ async def resolve_by_bot_id(bot_id: int | None) -> BotContext:
                 "status": row.get("status"),
             }
             return _from_row(full_row)
-    return default_bot()
+        return None
+    if bot_id == 1 or bot_id is None:
+        return default_bot()
+    return None

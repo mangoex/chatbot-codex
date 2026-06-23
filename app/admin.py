@@ -973,6 +973,9 @@ def _nav(active: str, session: dict | None = None) -> str:
 
 
 def _layout(title: str, active: str, body: str, session: dict | None = None) -> str:
+    csrf_token = ""
+    if session is not None:
+        csrf_token = session.setdefault("_csrf_token", secrets.token_urlsafe(32))
     return f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -989,6 +992,16 @@ def _layout(title: str, active: str, body: str, session: dict | None = None) -> 
       btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
     }}
   }}
+  document.addEventListener("submit", function(event) {{
+    const form = event.target;
+    if (!form || String(form.method || "").toLowerCase() !== "post") return;
+    if (form.querySelector('input[name="csrf_token"]')) return;
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = "csrf_token";
+    input.value = "{html.escape(csrf_token)}";
+    form.appendChild(input);
+  }});
 </script>
 </head><body><div class="shell">{_nav(active, session)}<main class="main">{body}</main></div></body></html>"""
 
@@ -3748,9 +3761,9 @@ async def crm(request: Request, status: str = "en_progreso"):
           <td>{_fmt_dt(l.get("updated_at"))}</td>
           <td>
             <div class="actions">
-              <form class="inline" method="post" action="/admin/crm/{html.escape(l["wa_id"])}/status"><button class="btn secondary" name="status" value="en_progreso">No cualificado</button></form>
-              <form class="inline" method="post" action="/admin/crm/{html.escape(l["wa_id"])}/status"><button class="btn" name="status" value="calificado">Calificar</button></form>
-              <form class="inline" method="post" action="/admin/crm/{html.escape(l["wa_id"])}/status"><button class="btn secondary" name="status" value="descalificado">Descartar</button></form>
+              <form class="inline" method="post" action="/admin/crm/{html.escape(l["wa_id"])}/status"><input type="hidden" name="bot_id" value="{int(l.get("bot_id") or 1)}"><button class="btn secondary" name="status" value="en_progreso">No cualificado</button></form>
+              <form class="inline" method="post" action="/admin/crm/{html.escape(l["wa_id"])}/status"><input type="hidden" name="bot_id" value="{int(l.get("bot_id") or 1)}"><button class="btn" name="status" value="calificado">Calificar</button></form>
+              <form class="inline" method="post" action="/admin/crm/{html.escape(l["wa_id"])}/status"><input type="hidden" name="bot_id" value="{int(l.get("bot_id") or 1)}"><button class="btn secondary" name="status" value="descalificado">Descartar</button></form>
             </div>
           </td>
         </tr>
@@ -3773,6 +3786,7 @@ async def crm_update_status(
     request: Request,
     wa_id: str,
     status: str = Form(...),
+    bot_id: int = Form(...),
 ):
     _require_agency(request)
     if status not in ("en_progreso", "calificado", "descalificado"):
@@ -3781,6 +3795,7 @@ async def crm_update_status(
         wa_id,
         status,
         disqualify_reason="Movido manualmente desde CRM" if status == "descalificado" else None,
+        bot_id=bot_id,
     )
     return RedirectResponse("/admin/crm?status=" + status, status_code=302)
 

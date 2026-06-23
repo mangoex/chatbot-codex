@@ -1,158 +1,179 @@
 from __future__ import annotations
+
 import logging
+
+from app import config
 
 log = logging.getLogger("whatsapp-bot")
 
 
 def chunk_text(text: str, max_chars: int = 600, overlap: int = 150) -> list[str]:
-    """Divide un texto en fragmentos (chunks) respetando párrafos y límites de caracteres."""
+    """Split text into overlapping chunks while preserving paragraphs."""
     text = (text or "").strip()
     if not text:
         return []
 
     paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-    chunks = []
-    current_chunk = []
+    chunks: list[str] = []
+    current_chunk: list[str] = []
     current_len = 0
 
-    for p in paragraphs:
-        if len(p) > max_chars:
+    for paragraph in paragraphs:
+        if len(paragraph) > max_chars:
             if current_chunk:
                 chunks.append("\n".join(current_chunk))
                 current_chunk = []
                 current_len = 0
 
             start = 0
-            while start < len(p):
+            while start < len(paragraph):
                 end = start + max_chars
-                if end < len(p):
-                    last_space = p.rfind(" ", start, end)
+                if end < len(paragraph):
+                    last_space = paragraph.rfind(" ", start, end)
                     if last_space != -1 and last_space > start + max_chars // 2:
                         end = last_space
-                chunks.append(p[start:end].strip())
+                chunks.append(paragraph[start:end].strip())
                 start = end - overlap if end - overlap > start else end
             continue
 
-        if current_len + len(p) + (1 if current_chunk else 0) <= max_chars:
-            current_chunk.append(p)
-            current_len += len(p) + (1 if current_chunk else 0)
+        extra = len(paragraph) + (1 if current_chunk else 0)
+        if current_len + extra <= max_chars:
+            current_chunk.append(paragraph)
+            current_len += extra
         else:
             chunks.append("\n".join(current_chunk))
-            overlap_chunk = []
+            overlap_chunk: list[str] = []
             overlap_len = 0
-            for prev in reversed(current_chunk):
-                if overlap_len + len(prev) + (1 if overlap_chunk else 0) <= overlap:
-                    overlap_chunk.insert(0, prev)
-                    overlap_len += len(prev) + (1 if overlap_chunk else 0)
+            for previous in reversed(current_chunk):
+                previous_extra = len(previous) + (1 if overlap_chunk else 0)
+                if overlap_len + previous_extra <= overlap:
+                    overlap_chunk.insert(0, previous)
+                    overlap_len += previous_extra
                 else:
                     break
-            current_chunk = overlap_chunk + [p]
-            current_len = sum(len(x) for x in current_chunk) + len(current_chunk) - 1
+            current_chunk = overlap_chunk + [paragraph]
+            current_len = sum(len(item) for item in current_chunk) + len(current_chunk) - 1
 
     if current_chunk:
         chunks.append("\n".join(current_chunk))
-    return [c for c in chunks if c.strip()]
+    return [chunk for chunk in chunks if chunk.strip()]
 
 
 async def setup_rag_tables(conn) -> None:
-    """Configura las tablas para RAG y habilita pgvector si está disponible."""
+    """Create or migrate RAG tables with strict bot-scoped chunks."""
     has_vector = False
     try:
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         has_vector = True
-        log.info("Extensión pgvector habilitada con éxito.")
+        log.info("pgvector extension is available.")
     except Exception:
-        log.warning("pgvector no disponible. Fallbackando a búsqueda textual.")
+        log.warning("pgvector is not available; using text retrieval fallback.")
 
-    if has_vector:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS bot_knowledge_chunks (
-                id BIGSERIAL PRIMARY KEY,
-                bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
-                knowledge_id BIGINT NOT NULL REFERENCES bot_knowledge(id) ON DELETE CASCADE,
-                content TEXT NOT NULL,
-                embedding VECTOR(1536)
-            );
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_chunks_bot_id ON bot_knowledge_chunks(bot_id);
-        """)
-    else:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS bot_knowledge_chunks (
-                id BIGSERIAL PRIMARY KEY,
-                bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
-                knowledge_id BIGINT NOT NULL REFERENCES bot_knowledge(id) ON DELETE CASCADE,
-                content TEXT NOT NULL
-            );
-        """)
-        await conn.execute("""
-            CREATE INDEX IF NOT EXISTS idx_chunks_bot_id ON bot_knowledge_chunks(bot_id);
-        """)
+    embedding_column = f", embedding VECTOR({config.EMBEDDING_DIMENSIONS})" if has_vector else ""
+    await conn.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS bot_knowledge_chunks (
+            id BIGSERIAL PRIMARY KEY,
+            bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+            knowledge_id BIGINT NOT NULL REFERENCES bot_knowledge(id) ON DELETE CASCADE,
+            title TEXT,
+            chunk_index INT NOT NULL DEFAULT 0,
+            content TEXT NOT NULL
+            {embedding_column}
+        );
+        """
+    )
+    for column, definition in (("title", "TEXT"), ("chunk_index", "INT NOT NULL DEFAULT 0")):
+        await conn.execute(
+            f"ALTER TABLE bot_knowledge_chunks ADD COLUMN IF NOT EXISTS {column} {definition}"
+        )
+    if has_vector and not await has_vector_column(conn):
+        await conn.execute(
+            f"ALTER TABLE bot_knowledge_chunks ADD COLUMN IF NOT EXISTS embedding VECTOR({config.EMBEDDING_DIMENSIONS})"
+        )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chunks_bot_id ON bot_knowledge_chunks(bot_id);"
+    )
+    await conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_chunks_knowledge_id ON bot_knowledge_chunks(knowledge_id);"
+    )
 
 
 async def has_vector_column(conn) -> bool:
-    """Verifica si la columna embedding existe en la tabla de chunks."""
     try:
-        row = await conn.fetchrow("""
-            SELECT 1 FROM information_schema.columns 
+        row = await conn.fetchrow(
+            """
+            SELECT 1 FROM information_schema.columns
             WHERE table_name = 'bot_knowledge_chunks' AND column_name = 'embedding'
-        """)
+            """
+        )
         return row is not None
     except Exception:
         return False
 
 
 async def index_document(conn, bot_id: int, knowledge_id: int, content: str) -> None:
-    """Genera chunks y guarda embeddings para un documento de conocimiento."""
-    # Eliminar chunks viejos
+    """Index one active knowledge document for a bot."""
     await conn.execute("DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1", knowledge_id)
 
     chunks = chunk_text(content)
     if not chunks:
         return
 
-    from app import openai_client
+    title_row = await conn.fetchrow(
+        "SELECT title FROM bot_knowledge WHERE id = $1 AND bot_id = $2",
+        knowledge_id,
+        bot_id,
+    )
+    title = title_row["title"] if title_row else None
     has_vector = await has_vector_column(conn)
 
-    for chunk in chunks:
+    from app import openai_client
+
+    for index, chunk in enumerate(chunks):
         if has_vector:
             try:
-                emb = await openai_client.get_embedding(chunk)
-                emb_str = "[" + ",".join(map(str, emb)) + "]"
+                embedding = await openai_client.get_embedding(chunk)
+                if len(embedding) != config.EMBEDDING_DIMENSIONS:
+                    raise ValueError("Embedding dimensions do not match EMBEDDING_DIMENSIONS")
+                emb_str = "[" + ",".join(map(str, embedding)) + "]"
                 await conn.execute(
                     """
-                    INSERT INTO bot_knowledge_chunks (bot_id, knowledge_id, content, embedding)
-                    VALUES ($1, $2, $3, $4::vector)
+                    INSERT INTO bot_knowledge_chunks(
+                        bot_id, knowledge_id, title, chunk_index, content, embedding
+                    )
+                    VALUES($1, $2, $3, $4, $5, $6::vector)
                     """,
-                    bot_id, knowledge_id, chunk, emb_str
+                    bot_id,
+                    knowledge_id,
+                    title,
+                    index,
+                    chunk,
+                    emb_str,
                 )
-            except Exception as e:
-                log.warning("Fallo al generar embedding para RAG, fallback a texto plano: %s", e)
-                await conn.execute(
-                    """
-                    INSERT INTO bot_knowledge_chunks (bot_id, knowledge_id, content)
-                    VALUES ($1, $2, $3)
-                    """,
-                    bot_id, knowledge_id, chunk
-                )
-        else:
-            await conn.execute(
-                """
-                INSERT INTO bot_knowledge_chunks (bot_id, knowledge_id, content)
-                VALUES ($1, $2, $3)
-                """,
-                bot_id, knowledge_id, chunk
-            )
+                continue
+            except Exception as exc:
+                log.warning("RAG embedding failed; storing plain text chunk: %s", exc)
+
+        await conn.execute(
+            """
+            INSERT INTO bot_knowledge_chunks(bot_id, knowledge_id, title, chunk_index, content)
+            VALUES($1, $2, $3, $4, $5)
+            """,
+            bot_id,
+            knowledge_id,
+            title,
+            index,
+            chunk,
+        )
 
 
 async def delete_document_chunks(conn, knowledge_id: int) -> None:
-    """Elimina chunks de un documento de conocimiento."""
     await conn.execute("DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1", knowledge_id)
 
 
 async def search_knowledge(conn, bot_id: int, query_text: str, limit: int = 3) -> list[str]:
-    """Busca los fragmentos de conocimiento más relevantes para la consulta del usuario."""
+    """Return active bot-scoped knowledge snippets. Knowledge is data, not instructions."""
     query_text = (query_text or "").strip()
     if not query_text:
         return []
@@ -160,34 +181,70 @@ async def search_knowledge(conn, bot_id: int, query_text: str, limit: int = 3) -
     has_vector = await has_vector_column(conn)
     if has_vector:
         from app import openai_client
-        try:
-            emb = await openai_client.get_embedding(query_text)
-            emb_str = "[" + ",".join(map(str, emb)) + "]"
-            rows = await conn.fetch(
-                """
-                SELECT content FROM bot_knowledge_chunks
-                WHERE bot_id = $1 AND embedding IS NOT NULL
-                ORDER BY embedding <=> $2::vector
-                LIMIT $3
-                """,
-                bot_id, emb_str, limit
-            )
-            if rows:
-                return [r["content"] for r in rows]
-        except Exception as e:
-            log.warning("Búsqueda vectorial falló, recurriendo a búsqueda de texto: %s", e)
 
-    # Fallback: Búsqueda simple de texto ILIKE
-    words = [f"%{w}%" for w in query_text.split() if len(w) > 2]
-    if not words:
-        words = [f"%{query_text}%"]
+        try:
+            embedding = await openai_client.get_embedding(query_text)
+            if len(embedding) == config.EMBEDDING_DIMENSIONS:
+                emb_str = "[" + ",".join(map(str, embedding)) + "]"
+                rows = await conn.fetch(
+                    """
+                    SELECT c.title, c.content
+                    FROM bot_knowledge_chunks c
+                    JOIN bot_knowledge k ON k.id = c.knowledge_id
+                    WHERE c.bot_id = $1
+                      AND k.status = 'active'
+                      AND c.embedding IS NOT NULL
+                    ORDER BY c.embedding <=> $2::vector
+                    LIMIT $3
+                    """,
+                    bot_id,
+                    emb_str,
+                    limit,
+                )
+                if rows:
+                    return [_format_result(row) for row in rows]
+        except Exception as exc:
+            log.warning("Vector search failed; using text fallback: %s", exc)
 
     rows = await conn.fetch(
         """
-        SELECT content FROM bot_knowledge_chunks
-        WHERE bot_id = $1 AND (content ILIKE $2)
+        SELECT c.title, c.content,
+               ts_rank_cd(to_tsvector('spanish', c.content), plainto_tsquery('spanish', $2)) AS rank
+        FROM bot_knowledge_chunks c
+        JOIN bot_knowledge k ON k.id = c.knowledge_id
+        WHERE c.bot_id = $1
+          AND k.status = 'active'
+          AND to_tsvector('spanish', c.content) @@ plainto_tsquery('spanish', $2)
+        ORDER BY rank DESC, c.chunk_index ASC
         LIMIT $3
         """,
-        bot_id, words[0], limit
+        bot_id,
+        query_text,
+        limit,
     )
-    return [r["content"] for r in rows]
+    if not rows:
+        words = [f"%{word}%" for word in query_text.split() if len(word) > 2]
+        if not words:
+            words = [f"%{query_text}%"]
+        rows = await conn.fetch(
+            """
+            SELECT c.title, c.content
+            FROM bot_knowledge_chunks c
+            JOIN bot_knowledge k ON k.id = c.knowledge_id
+            WHERE c.bot_id = $1
+              AND k.status = 'active'
+              AND c.content ILIKE $2
+            ORDER BY c.chunk_index ASC
+            LIMIT $3
+            """,
+            bot_id,
+            words[0],
+            limit,
+        )
+    return [_format_result(row) for row in rows]
+
+
+def _format_result(row) -> str:
+    title = row.get("title") if hasattr(row, "get") else row["title"]
+    content = row.get("content") if hasattr(row, "get") else row["content"]
+    return f"[Fuente: {title or 'Base de conocimiento'}]\n{content or ''}"

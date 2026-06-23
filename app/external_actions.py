@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+import ipaddress
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -81,15 +82,48 @@ def _headers(config_data: dict, secrets: dict[str, str]) -> dict[str, str]:
     return headers
 
 
-def _request_url(config_data: dict, action_payload: dict) -> str:
-    direct_url = str(action_payload.get("url") or config_data.get("url") or "").strip()
-    if direct_url:
-        return direct_url
+def _is_safe_host(hostname: str) -> bool:
+    if not hostname or hostname in {"localhost", "metadata.google.internal"}:
+        return False
+    try:
+        ip = ipaddress.ip_address(hostname)
+        return not (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved)
+    except ValueError:
+        return True
+
+
+def _allowed_hosts(config_data: dict) -> set[str]:
+    configured = config_data.get("allowed_hosts") or []
+    hosts = {str(h).lower().strip() for h in configured if str(h).strip()}
+    for key in ("base_url", "url"):
+        parsed = urlparse(str(config_data.get(key) or ""))
+        if parsed.hostname:
+            hosts.add(parsed.hostname.lower())
+    return hosts
+
+
+def _validate_url(url: str, config_data: dict) -> str:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not _is_safe_host(host):
+        return ""
+    allowed = _allowed_hosts(config_data)
+    if allowed and host not in allowed:
+        return ""
+    return url
+
+
+def _request_url(config_data: dict, action_payload: dict, *, allow_config_url: bool = False) -> str:
+    if action_payload.get("url"):
+        return ""
+    direct_url = str(config_data.get("url") or "").strip()
+    if allow_config_url and direct_url:
+        return _validate_url(direct_url, config_data)
     base_url = str(config_data.get("base_url") or "").strip()
     path = str(action_payload.get("path") or "").strip()
-    if not base_url:
+    if not base_url or urlparse(path).scheme:
         return ""
-    return urljoin(base_url.rstrip("/") + "/", path.lstrip("/"))
+    return _validate_url(urljoin(base_url.rstrip("/") + "/", path.lstrip("/")), config_data)
 
 
 def _operation_config(config_data: dict, operation_name: str | None) -> dict:
@@ -146,9 +180,11 @@ def build_request(
         method = str(config_data.get("method") or "POST").upper()
         request_json = payload
     else:
+        if not operation:
+            log.warning("Accion de API externa rechazada: falta operation declarada.")
+            return None
         method = str(
-            payload.get("method")
-            or operation.get("method")
+            operation.get("method")
             or config_data.get("method")
             or "GET"
         ).upper()
@@ -160,7 +196,7 @@ def build_request(
         return None
 
     request_payload = {**operation, **payload} if operation else payload
-    url = _request_url(config_data, request_payload)
+    url = _request_url(config_data, request_payload, allow_config_url=action_type in {"webhook_post", "crm_lead"})
     if not url:
         log.warning("Accion externa sin URL configurada: %s", action_type)
         return None
@@ -179,7 +215,7 @@ def build_request(
     if data and request_json is None:
         request_data["data"] = data
         
-    return _interpolate(request_data, secrets)
+    return request_data
 
 
 def _operation_instruction_lines(config_data: dict) -> list[str]:
@@ -212,6 +248,18 @@ def _decrypt_secrets(encrypted_values: dict[str, str]) -> dict[str, str]:
     return decrypted
 
 
+def _redact_request(request_data: dict[str, Any] | None) -> dict[str, Any]:
+    if not request_data:
+        return {}
+    redacted = {k: v for k, v in request_data.items() if k != "headers"}
+    if "headers" in request_data:
+        redacted["headers"] = {
+            str(k): "[redacted]" if str(k).lower() in {"authorization", "x-api-key", "x-asistto-secret-token"} else str(v)
+            for k, v in (request_data.get("headers") or {}).items()
+        }
+    return redacted
+
+
 async def _skill_on(bot_id: int | None, integration_type: str) -> bool:
     if integration_type == "webhook":
         return await skill_runtime.webhook_skill_enabled(bot_id)
@@ -222,8 +270,10 @@ async def _skill_on(bot_id: int | None, integration_type: str) -> bool:
     return False
 
 
-async def _execute_action(bot_id: int | None, action: dict[str, Any]) -> bool:
+async def _execute_action(bot_id: int | None, wa_id: str, action: dict[str, Any]) -> bool:
     action_type = str(action.get("action_type") or "")
+    payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
+    operation = str(payload.get("operation") or "").strip() or None
     integration_type = _INTEGRATION_BY_ACTION.get(action_type)
     if not integration_type or not await _skill_on(bot_id, integration_type):
         return False
@@ -239,32 +289,62 @@ async def _execute_action(bot_id: int | None, action: dict[str, Any]) -> bool:
     secrets = _decrypt_secrets(encrypted)
     request_data = build_request(action, integration, secrets)
     if not request_data:
+        await db.record_external_action_run(
+            bot_id=bot_id,
+            wa_id=wa_id,
+            action_type=action_type,
+            integration_id=int(integration["id"]),
+            operation=operation,
+            status="rejected",
+            error_message="Request rejected by safety policy",
+        )
         return False
 
     timeout = int((integration.get("config") or {}).get("timeout_seconds") or 20)
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
+            method = request_data.pop("method")
+            url = request_data.pop("url")
             response = await client.request(
-                request_data.pop("method"),
-                request_data.pop("url"),
+                method,
+                url,
                 **request_data,
             )
             response.raise_for_status()
-    except Exception:
+        await db.record_external_action_run(
+            bot_id=bot_id,
+            wa_id=wa_id,
+            action_type=action_type,
+            integration_id=int(integration["id"]),
+            operation=operation,
+            status="success",
+            request_data=_redact_request({"method": method, "url": url, **request_data}),
+            response_data={"status_code": getattr(response, "status_code", None)},
+        )
+    except Exception as exc:
         log.exception(
             "Fallo ejecutando accion externa %s para bot %s",
             action_type,
             bot_id,
+        )
+        await db.record_external_action_run(
+            bot_id=bot_id,
+            wa_id=wa_id,
+            action_type=action_type,
+            integration_id=int(integration["id"]),
+            operation=operation,
+            status="failed",
+            request_data=_redact_request(request_data),
+            error_message=str(exc)[:500],
         )
         return False
     return True
 
 
 async def process_reply(wa_id: str, reply: str, bot_id: int | None = None) -> str:
-    del wa_id  # Reserved for future payload enrichment without changing the public API.
     clean, actions = extract_actions(reply)
     for action in actions:
-        await _execute_action(bot_id, action)
+        await _execute_action(bot_id, wa_id, action)
     return clean
 
 

@@ -158,6 +158,21 @@ async def _runtime(bot_id: int | None = None) -> CalendarRuntime:
                 integration_id=int(integration["id"]),
                 bot_name=bot_name,
             )
+        if bot_id != 1:
+            return CalendarRuntime(
+                enabled=False,
+                client_id="",
+                client_secret="",
+                refresh_token="",
+                calendar_id="",
+                timezone=config.GOOGLE_CALENDAR_TIMEZONE,
+                duration_minutes=config.GOOGLE_APPOINTMENT_DURATION_MINUTES,
+                buffer_minutes=config.GOOGLE_APPOINTMENT_BUFFER_MINUTES,
+                summary_prefix=f"Llamada {bot_name}",
+                location="",
+                source="missing_bot_integration",
+                bot_name=bot_name,
+            )
 
     global_rt = _global_runtime()
     summary_prefix = global_rt.summary_prefix
@@ -574,7 +589,7 @@ async def cancel_appointment(
 
         event_id = str(candidate["id"])
         deleted = await _delete_event(runtime, token, event_id)
-        await db.mark_calendar_appointment_cancelled(event_id)
+        await db.mark_calendar_appointment_cancelled(event_id, bot_id)
         start = _event_start(candidate, runtime)
         when = f" del {_format_dt(start)}" if start else ""
         if deleted:
@@ -724,7 +739,7 @@ async def process_reply(
                         await _delete_event(runtime, token, old_event_id)
                     except Exception:
                         log.exception("No se pudo borrar cita anterior %s", old_event_id)
-                    await db.mark_calendar_appointment_cancelled(old_event_id)
+                    await db.mark_calendar_appointment_cancelled(old_event_id, bot_id)
     except httpx.HTTPStatusError as exc:
         log.exception("Google Calendar rechazo la cita: %s", exc.response.text[:500])
         return (

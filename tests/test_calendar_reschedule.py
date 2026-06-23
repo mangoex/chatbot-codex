@@ -98,7 +98,8 @@ class CalendarRescheduleTests(unittest.TestCase):
                 deleted.append(event_id)
                 return True
 
-            async def fake_mark(event_id):
+            async def fake_mark(event_id, bot_id):
+                self.assertEqual(bot_id, 1)
                 marked.append(event_id)
 
             try:

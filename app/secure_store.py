@@ -9,13 +9,13 @@ from app import config
 
 
 def _raw_key() -> str:
-    return (config.INTEGRATION_SECRET_KEY or config.SESSION_SECRET or "").strip()
+    return (config.INTEGRATION_SECRET_KEY or "").strip()
 
 
 def _fernet() -> Fernet:
     raw = _raw_key()
     if not raw:
-        raise RuntimeError("Falta INTEGRATION_SECRET_KEY o SESSION_SECRET para guardar secretos.")
+        raise RuntimeError("Falta INTEGRATION_SECRET_KEY para guardar secretos de integraciones.")
     digest = hashlib.sha256(raw.encode("utf-8")).digest()
     return Fernet(base64.urlsafe_b64encode(digest))
 

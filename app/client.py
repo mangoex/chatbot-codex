@@ -7,6 +7,7 @@ import re
 import os
 import uuid
 import csv
+import secrets
 import openpyxl
 import asyncio
 from datetime import datetime, timezone
@@ -850,6 +851,7 @@ def _display_name(name: str | None, wa_id: str) -> str:
 
 
 def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", notice: str = "", bots_list: list = [], selected_bot_id: int | None = None, chatwoot_enabled: bool = False, cw_base_url: str = "", cw_account: str = "") -> str:
+    csrf_token = session.setdefault("_csrf_token", secrets.token_urlsafe(32))
     bot_options = "".join(
         f'<option value="{b["id"]}" {"selected" if b["id"] == selected_bot_id else ""}>{html.escape(b["name"])}</option>'
         for b in bots_list
@@ -907,6 +909,16 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
         btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
       }}
     }}
+    document.addEventListener("submit", function(event) {{
+      const form = event.target;
+      if (!form || String(form.method || "").toLowerCase() !== "post") return;
+      if (form.querySelector('input[name="csrf_token"]')) return;
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = "csrf_token";
+      input.value = "{html.escape(csrf_token)}";
+      form.appendChild(input);
+    }});
   </script>
 </head>
 <body>
@@ -1122,13 +1134,19 @@ async def client_app(
     elif saved == "err_parse":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} Error al leer o procesar el archivo. Asegúrate de que no esté dañado y sea de un tipo compatible (PDF, DOCX, MD, XLSX, CSV).</div>'
     elif saved == "err_ext":
-        notice_html = f'<div class="notice-banner error">{ICONS["error"]} Formato de archivo inválido. Solo se admiten archivos .csv, .xlsx y .xls.</div>'
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} Formato de archivo invalido. Solo se admiten archivos .csv y .xlsx.</div>'
     elif saved == "err_num":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} El número de teléfono ingresado no es válido. Debe contener solo números y el prefijo de país.</div>'
     elif saved == "err_file_expired":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} El archivo temporal ha expirado o no se encuentra. Intenta subirlo de nuevo.</div>'
+    elif saved == "err_file_too_large":
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} El archivo excede el limite permitido para este panel.</div>'
     elif saved == "err_no_recipients":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} No hay destinatarios seleccionados o válidos para iniciar el envío masivo.</div>'
+    elif saved == "err_confirm":
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} Confirma el envio escribiendo CONFIRMAR antes de iniciar la campana.</div>'
+    elif saved == "err_campaign_limit":
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} La campana supera el limite de destinatarios permitido para este entorno.</div>'
     elif imported is not None:
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Se importaron con éxito {imported} contactos al directorio.</div>'
     elif deleted is not None:
@@ -1777,7 +1795,7 @@ async def client_app(
                 </div>
                 <form method="post" action="/client/bots/{bot_id}/contacts/upload" enctype="multipart/form-data">
                   <label>Seleccionar Archivo</label>
-                  <input type="file" name="file" accept=".csv,.xlsx,.xls" required style="font-size:13px; color:var(--muted); margin-bottom:12px;">
+                  <input type="file" name="file" accept=".csv,.xlsx" required style="font-size:13px; color:var(--muted); margin-bottom:12px;">
                   <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Subir y Mapear</button>
                 </form>
               </div>
@@ -1980,6 +1998,8 @@ async def client_app(
                 <p class="muted-text" style="font-size:11.5px; margin-top:0; margin-bottom:10px;">Asocia cada marcador <code>{{{{1}}}}</code>, <code>{{{{2}}}}</code> con campos del contacto.</p>
                 <div id="campaignVarsInputs"></div>
               </div>
+              <label>Confirmacion de envio</label>
+              <input name="confirm_send" placeholder="Escribe CONFIRMAR para iniciar" required style="margin-bottom:16px;">
               
               <div style="display:flex; gap:10px;">
                 <button class="btn primary-btn" type="submit">Iniciar Campaña Masiva</button>
@@ -2721,7 +2741,7 @@ async def client_app(
               <textarea name="content" style="min-height: 140px;" placeholder="Ej. &#10;¿Tienen estacionamiento? Sí, gratuito en plaza.&#10;¿Precios de Limpieza? Desde $500 MXN.&#10;¿Aceptan tarjeta? Sí, Visa y Mastercard."></textarea>
               
               <label style="margin-top:14px; display:block; font-weight:600;">...o Sube un Archivo (PDF, Word, MD, Excel, CSV)</label>
-              <input type="file" name="file" accept=".pdf,.docx,.doc,.xlsx,.csv,.md,.txt" style="margin-top:6px; font-size:13px; color:var(--muted);">
+              <input type="file" name="file" accept=".pdf,.docx,.xlsx,.csv,.md,.txt" style="margin-top:6px; font-size:13px; color:var(--muted);">
               
               <div style="margin-top:18px;">
                 <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar documento</button>
@@ -3224,8 +3244,13 @@ async def client_knowledge_create(
     
     if file and file.filename:
         filename = file.filename
+        _, ext = os.path.splitext(filename.lower())
+        if ext not in (".pdf", ".docx", ".xlsx", ".csv", ".md", ".txt"):
+            return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=knowledge&saved=err_ext", status_code=302)
         try:
             file_bytes = await file.read()
+            if len(file_bytes) > config.KNOWLEDGE_UPLOAD_MAX_BYTES:
+                return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=knowledge&saved=err_file_too_large", status_code=302)
             if len(file_bytes) > 0:
                 parsed_text = file_parser.parse_file(file_bytes, filename)
                 if not parsed_text.strip():
@@ -3579,6 +3604,7 @@ async def client_crm_update_status(
         wa_id,
         status,
         disqualify_reason="Movido manualmente desde panel cliente" if status == "descalificado" else None,
+        bot_id=bot_id,
     )
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=crm&status={status}", status_code=302)
 
@@ -3619,7 +3645,7 @@ def extract_headers_from_file(file_path: str) -> list[str]:
                 reader = csv.reader(f)
                 headers = next(reader, None)
                 return [h.strip() for h in headers if h.strip()] if headers else []
-        elif ext in (".xlsx", ".xls"):
+        elif ext == ".xlsx":
             wb = openpyxl.load_workbook(file_path, read_only=True)
             sheet = wb.active
             for row in sheet.iter_rows(max_row=1, values_only=True):
@@ -3658,7 +3684,7 @@ def parse_contacts_file(
                         "business": business,
                         "tags": tags,
                     })
-        elif ext in (".xlsx", ".xls"):
+        elif ext == ".xlsx":
             wb = openpyxl.load_workbook(file_path, data_only=True)
             sheet = wb.active
             first = True
@@ -3697,7 +3723,7 @@ async def client_contacts_upload(
     await _require_bot_editor(session, bot_id)
     
     _, ext = os.path.splitext(file.filename.lower())
-    if ext not in (".csv", ".xlsx", ".xls"):
+    if ext not in (".csv", ".xlsx"):
         return RedirectResponse(
             f"/client/app?bot_id={bot_id}&tab=contacts&saved=err_ext", status_code=302
         )
@@ -3712,6 +3738,11 @@ async def client_contacts_upload(
     try:
         with open(file_path, "wb") as f:
             content = await file.read()
+            if len(content) > config.CONTACTS_UPLOAD_MAX_BYTES:
+                return RedirectResponse(
+                    f"/client/app?bot_id={bot_id}&tab=contacts&saved=err_file_too_large",
+                    status_code=302,
+                )
             f.write(content)
     except Exception as exc:
         log.error(f"Error saving uploaded contacts file: {exc}")
@@ -3921,6 +3952,7 @@ async def client_campaigns_create(
     recipients_option: str = Form("selected"), # "selected" o "all"
     selected_wa_ids: str = Form(""),
     vars_count: int = Form(0),
+    confirm_send: str = Form(""),
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
@@ -3953,6 +3985,14 @@ async def client_campaigns_create(
     if not recipients_list:
         return RedirectResponse(
             f"/client/app?bot_id={bot_id}&tab=campaigns&saved=err_no_recipients", status_code=302
+        )
+    if confirm_send.strip().upper() != "CONFIRMAR":
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=campaigns&saved=err_confirm", status_code=302
+        )
+    if len(recipients_list) > config.CAMPAIGN_MAX_RECIPIENTS:
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=campaigns&saved=err_campaign_limit", status_code=302
         )
         
     variable_mappings = []

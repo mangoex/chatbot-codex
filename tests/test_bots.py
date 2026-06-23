@@ -64,13 +64,12 @@ class BotResolverTests(unittest.TestCase):
 
         self.assertEqual(bot.whatsapp_access_token, "decrypted-token")
 
-    def test_resolve_by_phone_number_id_falls_back_when_missing(self):
+    def test_resolve_by_phone_number_id_returns_none_when_missing(self):
         with patch("app.bots.db.get_bot_by_phone_number_id", AsyncMock(return_value=None)), \
              patch("app.bots.config.WHATSAPP_PHONE_NUMBER_ID", "fallback-id"):
             bot = asyncio.run(bots.resolve_by_phone_number_id("unknown"))
 
-        self.assertEqual(bot.slug, "asistto")
-        self.assertEqual(bot.whatsapp_phone_number_id, "fallback-id")
+        self.assertIsNone(bot)
 
 
 if __name__ == "__main__":

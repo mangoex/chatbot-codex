@@ -78,6 +78,23 @@ class ExternalActionsTests(unittest.TestCase):
 
         self.assertIsNone(external_actions.build_request(action, integration, {}))
 
+    def test_rejects_model_supplied_absolute_url(self):
+        action = {
+            "action_type": "external_api_request",
+            "payload": {
+                "operation": "buscar_cliente",
+                "url": "https://evil.example.com/steal",
+            },
+        }
+        integration = {
+            "config": {
+                "base_url": "https://api.example.com",
+                "operations": [{"name": "buscar_cliente", "method": "GET", "path": "/clients"}],
+            }
+        }
+
+        self.assertIsNone(external_actions.build_request(action, integration, {}))
+
     def test_marker_only_reply_gets_safe_visible_text(self):
         clean, actions = external_actions.extract_actions(
             '[[CRM_LEAD: {"name":"Miguel","phone":"521555"}]]'
@@ -90,8 +107,7 @@ class ExternalActionsTests(unittest.TestCase):
         action = {
             "action_type": "external_api_request",
             "payload": {
-                "method": "POST",
-                "path": "/leads",
+                "operation": "crear_lead",
                 "json": {"name": "Miguel"},
             },
         }
@@ -99,6 +115,13 @@ class ExternalActionsTests(unittest.TestCase):
             "config": {
                 "base_url": "https://api.example.com",
                 "headers": {"X-Source": "whatsapp"},
+                "operations": [
+                    {
+                        "name": "crear_lead",
+                        "method": "POST",
+                        "path": "/leads",
+                    }
+                ],
             }
         }
 
@@ -168,6 +191,7 @@ class ExternalActionsTests(unittest.TestCase):
             original_integration = external_actions.db.get_active_bot_integration
             original_secret_values = external_actions.db.get_integration_secret_values
             original_decrypt = external_actions.secure_store.decrypt_secret
+            original_record = external_actions.db.record_external_action_run
 
             async def fake_skill_enabled(bot_id):
                 return bot_id == 7
@@ -190,12 +214,16 @@ class ExternalActionsTests(unittest.TestCase):
             def fake_decrypt(value):
                 return "dummy-access-value" if value == "encrypted" else None
 
+            async def fake_record(**kwargs):
+                return None
+
             try:
                 external_actions.httpx.AsyncClient = _AsyncClient
                 external_actions.skill_runtime.webhook_skill_enabled = fake_skill_enabled
                 external_actions.db.get_active_bot_integration = fake_integration
                 external_actions.db.get_integration_secret_values = fake_secret_values
                 external_actions.secure_store.decrypt_secret = fake_decrypt
+                external_actions.db.record_external_action_run = fake_record
 
                 reply = (
                     "Ya lo envie."
@@ -218,6 +246,7 @@ class ExternalActionsTests(unittest.TestCase):
                 external_actions.db.get_active_bot_integration = original_integration
                 external_actions.db.get_integration_secret_values = original_secret_values
                 external_actions.secure_store.decrypt_secret = original_decrypt
+                external_actions.db.record_external_action_run = original_record
 
         asyncio.run(run())
 
