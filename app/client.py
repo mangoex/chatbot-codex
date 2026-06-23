@@ -2743,7 +2743,10 @@ async def client_app(
               <textarea name="content" style="min-height: 140px;" placeholder="Ej. &#10;¿Tienen estacionamiento? Sí, gratuito en plaza.&#10;¿Precios de Limpieza? Desde $500 MXN.&#10;¿Aceptan tarjeta? Sí, Visa y Mastercard."></textarea>
               
               <label style="margin-top:14px; display:block; font-weight:600;">...o Sube un Archivo (PDF, Word, MD, Excel, CSV)</label>
-              <input type="file" name="file" accept=".pdf,.docx,.xlsx,.csv,.md,.txt" style="margin-top:6px; font-size:13px; color:var(--muted);">
+              <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+                <input type="file" id="knowledgeFileInput" name="file" accept=".pdf,.docx,.xlsx,.csv,.md,.txt" style="font-size:13px; color:var(--muted);">
+                <button type="button" class="btn secondary" onclick="document.getElementById('knowledgeFileInput').value='';" style="padding:4px 8px; font-size:11px; margin:0; cursor:pointer;">Quitar archivo</button>
+              </div>
               
               <div style="margin-top:18px;">
                 <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar documento</button>
@@ -3250,6 +3253,7 @@ async def client_knowledge_create(
         if ext not in (".pdf", ".docx", ".xlsx", ".csv", ".md", ".txt"):
             return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=knowledge&saved=err_ext", status_code=302)
         try:
+            await file.seek(0)
             file_bytes = await file.read()
             if len(file_bytes) > config.KNOWLEDGE_UPLOAD_MAX_BYTES:
                 return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=knowledge&saved=err_file_too_large", status_code=302)
@@ -3738,6 +3742,7 @@ async def client_contacts_upload(
     file_token = f"{uuid.uuid4()}{ext}"
     file_path = os.path.join(tmp_dir, file_token)
     try:
+        await file.seek(0)
         with open(file_path, "wb") as f:
             content = await file.read()
             if len(content) > config.CONTACTS_UPLOAD_MAX_BYTES:
