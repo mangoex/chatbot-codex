@@ -69,16 +69,6 @@ app = FastAPI(lifespan=lifespan, title="Asistto by Humanio")
 if config.APP_ENV in {"production", "prod"} and not config.SESSION_SECRET:
     raise RuntimeError("SESSION_SECRET is required for admin/client sessions.")
 
-# Sessions (para /admin). Si SESSION_SECRET está vacío, el panel no funcionará.
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=config.SESSION_SECRET or "dev-only-do-not-use",
-    same_site="lax",
-    https_only=True,
-    max_age=60 * 60 * 8,  # 8 horas
-)
-
-
 @app.middleware("http")
 async def csrf_protection(request: Request, call_next):
     path = request.url.path
@@ -96,6 +86,16 @@ async def csrf_protection(request: Request, call_next):
         if not expected or not provided or not py_secrets.compare_digest(str(expected), provided):
             return PlainTextResponse("Invalid CSRF token", status_code=403)
     return await call_next(request)
+
+
+# Sessions (para /admin). Si SESSION_SECRET está vacío, el panel no funcionará.
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=config.SESSION_SECRET or "dev-only-do-not-use",
+    same_site="lax",
+    https_only=True,
+    max_age=60 * 60 * 8,  # 8 horas
+)
 
 app.include_router(admin.router)
 app.include_router(admin_tools.router)
