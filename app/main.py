@@ -330,11 +330,26 @@ async def forward_payload_to_external_webhook(webhook_url: str, payload: dict, a
         log.error(f"Error al enviar webhook de enrutamiento a {webhook_url}: {exc}")
 
 
+_processing_message_ids = set()
+
+
 async def _process_message(payload: dict) -> None:
     msg = whatsapp_client.extract_message(payload)
     if msg is None:
         return
 
+    msg_id = msg["message_id"]
+    if msg_id in _processing_message_ids:
+        log.info("Mensaje ya en procesamiento en memoria, ignorado: %s", msg_id)
+        return
+    _processing_message_ids.add(msg_id)
+    try:
+        await _process_message_impl(msg, payload)
+    finally:
+        _processing_message_ids.discard(msg_id)
+
+
+async def _process_message_impl(msg: dict, payload: dict) -> None:
     wa_id = msg["wa_id"]
     phone_id = msg.get("phone_number_id")
     bot = await bots.resolve_by_phone_number_id(phone_id)
