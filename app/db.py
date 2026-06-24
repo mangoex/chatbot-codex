@@ -326,6 +326,10 @@ async def run_migrations() -> None:
                 """
             )
         await conn.execute(SCHEMA_SQL)
+        # Migrar bots de openrouter/free a openai/gpt-4o-mini
+        await conn.execute(
+            "UPDATE bots SET openai_model = 'openai/gpt-4o-mini' WHERE openai_model = 'openrouter/free'"
+        )
         await conn.execute(
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS action_link_sent BOOLEAN NOT NULL DEFAULT FALSE"
         )

@@ -180,6 +180,16 @@ class ReplySafetyTests(unittest.TestCase):
         polished = reply_safety.polish(text, [])
         self.assertEqual(polished, text)
 
+    def test_extracts_content_from_respuesta_tags(self):
+        text = "Thinking: I must reply in Spanish.\n<respuesta>¡Hola! Soy el asistente.</respuesta>"
+        reply = reply_safety.polish(text, [])
+        self.assertEqual(reply, "¡Hola! Soy el asistente.")
+
+    def test_extracts_content_from_respuesta_tags_truncated(self):
+        text = "Thinking: I must reply in Spanish.\n<respuesta>¡Hola! Soy el asistente."
+        reply = reply_safety.polish(text, [])
+        self.assertEqual(reply, "¡Hola! Soy el asistente.")
+
 
 if __name__ == "__main__":
     unittest.main()

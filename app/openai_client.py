@@ -98,7 +98,9 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
         f"- Zona horaria: {tz_name}\n"
         f"{calendar_details}"
         "- Responde muy breve para WhatsApp.\n"
-        "- IMPORTANTE: Responde en español (o el idioma del usuario). Tu respuesta debe ser EXCLUSIVAMENTE el mensaje final que leerá el usuario. NUNCA escribas pensamientos, explicaciones en inglés, 'Let's draft' ni razonamientos internos en la respuesta."
+        "- IMPORTANTE: Tu respuesta debe estar OBLIGATORIAMENTE envuelta en etiquetas XML <respuesta>...</respuesta>, de la siguiente forma:\n"
+        "<respuesta>Aquí va tu mensaje final en español para el cliente de WhatsApp</respuesta>\n"
+        "Cualquier razonamiento, pensamiento o borrador debe ir fuera de esta etiqueta o no incluirse. Solo se enviará al cliente lo que esté dentro de <respuesta>...</respuesta>."
     )
 
 
