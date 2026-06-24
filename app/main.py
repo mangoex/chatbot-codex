@@ -171,9 +171,18 @@ async def receive_chatwoot_webhook(
     
     # Si la conversacion se resuelve en Chatwoot, reiniciamos el historial del bot
     if event == "conversation_status_changed" and payload.get("status") == "resolved":
-        contact = payload.get("contact", {})
-        conversation = payload.get("conversation", {})
-        wa_id = contact.get("phone_number") or contact.get("identifier") or conversation.get("meta", {}).get("sender", {}).get("phone_number")
+        contact = payload.get("contact") or {}
+        conversation = payload.get("conversation") or {}
+        meta = payload.get("meta") or {}
+        sender = meta.get("sender") or {}
+        wa_id = (
+            contact.get("phone_number")
+            or contact.get("identifier")
+            or conversation.get("meta", {}).get("sender", {}).get("phone_number")
+            or sender.get("phone_number")
+            or conversation.get("contact", {}).get("phone_number")
+            or payload.get("phone_number")
+        )
         if wa_id:
             wa_id = wa_id.lstrip("+")
             await db.clear_conversation_history(wa_id, bot_id)

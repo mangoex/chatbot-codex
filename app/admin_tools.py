@@ -78,7 +78,18 @@ async def reset_contact_submit(request: Request, wa_id: str = Form(...)):
     clean_wa_id = "".join(ch for ch in wa_id if ch.isdigit())
     if not clean_wa_id:
         raise HTTPException(400, "wa_id requerido")
-    await db.clear_contact_data([clean_wa_id])
+    try:
+        await db.clear_contact_data([clean_wa_id])
+    except Exception as exc:
+        import traceback
+        tb = traceback.format_exc()
+        import logging
+        log = logging.getLogger("admin-tools")
+        log.error(f"Error resetting contact {clean_wa_id}: {exc}\n{tb}")
+        return HTMLResponse(
+            f"<h2>Error al reiniciar contacto</h2><pre>{html.escape(str(exc))}\n\n{html.escape(tb)}</pre>",
+            status_code=500
+        )
     return RedirectResponse("/admin/conversations", status_code=302)
 
 

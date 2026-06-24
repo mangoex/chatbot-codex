@@ -1016,6 +1016,10 @@ async def clear_contact_data(wa_ids: list[str], bot_id: int | None = None) -> di
                 f"DELETE FROM calendar_appointments WHERE wa_id = ANY($1::text[]){bot_filter}",
                 *args,
             ),
+            "contacts": await conn.execute(
+                f"DELETE FROM contacts WHERE wa_id = ANY($1::text[]){bot_filter}",
+                *args,
+            ),
         }
     return {
         key: int(value.split()[-1]) if value else 0
