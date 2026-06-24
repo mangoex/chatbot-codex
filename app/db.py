@@ -402,13 +402,22 @@ async def was_processed(message_id: str) -> bool:
         return row is not None
 
 
-async def mark_processed(message_id: str) -> None:
+async def mark_processed(message_id: str, bot_id: int | None = None) -> bool:
     async with _pool.acquire() as conn:
-        await conn.execute(
-            "INSERT INTO processed_messages(message_id) VALUES($1) "
-            "ON CONFLICT DO NOTHING",
-            message_id,
-        )
+        if bot_id is not None:
+            result = await conn.execute(
+                "INSERT INTO processed_messages(message_id, bot_id) VALUES($1, $2) "
+                "ON CONFLICT DO NOTHING",
+                message_id, bot_id,
+            )
+        else:
+            result = await conn.execute(
+                "INSERT INTO processed_messages(message_id) VALUES($1) "
+                "ON CONFLICT DO NOTHING",
+                message_id,
+            )
+        inserted = int(result.split()[-1]) if result else 0
+        return inserted > 0
 
 
 async def get_history(wa_id: str, limit: int, bot_id: int | None = None) -> list[dict]:

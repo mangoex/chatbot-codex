@@ -369,9 +369,12 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         bot.status,
     )
     if await db.was_processed(msg["message_id"]):
-        log.info("Mensaje duplicado, ignorado: %s", msg["message_id"])
+        log.info("Mensaje duplicado (was_processed), ignorado: %s", msg["message_id"])
         return
-    await db.mark_processed(msg["message_id"])
+    inserted = await db.mark_processed(msg["message_id"], bot_id=bot.id)
+    if inserted is False:
+        log.info("Mensaje duplicado (mark_processed), ignorado: %s", msg["message_id"])
+        return
 
     mtype = msg["type"]
     user_text = (msg.get("text") or "")[: config.MAX_USER_MESSAGE_CHARS]

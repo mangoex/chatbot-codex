@@ -132,7 +132,7 @@ class RoutingRulesTests(unittest.TestCase):
         
         # 3. Assertions
         mock_was_processed.assert_called_once_with("wamid.msg1")
-        mock_mark_processed.assert_called_once_with("wamid.msg1")
+        mock_mark_processed.assert_called_once_with("wamid.msg1", bot_id=43)
         mock_cancel_follow_ups.assert_called_once_with("5216861234567", 43)
         
         # Verify webhook was scheduled for forwarding
