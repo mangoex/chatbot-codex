@@ -47,14 +47,32 @@ def _encoder():
         return tiktoken.get_encoding("cl100k_base")
 
 
-def _runtime_context(lead_info: dict | None = None) -> str:
+async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = None) -> str:
     tz_name = config.GOOGLE_CALENDAR_TIMEZONE or "America/Chihuahua"
+    calendar_state = "inactivo"
+    duration = None
+
+    if bot_id:
+        try:
+            from app import skill_runtime, calendar_client
+            skill_on = await skill_runtime.calendar_skill_enabled(bot_id)
+            if skill_on:
+                cal_runtime = await calendar_client._runtime(bot_id)
+                if cal_runtime.enabled:
+                    calendar_state = "activo"
+                    tz_name = cal_runtime.timezone
+                    duration = cal_runtime.duration_minutes
+        except Exception:
+            pass
+    else:
+        calendar_state = "activo" if config.GOOGLE_CALENDAR_ENABLED else "inactivo"
+        duration = config.GOOGLE_APPOINTMENT_DURATION_MINUTES
+
     try:
         now = datetime.now(ZoneInfo(tz_name))
     except Exception:
         tz_name = "America/Chihuahua"
         now = datetime.now(ZoneInfo(tz_name))
-    calendar_state = "activo" if config.GOOGLE_CALENDAR_ENABLED else "inactivo"
     
     lead_context = ""
     if lead_info:
@@ -66,13 +84,19 @@ def _runtime_context(lead_info: dict | None = None) -> str:
         if parts:
             lead_context = "\n".join(parts) + "\n"
             
+    calendar_details = ""
+    if calendar_state == "activo":
+        calendar_details = (
+            f"- Google Calendar: activo\n"
+            f"- Duracion por defecto de llamada: {duration} minutos\n"
+        )
+
     return (
         "Contexto operativo actual:\n"
         f"{lead_context}"
         f"- Fecha y hora actual: {now.isoformat(timespec='minutes')}\n"
         f"- Zona horaria: {tz_name}\n"
-        f"- Google Calendar: {calendar_state}\n"
-        f"- Duracion por defecto de llamada: {config.GOOGLE_APPOINTMENT_DURATION_MINUTES} minutos\n"
+        f"{calendar_details}"
         "- Responde muy breve para WhatsApp.\n"
         "- IMPORTANTE: Responde en español (o el idioma del usuario). Tu respuesta debe ser EXCLUSIVAMENTE el mensaje final que leerá el usuario. NUNCA escribas pensamientos, explicaciones en inglés, 'Let's draft' ni razonamientos internos en la respuesta."
     )
@@ -81,7 +105,7 @@ def _runtime_context(lead_info: dict | None = None) -> str:
 async def _system_prompt(bot_id: int | None = None, query: str | None = None, lead_info: dict | None = None) -> str:
     prompt = await bot_content.system_prompt_for_bot(bot_id, query)
     extra = await external_actions.system_instructions(bot_id)
-    runtime = _runtime_context(lead_info)
+    runtime = await _runtime_context(bot_id, lead_info)
     if extra:
         return f"{prompt}\n\n--- contexto_runtime ---\n{runtime}\n\n{extra}"
     return f"{prompt}\n\n--- contexto_runtime ---\n{runtime}"

@@ -28,15 +28,15 @@ from app import db, leads, openai_client
 
 
 class MemoryTests(unittest.IsolatedAsyncioTestCase):
-    def test_runtime_context_injects_lead_info(self):
+    async def test_runtime_context_injects_lead_info(self):
         lead_info = {"nombre": "Miguel Gonzales", "negocio": "Consultor de IA"}
-        context = openai_client._runtime_context(lead_info)
+        context = await openai_client._runtime_context(lead_info=lead_info)
         
         self.assertIn("- Nombre del cliente: Miguel Gonzales", context)
         self.assertIn("- Negocio/Giro del cliente: Consultor de IA", context)
 
-    def test_runtime_context_empty_when_no_lead_info(self):
-        context = openai_client._runtime_context(None)
+    async def test_runtime_context_empty_when_no_lead_info(self):
+        context = await openai_client._runtime_context(None)
         self.assertNotIn("Nombre del cliente", context)
         self.assertNotIn("Negocio/Giro del cliente", context)
 
