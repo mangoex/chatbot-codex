@@ -55,13 +55,14 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
     if bot_id:
         try:
             from app import skill_runtime, calendar_client
+            cal_runtime = await calendar_client._runtime(bot_id)
+            if cal_runtime and cal_runtime.timezone:
+                tz_name = cal_runtime.timezone
+            
             skill_on = await skill_runtime.calendar_skill_enabled(bot_id)
-            if skill_on:
-                cal_runtime = await calendar_client._runtime(bot_id)
-                if cal_runtime.enabled:
-                    calendar_state = "activo"
-                    tz_name = cal_runtime.timezone
-                    duration = cal_runtime.duration_minutes
+            if skill_on and cal_runtime.enabled:
+                calendar_state = "activo"
+                duration = cal_runtime.duration_minutes
         except Exception:
             pass
     else:
@@ -73,6 +74,17 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
     except Exception:
         tz_name = "America/Chihuahua"
         now = datetime.now(ZoneInfo(tz_name))
+    
+    # Formatear fecha y hora actual en español legible con representación 12h y 24h
+    days = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+    months = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    day_name = days[now.weekday()]
+    month_name = months[now.month - 1]
+    ampm = "a.m." if now.hour < 12 else "p.m."
+    hour_12 = now.hour % 12
+    if hour_12 == 0:
+        hour_12 = 12
+    time_human = f"{day_name}, {now.day} de {month_name} de {now.year}, {now.hour:02d}:{now.minute:02d} ({hour_12}:{now.minute:02d} {ampm})"
     
     lead_context = ""
     if lead_info:
@@ -94,10 +106,11 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
     return (
         "Contexto operativo actual:\n"
         f"{lead_context}"
-        f"- Fecha y hora actual: {now.isoformat(timespec='minutes')}\n"
+        f"- Fecha y hora actual: {time_human}\n"
         f"- Zona horaria: {tz_name}\n"
         f"{calendar_details}"
         "- Responde muy breve para WhatsApp.\n"
+        "- Al calcular tiempos de entrega o recolección, realiza la aritmética de reloj de manera correcta (recuerda que una hora tiene 60 minutos: por ejemplo, si la hora actual es 15:40 y sumas 20 minutos, la hora de recogida es 16:00, NUNCA 15:60 ni 16:60).\n"
         "- IMPORTANTE: Tu respuesta debe estar OBLIGATORIAMENTE envuelta en etiquetas XML <respuesta>...</respuesta>, de la siguiente forma:\n"
         "<respuesta>Aquí va tu mensaje final en español para el cliente de WhatsApp</respuesta>\n"
         "Cualquier razonamiento, pensamiento o borrador debe ir fuera de esta etiqueta o no incluirse. Solo se enviará al cliente lo que esté dentro de <respuesta>...</respuesta>."
