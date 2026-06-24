@@ -85,6 +85,71 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "Prompt desde archivo")
 
+    async def test_system_prompt_bypasses_rag_for_small_knowledge(self):
+        async def fake_prompt(bot_id):
+            return {"content": "Prompt bot"}
+
+        async def fake_knowledge(bot_id, active_only=True):
+            return [{"title": "Menu", "content": "Kyoto Pollo - $99", "status": "active"}]
+
+        original_prompt = db.get_active_bot_prompt
+        original_knowledge = db.list_bot_knowledge
+        db.get_active_bot_prompt = fake_prompt
+        db.list_bot_knowledge = fake_knowledge
+        try:
+            result = await bot_content.system_prompt_for_bot(7, query="pollo")
+        finally:
+            db.get_active_bot_prompt = original_prompt
+            db.list_bot_knowledge = original_knowledge
+
+        self.assertIn("Prompt bot", result)
+        self.assertIn("Kyoto Pollo - $99", result)
+
+    async def test_system_prompt_calls_rag_for_large_knowledge(self):
+        async def fake_prompt(bot_id):
+            return {"content": "Prompt bot"}
+
+        large_content = "x" * 16000
+        async def fake_knowledge(bot_id, active_only=True):
+            return [{"title": "LargeDoc", "content": large_content, "status": "active"}]
+
+        called_rag = False
+        async def fake_search(conn, bot_id, query, limit=3):
+            nonlocal called_rag
+            called_rag = True
+            return ["RAG Chunk 1", "RAG Chunk 2"]
+
+        import types
+        class FakePool:
+            def acquire(self):
+                class FakeConnContext:
+                    async def __aenter__(self):
+                        return None
+                    async def __aexit__(self, exc_type, exc_val, exc_tb):
+                        pass
+                return FakeConnContext()
+
+        original_pool = db._pool
+        db._pool = FakePool()
+
+        sys.modules["app.rag"] = types.SimpleNamespace(search_knowledge=fake_search)
+        
+        original_prompt = db.get_active_bot_prompt
+        original_knowledge = db.list_bot_knowledge
+        db.get_active_bot_prompt = fake_prompt
+        db.list_bot_knowledge = fake_knowledge
+        try:
+            result = await bot_content.system_prompt_for_bot(7, query="large search")
+        finally:
+            db.get_active_bot_prompt = original_prompt
+            db.list_bot_knowledge = original_knowledge
+            db._pool = original_pool
+            sys.modules.pop("app.rag", None)
+
+        self.assertTrue(called_rag)
+        self.assertIn("RAG Chunk 1", result)
+        self.assertNotIn("LargeDoc", result)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -43,9 +43,13 @@ async def system_prompt_for_bot(bot_id: int | None = None, query: str | None = N
         return fallback
     try:
         prompt_row = await db.get_active_bot_prompt(bot_id)
-        # RAG Semantic search if query is provided
+        # Cargar todos los documentos de conocimiento primero
+        all_docs = await db.list_bot_knowledge(bot_id, active_only=True)
+        total_chars = sum(len(doc.get("content") or "") for doc in all_docs)
+        
+        # RAG Semantic search solo si se provee consulta y la base de conocimiento es grande
         rag_chunks = []
-        if query:
+        if query and total_chars > 15000:
             from app import rag
             async with db._pool.acquire() as conn:
                 rag_chunks = await rag.search_knowledge(conn, bot_id, query, limit=3)
@@ -53,7 +57,7 @@ async def system_prompt_for_bot(bot_id: int | None = None, query: str | None = N
         if query and rag_chunks:
             knowledge_docs = [{"title": f"Fragmento de conocimiento {i+1}", "content": chunk, "status": "active"} for i, chunk in enumerate(rag_chunks)]
         else:
-            knowledge_docs = await db.list_bot_knowledge(bot_id, active_only=True)
+            knowledge_docs = all_docs
     except Exception:
         log.exception("No se pudo cargar prompt/conocimiento del bot %s", bot_id)
         return fallback

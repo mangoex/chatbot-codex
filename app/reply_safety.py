@@ -49,6 +49,19 @@ def looks_broken(reply: str) -> bool:
         return True
     if clean.endswith((",", ";")):
         return True
+        
+    # Verificar paréntesis o corchetes sin cerrar (síntoma de corte)
+    if clean.count("(") > clean.count(")"):
+        return True
+    if clean.count("[") > clean.count("]"):
+        return True
+
+    # Verificar markdown de negritas sin cerrar (síntoma de corte)
+    if clean.count("*") % 2 != 0:
+        last_star = clean.rfind("*")
+        if last_star != -1 and (last_star == len(clean) - 1 or not clean[last_star + 1].isspace()):
+            return True
+
     words = clean.split()
     if len(words) > 10:
         non_ascii_symbols = sum(1 for ch in clean if ord(ch) > 10000 and not _is_emoji(ch))

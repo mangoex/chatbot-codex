@@ -157,6 +157,29 @@ class ReplySafetyTests(unittest.TestCase):
         polished = reply_safety.polish(text, [])
         self.assertEqual(polished, text)
 
+    def test_flags_unclosed_parenthesis(self):
+        history = [{"role": "assistant", "content": "Hola"}]
+        text = "Te recomiendo el - *Jamon* ($90.0"
+        polished = reply_safety.polish(text, history)
+        self.assertEqual(polished, "Entendido. Si tienes alguna otra duda o deseas continuar más adelante, escríbeme y con gusto lo revisamos.")
+
+    def test_flags_unclosed_bracket(self):
+        history = [{"role": "assistant", "content": "Hola"}]
+        text = "Aquí tienes la ensalada verde [105.0"
+        polished = reply_safety.polish(text, history)
+        self.assertEqual(polished, "Entendido. Si tienes alguna otra duda o deseas continuar más adelante, escríbeme y con gusto lo revisamos.")
+
+    def test_flags_unclosed_bold_marker(self):
+        history = [{"role": "assistant", "content": "Hola"}]
+        text = "Te recomiendo el *pollo bbq"
+        polished = reply_safety.polish(text, history)
+        self.assertEqual(polished, "Entendido. Si tienes alguna otra duda o deseas continuar más adelante, escríbeme y con gusto lo revisamos.")
+
+    def test_does_not_flag_valid_bullet_points_with_star(self):
+        text = "Elige tu opción:\n* Kyoto Pollo – $99.00\n* Jamón – $90.00"
+        polished = reply_safety.polish(text, [])
+        self.assertEqual(polished, text)
+
 
 if __name__ == "__main__":
     unittest.main()
