@@ -999,10 +999,30 @@ async def mark_all_follow_ups_sent() -> int:
     return int(result.split()[-1]) if result else 0
 
 
+def get_phone_variants(phone: str) -> list[str]:
+    """Obtiene variantes válidas de un número telefónico (ej. con/sin el '1' para números de México)."""
+    clean = "".join(c for c in phone if c.isdigit())
+    variants = [clean]
+    if clean.startswith("52") and len(clean) == 13 and clean[2] == "1":
+        # Es un número de México de 13 dígitos con el '1'
+        # Variante sin el '1': '52' + últimos 10 dígitos
+        variants.append("52" + clean[3:])
+    elif clean.startswith("52") and len(clean) == 12 and clean[2] != "1":
+        # Es un número de México de 12 dígitos sin el '1'
+        # Variante con el '1': '521' + últimos 10 dígitos
+        variants.append("521" + clean[2:])
+    return list(set(variants))
+
+
 async def clear_contact_data(wa_ids: list[str], bot_id: int | None = None) -> dict[str, int]:
     """Borra estado conversacional y comercial de una lista de contactos."""
+    expanded_wa_ids = []
+    for wa_id in wa_ids:
+        expanded_wa_ids.extend(get_phone_variants(wa_id))
+    expanded_wa_ids = list(set(expanded_wa_ids))
+
     bot_filter = "" if bot_id is None else " AND bot_id = $2"
-    args: list = [wa_ids] if bot_id is None else [wa_ids, bot_id]
+    args: list = [expanded_wa_ids] if bot_id is None else [expanded_wa_ids, bot_id]
     async with _pool.acquire() as conn:
         results = {
             "conversations": await conn.execute(
@@ -1038,10 +1058,11 @@ async def clear_contact_data(wa_ids: list[str], bot_id: int | None = None) -> di
 
 async def clear_conversation_history(wa_id: str, bot_id: int) -> None:
     """Borra el historial de conversaciones para resetear la memoria del bot."""
+    variants = get_phone_variants(wa_id)
     async with _pool.acquire() as conn:
         await conn.execute(
-            "DELETE FROM conversations WHERE wa_id = $1 AND bot_id = $2",
-            wa_id, bot_id
+            "DELETE FROM conversations WHERE wa_id = ANY($1::text[]) AND bot_id = $2",
+            variants, bot_id
         )
 
 

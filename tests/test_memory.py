@@ -96,6 +96,23 @@ class MemoryTests(unittest.IsolatedAsyncioTestCase):
         nombre = leads._extract_nombre(history)
         self.assertIsNone(nombre)
 
+    def test_get_phone_variants_mexico(self):
+        # 13 digits with '1' should yield 12 digits variant
+        self.assertEqual(
+            set(db.get_phone_variants("+52 1 686 903 2840")),
+            {"5216869032840", "526869032840"}
+        )
+        # 12 digits without '1' should yield 13 digits variant
+        self.assertEqual(
+            set(db.get_phone_variants("526869032840")),
+            {"5216869032840", "526869032840"}
+        )
+        # Non-Mexican number should only yield normalized self
+        self.assertEqual(
+            db.get_phone_variants("+1 555 123 4567"),
+            ["15551234567"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
