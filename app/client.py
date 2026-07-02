@@ -1178,9 +1178,12 @@ async def client_app(
                     break
     has_token = bool(access_token_val)
     
-    # Active prompt
+    # Active prompt and PBD docs
     prompt_row = await db.get_active_bot_prompt(bot_id)
     current_prompt_content = prompt_row.get("content", "") if prompt_row else ""
+    current_constitution = prompt_row.get("pbd_constitution", "") if prompt_row else ""
+    current_specs = prompt_row.get("pbd_specs", "") if prompt_row else ""
+    current_test_suite = prompt_row.get("pbd_test_suite", "") if prompt_row else ""
     
     # Business Hours Skill
     hours_skill = await db.get_bot_skill(bot_id, "business_hours")
@@ -2537,17 +2540,40 @@ async def client_app(
               <span class="bold-text" style="font-size:13px; color:var(--primary-dark);">Vista previa del prompt generado</span>
               <button class="btn secondary" style="padding:4px 10px; font-size:11px;" onclick="applyGeneratedPrompt()">Aplicar Preview</button>
             </div>
+            
+            <label>01 - Constitución (Preview)</label>
+            <textarea id="aiConstitutionPreview" style="min-height: 120px; background:#f8fafc; font-family:monospace; font-size:12px; border-color:var(--primary-light); margin-bottom: 12px;" readonly></textarea>
+            
+            <label>02 - Especificaciones (Preview)</label>
+            <textarea id="aiSpecsPreview" style="min-height: 120px; background:#f8fafc; font-family:monospace; font-size:12px; border-color:var(--primary-light); margin-bottom: 12px;" readonly></textarea>
+            
+            <label>03 - Suite de Pruebas (Preview)</label>
+            <textarea id="aiTestSuitePreview" style="min-height: 120px; background:#f8fafc; font-family:monospace; font-size:12px; border-color:var(--primary-light); margin-bottom: 12px;" readonly></textarea>
+
+            <label>04 - Master Prompt (Preview)</label>
             <textarea id="aiPromptPreview" style="min-height: 240px; background:#f8fafc; font-family:monospace; font-size:12px; border-color:var(--primary-light);" readonly></textarea>
           </div>
         </div>
         
         <div class="card">
           <div class="card-header">
-            <h2>Instrucciones del Bot (Prompt de Sistema)</h2>
-            <p>Este es el texto completo con el comportamiento operativo del bot. Puedes editarlo libremente.</p>
+            <h2>Estructura del Comportamiento (PBD)</h2>
+            <p>La IA separa el comportamiento en 4 documentos operativos. Si necesitas modificarlos, usa el Asistente de Prompt arriba.</p>
           </div>
           <form method="post" action="/client/bots/{bot_id}/prompt/save">
+            
+            <label>01 - Constitución (Verdad Absoluta)</label>
+            <textarea id="activeConstitutionEditor" name="pbd_constitution" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; background: #f8fafc; margin-bottom: 16px;" readonly>{html.escape(current_constitution)}</textarea>
+
+            <label>02 - Especificaciones (Flujos y Datos)</label>
+            <textarea id="activeSpecsEditor" name="pbd_specs" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; background: #f8fafc; margin-bottom: 16px;" readonly>{html.escape(current_specs)}</textarea>
+
+            <label>03 - Suite de Pruebas (Casos de uso)</label>
+            <textarea id="activeTestSuiteEditor" name="pbd_test_suite" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; background: #f8fafc; margin-bottom: 16px;" readonly>{html.escape(current_test_suite)}</textarea>
+
+            <label>04 - Master Prompt (Código del Bot)</label>
             <textarea id="activePromptEditor" name="prompt" style="min-height: 380px; width: 100%; font-family:monospace; font-size:12.5px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;" placeholder="System prompt...">{html.escape(current_prompt_content)}</textarea>
+            
             <div style="margin-top:16px;">
               <button class="btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Publicar comportamiento</button>
             </div>
@@ -2568,6 +2594,9 @@ async def client_app(
           const btn = document.getElementById("btnAssistPrompt");
           const previewBlock = document.getElementById("promptPreviewBlock");
           const previewArea = document.getElementById("aiPromptPreview");
+          const constPreview = document.getElementById("aiConstitutionPreview");
+          const specsPreview = document.getElementById("aiSpecsPreview");
+          const testPreview = document.getElementById("aiTestSuitePreview");
           
           loader.style.display = "inline";
           btn.disabled = true;
@@ -2575,6 +2604,9 @@ async def client_app(
           const formData = new FormData();
           formData.append("instruction", instruction);
           formData.append("current_prompt", current);
+          formData.append("pbd_constitution", document.getElementById("activeConstitutionEditor").value);
+          formData.append("pbd_specs", document.getElementById("activeSpecsEditor").value);
+          formData.append("pbd_test_suite", document.getElementById("activeTestSuiteEditor").value);
           
           try {{
             const response = await fetch("/client/bots/{bot_id}/prompt/assist", {{
@@ -2588,6 +2620,9 @@ async def client_app(
             const data = await response.json();
             if (data.ok) {{
               previewArea.value = data.prompt;
+              constPreview.value = data.pbd_constitution || "";
+              specsPreview.value = data.pbd_specs || "";
+              testPreview.value = data.pbd_test_suite || "";
               previewBlock.style.display = "block";
             }} else {{
               alert("Error: " + data.error);
@@ -2602,13 +2637,22 @@ async def client_app(
         
         function applyGeneratedPrompt() {{
           const generated = document.getElementById("aiPromptPreview").value;
+          const generatedConst = document.getElementById("aiConstitutionPreview").value;
+          const generatedSpecs = document.getElementById("aiSpecsPreview").value;
+          const generatedTest = document.getElementById("aiTestSuitePreview").value;
+
           if (window.promptEditor) {{
             window.promptEditor.value(generated);
           }} else {{
             document.getElementById("activePromptEditor").value = generated;
           }}
+          
+          document.getElementById("activeConstitutionEditor").value = generatedConst;
+          document.getElementById("activeSpecsEditor").value = generatedSpecs;
+          document.getElementById("activeTestSuiteEditor").value = generatedTest;
+
           document.getElementById("promptPreviewBlock").style.display = "none";
-          alert("Prompt copiado al editor de la derecha. Haz clic en 'Publicar comportamiento' para guardarlo definitivamente.");
+          alert("Documentos aplicados a los campos. Haz clic en 'Publicar comportamiento' para guardarlo definitivamente.");
         }}
       </script>
       <style>
@@ -3143,13 +3187,20 @@ async def client_whatsapp_connect(
         return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=whatsapp&saved=err", status_code=302)
 
 @router.post("/bots/{bot_id}/prompt/save")
-async def client_prompt_save(request: Request, bot_id: int, prompt: str = Form(...)):
+async def client_prompt_save(
+    request: Request,
+    bot_id: int,
+    prompt: str = Form(...),
+    pbd_constitution: str | None = Form(None),
+    pbd_specs: str | None = Form(None),
+    pbd_test_suite: str | None = Form(None),
+):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
     clean = prompt.strip()
     if not clean:
         raise HTTPException(status_code=400, detail="El prompt no puede estar vacío")
-    await db.publish_bot_prompt(bot_id, clean)
+    await db.publish_bot_prompt(bot_id, clean, pbd_constitution, pbd_specs, pbd_test_suite)
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=prompt&saved=1", status_code=302)
 
 @router.post("/bots/{bot_id}/prompt/assist", response_class=JSONResponse)
@@ -3158,6 +3209,9 @@ async def client_prompt_assist(
     bot_id: int,
     instruction: str = Form(...),
     current_prompt: str = Form(""),
+    pbd_constitution: str = Form(""),
+    pbd_specs: str = Form(""),
+    pbd_test_suite: str = Form(""),
 ):
     session = _require_client_login(request)
     bot = await _require_bot_editor(session, bot_id)
@@ -3166,6 +3220,9 @@ async def client_prompt_assist(
         result = await prompt_assistant.assist_prompt(
             bot=bot,
             current_prompt=current_prompt,
+            pbd_constitution=pbd_constitution,
+            pbd_specs=pbd_specs,
+            pbd_test_suite=pbd_test_suite,
             instruction=instruction,
             knowledge_docs=knowledge_docs,
         )

@@ -18,13 +18,16 @@ computadora usando GitHub como fuente de verdad. No contiene secretos.
 - Posicionamiento para Meta: Asistto by Humanio, plataforma de automatizacion
   de atencion, ventas, agenda e integraciones por WhatsApp para negocios. No se
   debe presentar como asistente general de IA.
-- Proveedor IA actual: OpenRouter usando API compatible con OpenAI.
+- Proveedor IA actual: OpenAI (modelo gpt-4o-mini, previamente OpenRouter).
 - Agenda real con Google Calendar: activa y probada.
 
 ## Cambios Importantes Ya Subidos
 
 Los ultimos commits funcionales en `main` antes de este handoff fueron:
 
+- `2fed67a`: corrige la carga de zona horaria por bot incluso si la skill de calendario esta desactivada, y mejora el formato de hora en tiempo de ejecucion y la instruccion matematica del reloj.
+- `0867e6a`: implementa parsing de respuestas con etiquetas XML y migra del modelo `openrouter/free` a `openai/gpt-4o-mini`.
+- `d552e89`: evade RAG para bases de conocimiento pequeñas (inyectandolas completas), aumenta el max tokens a 1000, y detecta mensajes cortados por seguridad.
 - `057c407`: agrega flujo de cancelacion real de citas en Google Calendar y
   tabla `calendar_appointments`.
 - `25af39e`: corrige casos de agenda como `pasadomañana`, `Gracias` despues

@@ -2311,6 +2311,9 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
     bot = await _require_bot_access(session, bot_id)
     prompt = await db.get_active_bot_prompt(bot_id)
     content = (prompt or {}).get("content")
+    pbd_constitution = (prompt or {}).get("pbd_constitution", "")
+    pbd_specs = (prompt or {}).get("pbd_specs", "")
+    pbd_test_suite = (prompt or {}).get("pbd_test_suite", "")
     if not content:
         content = config.SYSTEM_PROMPT
         if bot_id != 1:
@@ -2368,8 +2371,14 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
           </div>
           <div id="assistantStatus" class="prompt-status">Listo.</div>
         </form>
-        <label>Sugerencia generada</label>
-        <textarea id="assistantResult" class="result" readonly></textarea>
+        <label>01 - Constitución (Preview)</label>
+        <textarea id="aiConstitutionPreview" class="result" readonly style="min-height: 80px; margin-bottom: 8px;"></textarea>
+        <label>02 - Especificaciones (Preview)</label>
+        <textarea id="aiSpecsPreview" class="result" readonly style="min-height: 80px; margin-bottom: 8px;"></textarea>
+        <label>03 - Suite de Pruebas (Preview)</label>
+        <textarea id="aiTestSuitePreview" class="result" readonly style="min-height: 80px; margin-bottom: 8px;"></textarea>
+        <label>04 - Master Prompt (Preview)</label>
+        <textarea id="assistantResult" class="result" readonly style="min-height: 120px;"></textarea>
       </aside>
     """ if can_edit else """
       <aside class="panel">
@@ -2384,8 +2393,18 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
     <section class="grid prompt-workspace">
       <div class="panel editor">
         <form method="post" action="/admin/bots/{bot_id}/prompt">
-          <label>Instrucciones del agente</label>
-          <textarea id="promptContent" name="content" {readonly} required>{html.escape(content)}</textarea>
+          <label>01 - Constitución (Verdad Absoluta)</label>
+          <textarea id="activeConstitutionEditor" name="pbd_constitution" {readonly} style="min-height: 120px; background: #f8fafc; margin-bottom: 12px;">{html.escape(pbd_constitution)}</textarea>
+
+          <label>02 - Especificaciones (Flujos y Datos)</label>
+          <textarea id="activeSpecsEditor" name="pbd_specs" {readonly} style="min-height: 120px; background: #f8fafc; margin-bottom: 12px;">{html.escape(pbd_specs)}</textarea>
+
+          <label>03 - Suite de Pruebas (Casos de uso)</label>
+          <textarea id="activeTestSuiteEditor" name="pbd_test_suite" {readonly} style="min-height: 120px; background: #f8fafc; margin-bottom: 12px;">{html.escape(pbd_test_suite)}</textarea>
+
+          <label>04 - Master Prompt (Código del Bot)</label>
+          <textarea id="promptContent" name="content" {readonly} required style="min-height: 240px;">{html.escape(content)}</textarea>
+          
           <div class="actions" style="margin-top:14px">{button}{notice}</div>
         </form>
       </div>
@@ -2408,6 +2427,10 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
           event.preventDefault();
           const payload = new FormData(form);
           payload.set("current_prompt", promptContent?.value || "");
+          payload.set("pbd_constitution", document.getElementById("activeConstitutionEditor")?.value || "");
+          payload.set("pbd_specs", document.getElementById("activeSpecsEditor")?.value || "");
+          payload.set("pbd_test_suite", document.getElementById("activeTestSuiteEditor")?.value || "");
+
           setStatus("Generando prompt...");
           if (runButton) runButton.disabled = true;
           if (applyButton) applyButton.disabled = true;
@@ -2422,6 +2445,10 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
               throw new Error(data.error || "No se pudo generar el prompt.");
             }}
             result.value = data.prompt || "";
+            document.getElementById("aiConstitutionPreview").value = data.pbd_constitution || "";
+            document.getElementById("aiSpecsPreview").value = data.pbd_specs || "";
+            document.getElementById("aiTestSuitePreview").value = data.pbd_test_suite || "";
+            
             setStatus(`Listo con ${{data.provider_label || "IA"}}.`, "ok");
             if (applyButton) applyButton.disabled = !result.value.trim();
           }} catch (error) {{
@@ -2434,8 +2461,18 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
           const suggestion = result?.value?.trim() || "";
           if (!suggestion || !promptContent) return;
           promptContent.value = suggestion;
+          
+          const constEditor = document.getElementById("activeConstitutionEditor");
+          if (constEditor) constEditor.value = document.getElementById("aiConstitutionPreview").value || "";
+          
+          const specsEditor = document.getElementById("activeSpecsEditor");
+          if (specsEditor) specsEditor.value = document.getElementById("aiSpecsPreview").value || "";
+          
+          const testEditor = document.getElementById("activeTestSuiteEditor");
+          if (testEditor) testEditor.value = document.getElementById("aiTestSuitePreview").value || "";
+          
           promptContent.focus();
-          setStatus("Sugerencia colocada en el editor. Publica para guardar.", "ok");
+          setStatus("Documentos colocados en los campos. Publica para guardar.", "ok");
         }});
       }})();
     </script>
@@ -2448,13 +2485,16 @@ async def save_bot_prompt_page(
     request: Request,
     bot_id: int,
     content: str = Form(...),
+    pbd_constitution: str | None = Form(None),
+    pbd_specs: str | None = Form(None),
+    pbd_test_suite: str | None = Form(None),
 ):
     session = _require_login(request)
     await _require_bot_editor(session, bot_id)
     clean = content.strip()
     if not clean:
         raise HTTPException(status_code=400, detail="El prompt no puede estar vacio")
-    await db.publish_bot_prompt(bot_id, clean)
+    await db.publish_bot_prompt(bot_id, clean, pbd_constitution, pbd_specs, pbd_test_suite)
     return RedirectResponse(f"/admin/bots/{bot_id}/prompt?saved=1", status_code=302)
 
 
@@ -2464,6 +2504,9 @@ async def assist_bot_prompt_page(
     bot_id: int,
     instruction: str = Form(...),
     current_prompt: str = Form(""),
+    pbd_constitution: str = Form(""),
+    pbd_specs: str = Form(""),
+    pbd_test_suite: str = Form(""),
     provider: str = Form(""),
     api_key: str = Form(""),
     base_url: str = Form(""),
@@ -2478,6 +2521,9 @@ async def assist_bot_prompt_page(
         result = await prompt_assistant.assist_prompt(
             bot=bot,
             current_prompt=current_prompt,
+            pbd_constitution=pbd_constitution,
+            pbd_specs=pbd_specs,
+            pbd_test_suite=pbd_test_suite,
             instruction=instruction,
             knowledge_docs=knowledge_docs,
             provider=provider,

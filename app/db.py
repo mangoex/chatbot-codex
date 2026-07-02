@@ -76,6 +76,9 @@ CREATE TABLE IF NOT EXISTS bot_prompts (
     status TEXT NOT NULL DEFAULT 'draft'
         CHECK (status IN ('draft','active','archived')),
     content TEXT NOT NULL,
+    pbd_constitution TEXT,
+    pbd_specs TEXT,
+    pbd_test_suite TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
     published_at TIMESTAMPTZ
 );
@@ -305,6 +308,10 @@ async def check_health() -> bool:
 
 async def run_migrations() -> None:
     async with _pool.acquire() as conn:
+        await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_constitution TEXT")
+        await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_specs TEXT")
+        await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_test_suite TEXT")
+
         # Existing deployments may already have these tables without bot_id.
         # Add the nullable column before SCHEMA_SQL creates bot_id indexes.
         for table in (
@@ -1459,7 +1466,13 @@ async def get_active_bot_prompt(bot_id: int) -> dict | None:
     return dict(row) if row else None
 
 
-async def publish_bot_prompt(bot_id: int, content: str) -> int:
+async def publish_bot_prompt(
+    bot_id: int, 
+    content: str, 
+    pbd_constitution: str | None = None, 
+    pbd_specs: str | None = None, 
+    pbd_test_suite: str | None = None
+) -> int:
     async with _pool.acquire() as conn:
         async with conn.transaction():
             version = await conn.fetchval(
@@ -1476,13 +1489,16 @@ async def publish_bot_prompt(bot_id: int, content: str) -> int:
             )
             row = await conn.fetchrow(
                 """
-                INSERT INTO bot_prompts(bot_id, version, status, content, published_at)
-                VALUES($1, $2, 'active', $3, now())
+                INSERT INTO bot_prompts(bot_id, version, status, content, pbd_constitution, pbd_specs, pbd_test_suite, published_at)
+                VALUES($1, $2, 'active', $3, $4, $5, $6, now())
                 RETURNING id
                 """,
                 bot_id,
                 int(version or 1),
                 content,
+                pbd_constitution,
+                pbd_specs,
+                pbd_test_suite,
             )
     return int(row["id"])
 
