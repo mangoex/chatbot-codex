@@ -1180,10 +1180,10 @@ async def client_app(
     
     # Active prompt and PBD docs
     prompt_row = await db.get_active_bot_prompt(bot_id)
-    current_prompt_content = prompt_row.get("content", "") if prompt_row else ""
-    current_constitution = prompt_row.get("pbd_constitution", "") if prompt_row else ""
-    current_specs = prompt_row.get("pbd_specs", "") if prompt_row else ""
-    current_test_suite = prompt_row.get("pbd_test_suite", "") if prompt_row else ""
+    current_prompt_content = (prompt_row.get("content") or "") if prompt_row else ""
+    current_constitution = (prompt_row.get("pbd_constitution") or "") if prompt_row else ""
+    current_specs = (prompt_row.get("pbd_specs") or "") if prompt_row else ""
+    current_test_suite = (prompt_row.get("pbd_test_suite") or "") if prompt_row else ""
     
     # Business Hours Skill
     hours_skill = await db.get_bot_skill(bot_id, "business_hours")

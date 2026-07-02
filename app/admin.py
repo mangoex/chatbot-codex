@@ -2310,10 +2310,10 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
     session = _require_login(request)
     bot = await _require_bot_access(session, bot_id)
     prompt = await db.get_active_bot_prompt(bot_id)
-    content = (prompt or {}).get("content")
-    pbd_constitution = (prompt or {}).get("pbd_constitution", "")
-    pbd_specs = (prompt or {}).get("pbd_specs", "")
-    pbd_test_suite = (prompt or {}).get("pbd_test_suite", "")
+    content = (prompt or {}).get("content") or ""
+    pbd_constitution = (prompt or {}).get("pbd_constitution") or ""
+    pbd_specs = (prompt or {}).get("pbd_specs") or ""
+    pbd_test_suite = (prompt or {}).get("pbd_test_suite") or ""
     if not content:
         content = config.SYSTEM_PROMPT
         if bot_id != 1:
