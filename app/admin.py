@@ -2394,13 +2394,13 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
       <div class="panel editor">
         <form method="post" action="/admin/bots/{bot_id}/prompt">
           <label>01 - Constitución (Verdad Absoluta)</label>
-          <textarea id="activeConstitutionEditor" name="pbd_constitution" {readonly} style="min-height: 120px; background: #f8fafc; margin-bottom: 12px;">{html.escape(pbd_constitution)}</textarea>
+          <textarea id="activeConstitutionEditor" name="pbd_constitution" {readonly} style="min-height: 120px; margin-bottom: 12px;">{html.escape(pbd_constitution)}</textarea>
 
           <label>02 - Especificaciones (Flujos y Datos)</label>
-          <textarea id="activeSpecsEditor" name="pbd_specs" {readonly} style="min-height: 120px; background: #f8fafc; margin-bottom: 12px;">{html.escape(pbd_specs)}</textarea>
+          <textarea id="activeSpecsEditor" name="pbd_specs" {readonly} style="min-height: 120px; margin-bottom: 12px;">{html.escape(pbd_specs)}</textarea>
 
           <label>03 - Suite de Pruebas (Casos de uso)</label>
-          <textarea id="activeTestSuiteEditor" name="pbd_test_suite" {readonly} style="min-height: 120px; background: #f8fafc; margin-bottom: 12px;">{html.escape(pbd_test_suite)}</textarea>
+          <textarea id="activeTestSuiteEditor" name="pbd_test_suite" {readonly} style="min-height: 120px; margin-bottom: 12px;">{html.escape(pbd_test_suite)}</textarea>
 
           <label>04 - Master Prompt (Código del Bot)</label>
           <textarea id="promptContent" name="content" {readonly} required style="min-height: 240px;">{html.escape(content)}</textarea>

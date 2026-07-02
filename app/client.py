@@ -2518,7 +2518,8 @@ async def client_app(
     
     <!-- 3. TAB PANEL: COMPORTAMIENTO (PROMPT) -->
     <div id="panel-prompt" class="tab-panel">
-      <div class="prompt-workspace">
+      <form method="post" action="/client/bots/{bot_id}/prompt/save">
+        <div class="prompt-workspace">
         <div class="card">
           <div class="card-header">
             <h2>Asistente de Prompt con IA</h2>
@@ -2553,33 +2554,35 @@ async def client_app(
             <label>04 - Master Prompt (Preview)</label>
             <textarea id="aiPromptPreview" style="min-height: 240px; background:#f8fafc; font-family:monospace; font-size:12px; border-color:var(--primary-light);" readonly></textarea>
           </div>
-        </div>
-        
-        <div class="card">
-          <div class="card-header">
-            <h2>Estructura del Comportamiento (PBD)</h2>
-            <p>La IA separa el comportamiento en 4 documentos operativos. Si necesitas modificarlos, usa el Asistente de Prompt arriba.</p>
+            <div style="margin-top:24px; border-top: 1px solid var(--border-color); padding-top: 24px;">
+              <h3 style="margin-bottom: 12px; font-size: 14px;">Documentos de Referencia PBD</h3>
+              
+              <label>01 - Constitución (Verdad Absoluta)</label>
+              <textarea id="activeConstitutionEditor" name="pbd_constitution" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 16px;">{html.escape(current_constitution)}</textarea>
+  
+              <label>02 - Especificaciones (Flujos y Datos)</label>
+              <textarea id="activeSpecsEditor" name="pbd_specs" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 16px;">{html.escape(current_specs)}</textarea>
+  
+              <label>03 - Suite de Pruebas (Casos de uso)</label>
+              <textarea id="activeTestSuiteEditor" name="pbd_test_suite" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 16px;">{html.escape(current_test_suite)}</textarea>
+            </div>
           </div>
-          <form method="post" action="/client/bots/{bot_id}/prompt/save">
+          
+          <div class="card">
+            <div class="card-header">
+              <h2>Estructura del Comportamiento (PBD)</h2>
+              <p>Puedes editar el comportamiento manualmente o usar el Asistente de IA a la izquierda.</p>
+            </div>
             
-            <label>01 - Constitución (Verdad Absoluta)</label>
-            <textarea id="activeConstitutionEditor" name="pbd_constitution" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; background: #f8fafc; margin-bottom: 16px;" readonly>{html.escape(current_constitution)}</textarea>
-
-            <label>02 - Especificaciones (Flujos y Datos)</label>
-            <textarea id="activeSpecsEditor" name="pbd_specs" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; background: #f8fafc; margin-bottom: 16px;" readonly>{html.escape(current_specs)}</textarea>
-
-            <label>03 - Suite de Pruebas (Casos de uso)</label>
-            <textarea id="activeTestSuiteEditor" name="pbd_test_suite" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; background: #f8fafc; margin-bottom: 16px;" readonly>{html.escape(current_test_suite)}</textarea>
-
             <label>04 - Master Prompt (Código del Bot)</label>
-            <textarea id="activePromptEditor" name="prompt" style="min-height: 380px; width: 100%; font-family:monospace; font-size:12.5px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;" placeholder="System prompt...">{html.escape(current_prompt_content)}</textarea>
+            <textarea id="activePromptEditor" name="prompt" style="min-height: 520px; width: 100%; font-family:monospace; font-size:12.5px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;" placeholder="System prompt...">{html.escape(current_prompt_content)}</textarea>
             
             <div style="margin-top:16px;">
               <button class="btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Publicar comportamiento</button>
             </div>
-          </form>
+          </div>
         </div>
-      </div>
+      </form>
       
       <script>
         async function requestAIPrompt() {{
