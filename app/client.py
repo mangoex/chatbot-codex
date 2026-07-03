@@ -956,6 +956,7 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
           </span>
         </div>
         <form method="post" action="/admin/logout" style="margin: 0; display: flex;">
+          <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
           <button class="icon-btn logout" type="submit" title="Cerrar sesión" style="color:var(--red);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg></button>
         </form>
       </div>
@@ -1101,6 +1102,7 @@ async def client_app(
     # Query client's bots
     bots = await db.list_bots(client_id=client_id, limit=50)
     if not bots:
+        csrf_token = session.get("_csrf_token") or ""
         return HTMLResponse(
             f"""<!doctype html>
             <html><head><title>Bienvenido a Asistto</title>{CLIENT_CSS}</head>
@@ -1110,6 +1112,7 @@ async def client_app(
                 <h1 style="font-family:Outfit; font-size:24px; font-weight:800;">¡Bienvenido a Asistto!</h1>
                 <p class="muted-text" style="margin-top:10px;">Tu cuenta está activa, pero aún no tienes ningún bot de WhatsApp configurado. Por favor, contacta a tu ejecutivo de cuenta para dar de alta tu primer bot y comenzar.</p>
                 <form action="/admin/logout" method="post" style="margin-top:20px;">
+                  <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
                   <button class="btn secondary" type="submit">Cerrar Sesión</button>
                 </form>
               </div>

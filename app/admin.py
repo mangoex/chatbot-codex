@@ -940,6 +940,7 @@ ICONS = {
 def _nav(active: str, session: dict | None = None) -> str:
     session = session or _current_session.get() or {"role": "agency_admin"}
     role = session.get("role") or "agency_admin"
+    csrf_token = session.get("_csrf_token") or ""
     is_agency = role == "agency_admin"
     can_manage_users = is_agency or role == "client_admin"
     items = [
@@ -968,6 +969,7 @@ def _nav(active: str, session: dict | None = None) -> str:
       </div>
       <nav class="nav">{links}</nav>
       <form method="post" action="/admin/logout" class="logout">
+        <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
         <button class="btn secondary" type="submit">{ICONS["out"]} Salir</button>
       </form>
     </aside>

@@ -100,11 +100,12 @@ class AdminControlAppTests(unittest.TestCase):
         self.assertIn("/admin/bots/1/prompt", rendered)
 
     def test_nav_hides_links_by_role(self):
-        agency_html = admin._nav("app", {"role": "agency_admin"})
+        agency_html = admin._nav("app", {"role": "agency_admin", "_csrf_token": "csrf-123"})
         client_admin_html = admin._nav("app", {"role": "client_admin"})
         viewer_html = admin._nav("app", {"role": "client_viewer"})
 
         self.assertIn("/admin/clients", agency_html)
+        self.assertIn('name="csrf_token" value="csrf-123"', agency_html)
         self.assertNotIn("/admin/clients", client_admin_html)
         self.assertIn("/admin/users", client_admin_html)
         self.assertNotIn("/admin/users", viewer_html)

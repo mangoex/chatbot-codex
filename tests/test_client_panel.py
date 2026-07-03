@@ -17,6 +17,27 @@ sys.modules.setdefault("cryptography.fernet", types.SimpleNamespace(Fernet=lambd
 from app import calendar_client, escalations
 
 class TestClientPanelFeatures:
+    def test_client_layout_logout_includes_csrf_token(self):
+        from app import client
+
+        html = client._layout(
+            "Panel",
+            "<div>Contenido</div>",
+            {
+                "user": "client@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+                "user_id": 5,
+                "name": "Cliente",
+                "_csrf_token": "csrf-client-123",
+            },
+            bots_list=[{"id": 1, "name": "Bot 1"}],
+            selected_bot_id=1,
+        )
+
+        assert 'action="/admin/logout"' in html
+        assert 'name="csrf_token" value="csrf-client-123"' in html
+
     
     @pytest.mark.asyncio
     @patch("app.db.get_bot_skill")
