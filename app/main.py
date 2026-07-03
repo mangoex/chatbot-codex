@@ -73,7 +73,7 @@ if config.APP_ENV in {"production", "prod"} and not config.SESSION_SECRET:
 async def csrf_protection(request: Request, call_next):
     path = request.url.path
     protected = path.startswith(("/admin", "/client"))
-    exempt = path in {"/admin/login"} or path.startswith("/admin/meta/oauth/")
+    exempt = path in {"/admin/login", "/admin/logout"} or path.startswith("/admin/meta/oauth/")
     if protected and not exempt and request.method in {"POST", "PUT", "PATCH", "DELETE"}:
         expected = request.session.get("_csrf_token")
         provided = request.headers.get("X-CSRF-Token") or request.query_params.get("csrf_token")
