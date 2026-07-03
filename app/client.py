@@ -2521,7 +2521,7 @@ async def client_app(
     
     <!-- 3. TAB PANEL: COMPORTAMIENTO (PROMPT) -->
     <div id="panel-prompt" class="tab-panel">
-      <form method="post" action="/client/bots/{bot_id}/prompt/save">
+      <form id="behaviorForm" method="post" action="/client/bots/{bot_id}/prompt/save">
         <div class="prompt-workspace">
         <div class="card">
           <div class="card-header">
@@ -2568,6 +2568,10 @@ async def client_app(
   
               <label>03 - Suite de Pruebas (Casos de uso)</label>
               <textarea id="activeTestSuiteEditor" name="pbd_test_suite" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 16px;">{html.escape(current_test_suite)}</textarea>
+
+              <div style="margin-top:4px;">
+                <button class="btn secondary" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar documentos PBD</button>
+              </div>
             </div>
           </div>
           
@@ -2588,6 +2592,12 @@ async def client_app(
       </form>
       
       <script>
+        document.getElementById("behaviorForm")?.addEventListener("submit", function() {{
+          if (window.promptEditor?.codemirror) {{
+            window.promptEditor.codemirror.save();
+          }}
+        }});
+
         async function requestAIPrompt() {{
           const instruction = document.getElementById("aiPromptInstruction").value.trim();
           const current = window.promptEditor ? window.promptEditor.value() : document.getElementById("activePromptEditor").value;

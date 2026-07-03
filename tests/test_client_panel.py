@@ -160,7 +160,12 @@ class TestClientPanelFeatures:
             
         mock_list_bots.return_value = [{"id": 1, "name": "Bot 1", "status": "active"}]
         mock_wa_num.return_value = {"phone_number_id": "123", "display_phone_number": "+521"}
-        mock_prompt.return_value = {"content": "Prompt text"}
+        mock_prompt.return_value = {
+            "content": "Prompt text",
+            "pbd_constitution": "Constitucion actual",
+            "pbd_specs": "Especificaciones actuales",
+            "pbd_test_suite": "Suite actual",
+        }
         mock_skill.return_value = {"enabled": True, "config": {}}
         mock_knowledge.return_value = []
         mock_integration.return_value = None
@@ -172,7 +177,12 @@ class TestClientPanelFeatures:
         
         response = await client.client_app(Request(), bot_id=1)
         assert response is not None
-        assert "Bot 1" in response.body.decode("utf-8")
+        html_body = response.body.decode("utf-8")
+        assert "Bot 1" in html_body
+        assert "Guardar documentos PBD" in html_body
+        assert "Constitucion actual" in html_body
+        assert "Especificaciones actuales" in html_body
+        assert "Suite actual" in html_body
 
     @pytest.mark.asyncio
     @patch("app.db.get_bot")
