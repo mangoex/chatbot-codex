@@ -2525,7 +2525,7 @@ async def client_app(
         <div class="prompt-workspace">
         <div class="card">
           <div class="card-header">
-            <h2>Agente PBD con IA</h2>
+            <h2>Asistente de Prompt con IA</h2>
             <p>Escribe qué quieres que haga tu bot en WhatsApp y la IA generará el prompt final integrando tu base de conocimientos.</p>
           </div>
           <div style="margin-bottom:14px;">
@@ -2534,7 +2534,7 @@ async def client_app(
           </div>
           <div>
             <button class="btn primary-btn" type="button" id="btnAssistPrompt" onclick="requestAIPrompt()">
-              Diseñar comportamiento con PBD
+              Generar instrucciones con IA
             </button>
             <span id="aiAssistLoader" style="display:none; margin-left:12px; font-size:13px; color:var(--primary); font-weight:600;">Generando prompt óptimo...</span>
           </div>

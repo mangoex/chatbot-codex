@@ -179,8 +179,6 @@ class TestClientPanelFeatures:
         assert response is not None
         html_body = response.body.decode("utf-8")
         assert "Bot 1" in html_body
-        assert "Agente PBD con IA" in html_body
-        assert "PBD" in html_body
         assert "Guardar documentos PBD" in html_body
         assert "Constitucion actual" in html_body
         assert "Especificaciones actuales" in html_body
