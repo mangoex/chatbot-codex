@@ -28,6 +28,7 @@ ICONS = {
     "escalate": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
     "knowledge": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>',
     "integrations": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>',
+    "github": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5a10.3 10.3 0 0 0-5.5 0C8.5 2 7.5 2 7.5 2a6.6 6.6 0 0 0 0 3.5A5.4 5.4 0 0 0 6.5 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.3-.8 2.1-.7.3-2.5.8-3.7-1 0 0-.7-1.2-2-1.3 0 0-1.3 0-.1.8 0 0 .9.4 1.5 2 0 0 .8 2.5 4.3 1.7V22"/></svg>',
     "out": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>',
     "success": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="green"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
     "error": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="red"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
@@ -852,6 +853,36 @@ def _display_name(name: str | None, wa_id: str) -> str:
     return clean
 
 
+def _github_config_from_form(
+    mode: str,
+    owner: str,
+    repo: str,
+    branch: str,
+    base_path: str,
+    prompt_path: str,
+    constitution_path: str,
+    knowledge_path: str,
+    sync_direction: str,
+) -> dict:
+    clean_mode = mode.strip() or "humanio_managed"
+    if clean_mode not in {"humanio_managed", "client_owned"}:
+        clean_mode = "humanio_managed"
+    clean_sync = sync_direction.strip() or "panel_to_github"
+    if clean_sync not in {"panel_to_github", "github_to_panel", "bidirectional_manual"}:
+        clean_sync = "panel_to_github"
+    return {
+        "mode": clean_mode,
+        "owner": owner.strip(),
+        "repo": repo.strip(),
+        "branch": branch.strip() or "main",
+        "base_path": base_path.strip() or "clients/{client_slug}",
+        "prompt_path": prompt_path.strip() or "prompts/master.md",
+        "constitution_path": constitution_path.strip() or "docs/pbd/constitucion.md",
+        "knowledge_path": knowledge_path.strip() or "docs/pbd",
+        "sync_direction": clean_sync,
+    }
+
+
 def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", notice: str = "", bots_list: list = [], selected_bot_id: int | None = None, chatwoot_enabled: bool = False, cw_base_url: str = "", cw_account: str = "") -> str:
     csrf_token = session.setdefault("_csrf_token", secrets.token_urlsafe(32))
     bot_options = "".join(
@@ -872,6 +903,7 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
         ("knowledge", "Base de Conocimiento", ICONS["knowledge"]),
         ("templates", "Plantillas", ICONS["templates"]),
         ("integrations", "Integraciones", ICONS["integrations"]),
+        ("github", "GitHub", ICONS["github"]),
     ]
     
     links_html = ""
@@ -1245,6 +1277,27 @@ async def client_app(
     routing_phone_numbers = ",".join(routing_config.get("phone_numbers", []))
     routing_save_history = routing_config.get("save_history", False)
     routing_token_saved = bool(routing_secrets.get("webhook_auth_token"))
+
+    github_integration = await db.get_bot_integration_by_type(bot_id, "github_repository")
+    github_config = {
+        "mode": "humanio_managed",
+        "owner": "",
+        "repo": "",
+        "branch": "main",
+        "base_path": "clients/{client_slug}",
+        "prompt_path": "prompts/master.md",
+        "constitution_path": "docs/pbd/constitucion.md",
+        "knowledge_path": "docs/pbd",
+        "sync_direction": "panel_to_github",
+    }
+    github_enabled = True
+    github_token_saved = False
+    if github_integration:
+        github_config.update(github_integration.get("config") or {})
+        github_enabled = bool(github_integration.get("enabled"))
+        github_token_saved = bool(
+            (await db.get_integration_secret_values(int(github_integration["id"]))).get("github_token")
+        )
         
     env_rows_html = ""
     for sec in api_secrets:
@@ -2836,6 +2889,21 @@ async def client_app(
       <div class="grid-2">
         <div class="card">
           <div class="card-header">
+            <h2>GitHub documental</h2>
+            <p>Configura el repositorio, rama y carpeta donde viviran el prompt maestro, constitucion y documentos PBD.</p>
+          </div>
+          <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <span class="bold-text">Estado de GitHub</span>
+            <span class="badge {"success" if github_enabled else "warning"}">
+              {"Activo" if github_enabled else "Inactivo"}
+            </span>
+          </div>
+          <p class="muted-text" style="font-size:13px; margin-bottom:16px;">Usa un contenedor general de Humanio con carpeta por cliente, o conecta el repositorio propio del cliente si es tecnico.</p>
+          <button type="button" class="btn primary-btn" onclick="switchTab('github')" style="cursor:pointer;">Abrir configuracion GitHub</button>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
             <h2>Chatwoot (Bandeja Multicanal)</h2>
             <p>Conecta tu cuenta de Chatwoot para responder manualmente a tus clientes cuando la IA transfiere el chat.</p>
           </div>
@@ -3029,6 +3097,110 @@ async def client_app(
       </div>
       <div class="grid-3" style="gap: 20px; width: 100%;">
         {_render_skill_templates(bot_id, session)}
+      </div>
+    </div>
+
+    <!-- 8. TAB PANEL: GITHUB -->
+    <div id="panel-github" class="tab-panel">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h2>GitHub documental</h2>
+            <p>Conecta el contenedor donde viviran el prompt maestro, constitucion del agente y documentos PBD de este bot.</p>
+          </div>
+
+          <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <span class="bold-text">Estado de GitHub</span>
+            <span class="badge {"success" if github_enabled else "warning"}">
+              {"Activo" if github_enabled else "Inactivo"}
+            </span>
+          </div>
+
+          <form method="post" action="/client/bots/{bot_id}/integrations/github">
+            <div class="checkbox-group">
+              <input type="checkbox" name="enabled" id="githubToggle" {"checked" if github_enabled else ""}>
+              <label for="githubToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar GitHub para este bot</label>
+            </div>
+
+            <label>Modo</label>
+            <select name="mode">
+              <option value="humanio_managed" {"selected" if github_config.get("mode") == "humanio_managed" else ""}>Humanio configura el contenedor</option>
+              <option value="client_owned" {"selected" if github_config.get("mode") == "client_owned" else ""}>Usar mi cuenta/repositorio</option>
+            </select>
+
+            <div style="display:flex; gap:10px;">
+              <div style="flex:1;">
+                <label>Owner / organizacion</label>
+                <input name="owner" placeholder="humanio-digital" value="{html.escape(github_config.get("owner") or "")}">
+              </div>
+              <div style="flex:1;">
+                <label>Repositorio</label>
+                <input name="repo" placeholder="asistto-clientes" value="{html.escape(github_config.get("repo") or "")}">
+              </div>
+            </div>
+
+            <div style="display:flex; gap:10px;">
+              <div style="flex:1;">
+                <label>Rama</label>
+                <input name="branch" placeholder="main" value="{html.escape(github_config.get("branch") or "main")}">
+              </div>
+              <div style="flex:1;">
+                <label>Carpeta base</label>
+                <input name="base_path" placeholder="clients/mangoex" value="{html.escape(github_config.get("base_path") or "clients/{client_slug}")}">
+              </div>
+            </div>
+
+            <label>Ruta Prompt maestro</label>
+            <input name="prompt_path" value="{html.escape(github_config.get("prompt_path") or "prompts/master.md")}">
+
+            <label>Ruta Constitucion / PBD principal</label>
+            <input name="constitution_path" value="{html.escape(github_config.get("constitution_path") or "docs/pbd/constitucion.md")}">
+
+            <label>Carpeta de documentos PBD</label>
+            <input name="knowledge_path" value="{html.escape(github_config.get("knowledge_path") or "docs/pbd")}">
+
+            <label>Direccion de sincronizacion</label>
+            <select name="sync_direction">
+              <option value="panel_to_github" {"selected" if github_config.get("sync_direction") == "panel_to_github" else ""}>Panel a GitHub</option>
+              <option value="github_to_panel" {"selected" if github_config.get("sync_direction") == "github_to_panel" else ""}>GitHub a panel</option>
+              <option value="bidirectional_manual" {"selected" if github_config.get("sync_direction") == "bidirectional_manual" else ""}>Manual en ambos sentidos</option>
+            </select>
+
+            <label>Token GitHub opcional</label>
+            <div class="password-wrapper">
+              <input type="password" name="github_token" placeholder="{"********" if github_token_saved else "ghp_..."}" autocomplete="new-password">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">El token se guarda cifrado. Si Humanio administra la conexion general, puede quedar vacio.</span>
+
+            <div style="margin-top:20px; display:flex; gap:10px;">
+              <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar GitHub</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Como se organiza</h2>
+            <p>La forma recomendada es un contenedor privado general y una carpeta por cliente o bot.</p>
+          </div>
+          <div style="display:grid; gap:12px;">
+            <div style="padding:12px; border:1px solid var(--line); border-radius:6px;">
+              <strong>Humanio-managed</strong>
+              <p class="muted-text">Humanio conserva el repo principal y configura cada carpeta del cliente.</p>
+            </div>
+            <div style="padding:12px; border:1px solid var(--line); border-radius:6px;">
+              <strong>Cliente tecnico</strong>
+              <p class="muted-text">El cliente puede elegir owner, repo y token si quiere controlar su propio repositorio.</p>
+            </div>
+            <div style="padding:12px; border:1px solid var(--line); border-radius:6px;">
+              <strong>Sin secretos en GitHub</strong>
+              <p class="muted-text">WhatsApp, OpenAI, Calendar y tokens se guardan cifrados en el panel o en variables del deploy.</p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     """
@@ -3574,7 +3746,69 @@ async def client_chatwoot_save(
     if clean_api_token and not re.match(r"^\*+$", clean_api_token):
         encrypted_token = secure_store.encrypt_secret(clean_api_token)
         await db.upsert_integration_secret(integration_id, "api_token", encrypted_token)
-        
+
+
+@router.post("/bots/{bot_id}/integrations/github")
+async def client_github_save(
+    request: Request,
+    bot_id: int,
+    enabled: str | None = Form(None),
+    mode: str = Form("humanio_managed"),
+    owner: str = Form(""),
+    repo: str = Form(""),
+    branch: str = Form("main"),
+    base_path: str = Form("clients/{client_slug}"),
+    prompt_path: str = Form("prompts/master.md"),
+    constitution_path: str = Form("docs/pbd/constitucion.md"),
+    knowledge_path: str = Form("docs/pbd"),
+    sync_direction: str = Form("panel_to_github"),
+    github_token: str = Form(""),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+
+    config_data = _github_config_from_form(
+        mode,
+        owner,
+        repo,
+        branch,
+        base_path,
+        prompt_path,
+        constitution_path,
+        knowledge_path,
+        sync_direction,
+    )
+    integration = await db.get_bot_integration_by_type(bot_id, "github_repository")
+    if integration:
+        integration_id = int(integration["id"])
+        await db.update_bot_integration(
+            bot_id=bot_id,
+            integration_id=integration_id,
+            integration_type="github_repository",
+            name=integration["name"],
+            config_data=config_data,
+            enabled=enabled == "on",
+        )
+    else:
+        integration_id = await db.create_bot_integration(
+            bot_id=bot_id,
+            integration_type="github_repository",
+            name="GitHub documental",
+            config_data=config_data,
+            enabled=enabled == "on",
+        )
+
+    clean_token = github_token.strip()
+    if clean_token and not re.match(r"^\*+$", clean_token):
+        await db.upsert_integration_secret(
+            integration_id,
+            "github_token",
+            secure_store.encrypt_secret(clean_token),
+        )
+
+    return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=github&saved=1", status_code=302)
+
+
 @router.post("/bots/{bot_id}/integrations/routing")
 async def client_routing_rules_save(
     request: Request,

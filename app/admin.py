@@ -203,6 +203,12 @@ ADMIN_APP_SECTIONS = (
                 "kind": "bot",
             },
             {
+                "label": "GitHub",
+                "description": "Repo, rama y carpeta documental del cliente.",
+                "href": "/admin/bots/{bot_id}/github",
+                "kind": "bot",
+            },
+            {
                 "label": "Activar habilidades",
                 "description": "Calendar, webhook, API externa y CRM.",
                 "href": "/admin/bots/{bot_id}/skills",
@@ -355,6 +361,7 @@ def _admin_bot_links(bot_id: int) -> dict:
         "prompt": f"/admin/bots/{bot_id}/prompt",
         "knowledge": f"/admin/bots/{bot_id}/knowledge",
         "integrations": f"/admin/bots/{bot_id}/integrations",
+        "github": f"/admin/bots/{bot_id}/github",
         "skills": f"/admin/bots/{bot_id}/skills",
         "whatsapp": f"/admin/bots/{bot_id}/whatsapp",
         "whatsapp_diagnostics": f"/admin/bots/{bot_id}/whatsapp/diagnostics",
@@ -1720,6 +1727,19 @@ async def bot_detail(request: Request, bot_id: int):
           <span class="btn secondary">Conectar &rarr;</span>
         </div>
       </a>
+
+      <a href="/admin/bots/{bot_id}/github" class="builder-card">
+        <div class="builder-card-header">
+          <div class="builder-card-icon">{ICONS["integrations"]}</div>
+          GitHub
+        </div>
+        <div class="builder-card-body">
+          Define el repositorio, rama y carpeta donde vive la configuracion documental del cliente.
+        </div>
+        <div class="builder-card-footer">
+          <span class="btn secondary">Configurar &rarr;</span>
+        </div>
+      </a>
       
       <a href="/admin/bots/{bot_id}/skills" class="builder-card">
         <div class="builder-card-header">
@@ -2690,6 +2710,7 @@ async def archive_bot_knowledge_page(
 
 INTEGRATION_TYPES = (
     ("google_calendar", "Google Calendar"),
+    ("github_repository", "GitHub"),
     ("external_api", "API externa"),
     ("webhook", "Webhook"),
     ("crm", "CRM"),
@@ -2744,7 +2765,49 @@ def _default_integration_config(integration_type: str) -> dict:
         }
     if integration_type == "google_calendar":
         return {"calendar_id": "primary", "timezone": "America/Chihuahua"}
+    if integration_type == "github_repository":
+        return {
+            "mode": "humanio_managed",
+            "owner": "",
+            "repo": "",
+            "branch": "main",
+            "base_path": "clients/{client_slug}",
+            "prompt_path": "prompts/master.md",
+            "constitution_path": "docs/pbd/constitucion.md",
+            "knowledge_path": "docs/pbd",
+            "sync_direction": "panel_to_github",
+        }
     return {}
+
+
+def _github_config_from_form(
+    mode: str,
+    owner: str,
+    repo: str,
+    branch: str,
+    base_path: str,
+    prompt_path: str,
+    constitution_path: str,
+    knowledge_path: str,
+    sync_direction: str,
+) -> dict:
+    clean_mode = mode.strip() or "humanio_managed"
+    if clean_mode not in {"humanio_managed", "client_owned"}:
+        clean_mode = "humanio_managed"
+    clean_sync = sync_direction.strip() or "panel_to_github"
+    if clean_sync not in {"panel_to_github", "github_to_panel", "bidirectional_manual"}:
+        clean_sync = "panel_to_github"
+    return {
+        "mode": clean_mode,
+        "owner": owner.strip(),
+        "repo": repo.strip(),
+        "branch": branch.strip() or "main",
+        "base_path": base_path.strip() or "clients/{client_slug}",
+        "prompt_path": prompt_path.strip() or "prompts/master.md",
+        "constitution_path": constitution_path.strip() or "docs/pbd/constitucion.md",
+        "knowledge_path": knowledge_path.strip() or "docs/pbd",
+        "sync_direction": clean_sync,
+    }
 
 
 def _parse_json_list(value: str, field_name: str) -> list:
@@ -2758,6 +2821,152 @@ def _parse_json_list(value: str, field_name: str) -> list:
     if not isinstance(parsed, list):
         raise HTTPException(status_code=400, detail=f"{field_name} debe ser una lista.")
     return parsed
+
+
+@router.get("/bots/{bot_id}/github", response_class=HTMLResponse)
+async def bot_github_page(request: Request, bot_id: int, saved: str | None = None):
+    session = _require_login(request)
+    bot = await _require_bot_access(session, bot_id)
+    integration = await db.get_bot_integration_by_type(bot_id, "github_repository")
+    cfg = dict((integration or {}).get("config") or _default_integration_config("github_repository"))
+    secret_saved = False
+    if integration:
+        secret_saved = bool((await db.get_integration_secret_values(int(integration["id"]))).get("github_token"))
+    can_edit = _is_agency(session) or session.get("role") == "client_admin"
+    readonly = "" if can_edit else "readonly"
+    disabled = "" if can_edit else "disabled"
+    checked = "checked" if (integration or {}).get("enabled", True) else ""
+    save_button = '<button class="btn" type="submit">Guardar GitHub</button>' if can_edit else '<span class="badge">Solo lectura</span>'
+    notice = '<div class="trend">Configuracion GitHub guardada.</div>' if saved else ""
+    mode = cfg.get("mode") or "humanio_managed"
+    sync_direction = cfg.get("sync_direction") or "panel_to_github"
+    token_placeholder = "********" if secret_saved else "ghp_..."
+    body = f"""
+    <div class="topbar">
+      <div><a class="sub" href="/admin/bots/{bot_id}">Volver</a><h1>GitHub</h1><div class="sub">{html.escape(bot["name"])} puede guardar prompt maestro, constitucion y PBD en una carpeta del repositorio.</div>{notice}</div>
+      <span class="badge {'b-calificado' if (integration or {}).get("enabled", True) else 'b-pendiente'}">{'Activo' if (integration or {}).get("enabled", True) else 'Inactivo'}</span>
+    </div>
+    <section class="grid split">
+      <div class="panel editor">
+        <h2>Repositorio documental</h2>
+        <form method="post" action="/admin/bots/{bot_id}/github">
+          <label><input type="checkbox" name="enabled" {checked} {disabled} style="width:auto"> Activar GitHub para este bot</label>
+          <label>Modo</label>
+          <select name="mode" {disabled}>
+            <option value="humanio_managed" {"selected" if mode == "humanio_managed" else ""}>Humanio configura el contenedor</option>
+            <option value="client_owned" {"selected" if mode == "client_owned" else ""}>Cliente usa su cuenta/repositorio</option>
+          </select>
+          <div class="grid split" style="margin-top:0">
+            <div>
+              <label>Owner / organizacion</label>
+              <input name="owner" value="{html.escape(cfg.get("owner") or "")}" placeholder="humanio-digital" {readonly}>
+            </div>
+            <div>
+              <label>Repositorio</label>
+              <input name="repo" value="{html.escape(cfg.get("repo") or "")}" placeholder="asistto-clientes" {readonly}>
+            </div>
+          </div>
+          <div class="grid split" style="margin-top:0">
+            <div>
+              <label>Rama</label>
+              <input name="branch" value="{html.escape(cfg.get("branch") or "main")}" placeholder="main" {readonly}>
+            </div>
+            <div>
+              <label>Carpeta base del cliente</label>
+              <input name="base_path" value="{html.escape(cfg.get("base_path") or "clients/{client_slug}")}" placeholder="clients/mangoex" {readonly}>
+            </div>
+          </div>
+          <label>Ruta Prompt maestro</label>
+          <input name="prompt_path" value="{html.escape(cfg.get("prompt_path") or "prompts/master.md")}" {readonly}>
+          <label>Ruta Constitucion / PBD principal</label>
+          <input name="constitution_path" value="{html.escape(cfg.get("constitution_path") or "docs/pbd/constitucion.md")}" {readonly}>
+          <label>Carpeta de documentos PBD</label>
+          <input name="knowledge_path" value="{html.escape(cfg.get("knowledge_path") or "docs/pbd")}" {readonly}>
+          <label>Direccion de sincronizacion</label>
+          <select name="sync_direction" {disabled}>
+            <option value="panel_to_github" {"selected" if sync_direction == "panel_to_github" else ""}>Panel a GitHub</option>
+            <option value="github_to_panel" {"selected" if sync_direction == "github_to_panel" else ""}>GitHub a panel</option>
+            <option value="bidirectional_manual" {"selected" if sync_direction == "bidirectional_manual" else ""}>Manual en ambos sentidos</option>
+          </select>
+          <label>Token GitHub opcional</label>
+          <div class="password-wrapper">
+            <input name="github_token" type="password" autocomplete="new-password" placeholder="{html.escape(token_placeholder)}" {readonly}>
+            <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)" {disabled}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <p class="sub">El token se guarda cifrado. Para Humanio-managed puedes dejarlo vacio si la conexion global del SaaS se maneja fuera del cliente.</p>
+          <div class="actions" style="margin-top:14px">{save_button}</div>
+        </form>
+      </div>
+      <div class="panel">
+        <h2>Modelo recomendado</h2>
+        <p class="sub">Usa un repositorio privado central y una carpeta por cliente cuando Humanio administre el servicio. Usa client-owned cuando el cliente quiera conectar su propia cuenta.</p>
+        <div class="route-row"><strong>General</strong><span class="sub">Repositorio SaaS compartido, sin secretos en archivos.</span></div>
+        <div class="route-row"><strong>Por bot</strong><span class="sub">Cada bot define rama/carpeta para prompt, constitucion y documentos.</span></div>
+        <div class="route-row"><strong>Tecnico</strong><span class="sub">El cliente puede cambiar owner, repo y token si tiene permiso de administrador.</span></div>
+      </div>
+    </section>
+    """
+    return HTMLResponse(_layout("GitHub", "bots", body))
+
+
+@router.post("/bots/{bot_id}/github")
+async def save_bot_github_page(
+    request: Request,
+    bot_id: int,
+    enabled: str | None = Form(None),
+    mode: str = Form("humanio_managed"),
+    owner: str = Form(""),
+    repo: str = Form(""),
+    branch: str = Form("main"),
+    base_path: str = Form("clients/{client_slug}"),
+    prompt_path: str = Form("prompts/master.md"),
+    constitution_path: str = Form("docs/pbd/constitucion.md"),
+    knowledge_path: str = Form("docs/pbd"),
+    sync_direction: str = Form("panel_to_github"),
+    github_token: str = Form(""),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    config_data = _github_config_from_form(
+        mode,
+        owner,
+        repo,
+        branch,
+        base_path,
+        prompt_path,
+        constitution_path,
+        knowledge_path,
+        sync_direction,
+    )
+    integration = await db.get_bot_integration_by_type(bot_id, "github_repository")
+    if integration:
+        integration_id = int(integration["id"])
+        await db.update_bot_integration(
+            bot_id=bot_id,
+            integration_id=integration_id,
+            integration_type="github_repository",
+            name=integration["name"],
+            config_data=config_data,
+            enabled=enabled == "on",
+        )
+    else:
+        integration_id = await db.create_bot_integration(
+            bot_id=bot_id,
+            integration_type="github_repository",
+            name="GitHub documental",
+            config_data=config_data,
+            enabled=enabled == "on",
+        )
+    clean_token = github_token.strip()
+    if clean_token and not re.match(r"^\*+$", clean_token):
+        await db.upsert_integration_secret(
+            integration_id,
+            "github_token",
+            secure_store.encrypt_secret(clean_token),
+        )
+    return RedirectResponse(f"/admin/bots/{bot_id}/github?saved=1", status_code=302)
 
 
 def _clean_methods(value: str | list | None) -> list[str]:
