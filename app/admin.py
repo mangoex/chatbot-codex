@@ -2836,6 +2836,7 @@ async def bot_github_page(request: Request, bot_id: int, saved: str | None = Non
     readonly = "" if can_edit else "readonly"
     disabled = "" if can_edit else "disabled"
     checked = "checked" if (integration or {}).get("enabled", True) else ""
+    csrf_token = session.get("_csrf_token") or ""
     save_button = '<button class="btn" type="submit">Guardar GitHub</button>' if can_edit else '<span class="badge">Solo lectura</span>'
     notice = '<div class="trend">Configuracion GitHub guardada.</div>' if saved else ""
     mode = cfg.get("mode") or "humanio_managed"
@@ -2849,7 +2850,7 @@ async def bot_github_page(request: Request, bot_id: int, saved: str | None = Non
     <section class="grid split">
       <div class="panel editor">
         <h2>Repositorio documental</h2>
-        <form method="post" action="/admin/bots/{bot_id}/github">
+        <form method="post" action="/admin/bots/{bot_id}/github?csrf_token={html.escape(csrf_token)}">
           <label><input type="checkbox" name="enabled" {checked} {disabled} style="width:auto"> Activar GitHub para este bot</label>
           <label>Modo</label>
           <select name="mode" {disabled}>

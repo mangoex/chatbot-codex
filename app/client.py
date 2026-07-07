@@ -1130,6 +1130,7 @@ async def client_app(
 ):
     session = _require_client_login(request)
     client_id = session.get("client_id")
+    csrf_token = session.get("_csrf_token") or ""
     
     # Query client's bots
     bots = await db.list_bots(client_id=client_id, limit=50)
@@ -3116,7 +3117,7 @@ async def client_app(
             </span>
           </div>
 
-          <form method="post" action="/client/bots/{bot_id}/integrations/github">
+          <form method="post" action="/client/bots/{bot_id}/integrations/github?csrf_token={html.escape(csrf_token)}">
             <div class="checkbox-group">
               <input type="checkbox" name="enabled" id="githubToggle" {"checked" if github_enabled else ""}>
               <label for="githubToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar GitHub para este bot</label>
