@@ -128,6 +128,23 @@ CREATE TABLE IF NOT EXISTS integration_secrets (
     UNIQUE(integration_id, secret_name)
 );
 
+CREATE TABLE IF NOT EXISTS chatwoot_webhook_events (
+    id BIGSERIAL PRIMARY KEY,
+    integration_id BIGINT NOT NULL REFERENCES bot_integrations(id) ON DELETE CASCADE,
+    event_key TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(integration_id, event_key)
+);
+
+CREATE TABLE IF NOT EXISTS chatwoot_handoffs (
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    wa_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'human_active'
+        CHECK (status IN ('human_active')),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (bot_id, wa_id)
+);
+
 CREATE TABLE IF NOT EXISTS leads (
     id BIGSERIAL PRIMARY KEY,
     bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
@@ -1863,6 +1880,67 @@ async def delete_integration_secret(integration_id: int, secret_name: str) -> bo
     return result.endswith(" 1") if result else False
 
 
+async def claim_chatwoot_webhook_event(integration_id: int, event_key: str) -> bool:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM chatwoot_webhook_events WHERE created_at < now() - interval '30 days'"
+        )
+        row = await conn.fetchrow(
+            """
+            INSERT INTO chatwoot_webhook_events(integration_id, event_key)
+            VALUES($1, $2)
+            ON CONFLICT (integration_id, event_key) DO NOTHING
+            RETURNING id
+            """,
+            integration_id,
+            event_key,
+        )
+    return row is not None
+
+
+async def release_chatwoot_webhook_event(integration_id: int, event_key: str) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM chatwoot_webhook_events WHERE integration_id=$1 AND event_key=$2",
+            integration_id,
+            event_key,
+        )
+
+
+async def set_chatwoot_handoff_active(bot_id: int, wa_id: str) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO chatwoot_handoffs(bot_id, wa_id)
+            VALUES($1, $2)
+            ON CONFLICT (bot_id, wa_id) DO UPDATE SET
+                status='human_active',
+                updated_at=now()
+            """,
+            bot_id,
+            wa_id,
+        )
+
+
+async def clear_chatwoot_handoff(bot_id: int, wa_id: str) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            "DELETE FROM chatwoot_handoffs WHERE bot_id=$1 AND wa_id=$2",
+            bot_id,
+            wa_id,
+        )
+
+
+async def is_chatwoot_handoff_active(bot_id: int, wa_id: str) -> bool:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT 1 FROM chatwoot_handoffs WHERE bot_id=$1 AND wa_id=$2",
+            bot_id,
+            wa_id,
+        )
+    return row is not None
+
+
 async def list_bot_skills(bot_id: int) -> list[dict]:
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
@@ -2308,4 +2386,3 @@ async def update_broadcast_recipient_status(
                         "UPDATE broadcasts SET failed_count = failed_count + 1, updated_at = now() WHERE id = $1",
                         broadcast_id,
                     )
-

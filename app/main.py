@@ -1,8 +1,12 @@
 from __future__ import annotations
 """FastAPI app: /webhook (GET handshake + POST mensajes), /health, /reload, /admin."""
 import asyncio
+import hashlib
+import hmac
+import json
 import logging
 import secrets as py_secrets
+import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header, Query
 from fastapi.responses import PlainTextResponse
@@ -135,44 +139,65 @@ async def receive_webhook(request: Request, bg: BackgroundTasks):
     return {"status": "received"}
 
 @app.post("/webhooks/chatwoot/{bot_id}")
-async def receive_chatwoot_webhook(
-    request: Request,
-    bot_id: int,
-    x_asistto_webhook_secret: str = Header(None),
-):
+async def receive_chatwoot_webhook(request: Request, bot_id: int):
     integration = await db.get_active_bot_integration(bot_id, "chatwoot")
     if not integration:
-        raise HTTPException(status_code=403, detail="Chatwoot integration disabled")
-    encrypted = await db.get_integration_secret_values(int(integration["id"]))
-    expected_secret = ""
-    for key in ("webhook_secret", "chatwoot_webhook_secret", "secret_token"):
-        if encrypted.get(key):
-            expected_secret = secure_store.decrypt_secret(encrypted[key]) or ""
-            break
-    if not expected_secret or not x_asistto_webhook_secret:
-        raise HTTPException(status_code=403, detail="Missing webhook secret")
-    if not py_secrets.compare_digest(expected_secret, x_asistto_webhook_secret):
-        raise HTTPException(status_code=403, detail="Invalid webhook secret")
+        raise HTTPException(status_code=404, detail="Chatwoot integration not active")
 
-    payload = await request.json()
-    cfg = integration.get("config") or {}
-    expected_inbox = str(cfg.get("inbox_id") or "").strip()
-    if expected_inbox:
-        payload_inbox = str(
-            payload.get("inbox", {}).get("id")
-            or payload.get("conversation", {}).get("inbox_id")
-            or payload.get("conversation", {}).get("inbox", {}).get("id")
-            or ""
-        ).strip()
-        if payload_inbox and payload_inbox != expected_inbox:
-            raise HTTPException(status_code=403, detail="Webhook inbox mismatch")
-    
+    encrypted = await db.get_integration_secret_values(int(integration["id"]))
+    webhook_secret = secure_store.decrypt_secret(encrypted.get("webhook_secret", ""))
+    if not webhook_secret:
+        raise HTTPException(status_code=503, detail="Chatwoot webhook secret not configured")
+
+    raw_body = await request.body()
+    timestamp = request.headers.get("X-Chatwoot-Timestamp", "")
+    received_signature = request.headers.get("X-Chatwoot-Signature", "")
+    try:
+        timestamp_value = int(timestamp)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=401, detail="Invalid Chatwoot signature")
+    if abs(int(time.time()) - timestamp_value) > 300:
+        raise HTTPException(status_code=401, detail="Expired Chatwoot webhook")
+
+    signed_payload = timestamp.encode("utf-8") + b"." + raw_body
+    expected_signature = "sha256=" + hmac.new(
+        webhook_secret.encode("utf-8"),
+        signed_payload,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(received_signature, expected_signature):
+        raise HTTPException(status_code=401, detail="Invalid Chatwoot signature")
+
+    try:
+        payload = json.loads(raw_body)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    integration_config = integration.get("config") or {}
+    conversation = payload.get("conversation") or {}
+    payload_account = (payload.get("account") or {}).get("id") or conversation.get("account_id")
+    payload_inbox = (payload.get("inbox") or {}).get("id") or conversation.get("inbox_id")
+    if str(payload_account) != str(integration_config.get("account_id")):
+        raise HTTPException(status_code=403, detail="Chatwoot account mismatch")
+    if str(payload_inbox) != str(integration_config.get("inbox_id")):
+        raise HTTPException(status_code=403, detail="Chatwoot inbox mismatch")
+
     event = payload.get("event")
-    
+    event_object_id = payload.get("id") or conversation.get("id")
+    delivery_id = request.headers.get("X-Chatwoot-Delivery")
+    event_key = delivery_id or f"{event}:{event_object_id}"
+    if not event or not event_object_id:
+        return {"status": "ignored"}
+    claimed = await db.claim_chatwoot_webhook_event(
+        int(integration["id"]),
+        event_key,
+    )
+    if not claimed:
+        return {"status": "duplicate"}
+
     # Si la conversacion se resuelve en Chatwoot, reiniciamos el historial del bot
     if event == "conversation_status_changed" and payload.get("status") == "resolved":
         contact = payload.get("contact") or {}
-        conversation = payload.get("conversation") or {}
         meta = payload.get("meta") or {}
         sender = meta.get("sender") or {}
         wa_id = (
@@ -186,6 +211,7 @@ async def receive_chatwoot_webhook(
         if wa_id:
             wa_id = wa_id.lstrip("+")
             await db.clear_conversation_history(wa_id, bot_id)
+            await db.clear_chatwoot_handoff(bot_id, wa_id)
             log.info(f"Historial de {wa_id} borrado porque Chatwoot resolvió la conversación")
         return {"status": "resolved"}
         
@@ -195,17 +221,20 @@ async def receive_chatwoot_webhook(
         
     # We only forward outgoing messages (sent by the agent) that are not private notes
     message_type = payload.get("message_type")
-    is_private = payload.get("private", False)
+    is_private = payload.get("private", payload.get("is_private", False))
     
-    if message_type != "outgoing" or is_private:
+    if message_type not in ("outgoing", 1) or is_private:
         return {"status": "ignored"}
+
+    content_attributes = payload.get("content_attributes") or {}
+    if content_attributes.get("source") in ("asistto_ai", "asistto_customer"):
+        return {"status": "ignored_asistto_echo"}
         
     content = payload.get("content")
     if not content:
         return {"status": "ignored"}
         
     # Extract customer phone number
-    conversation = payload.get("conversation", {})
     contact = payload.get("contact", {})
     wa_id = contact.get("phone_number")
     
@@ -234,10 +263,13 @@ async def receive_chatwoot_webhook(
             phone_number_id=bot.whatsapp_phone_number_id,
             access_token=bot.whatsapp_access_token
         )
+        await db.set_chatwoot_handoff_active(bot_id, wa_id)
         # Also save to local conversations to keep history synced, without syncing back to Chatwoot
         await db.save_message(wa_id, "assistant", content, bot_id=bot_id, sync_chatwoot=False)
     except Exception as e:
         log.error("Failed to send Chatwoot message to WhatsApp: %s", str(e))
+        await db.release_chatwoot_webhook_event(int(integration["id"]), event_key)
+        raise HTTPException(status_code=502, detail="WhatsApp delivery failed")
         
     return {"status": "sent"}
 
@@ -427,6 +459,9 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
     if media_type:
         saved_user_msg = user_text or f"[envió un archivo de tipo {media_type}]"
         await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
+        if await db.is_chatwoot_handoff_active(bot.id, wa_id):
+            log.info("Relevo humano activo para bot %s y %s; IA en silencio.", bot.id, wa_id)
+            return
         if bot.status == "paused":
             log.info("Bot %s esta pausado. Ignorando respuesta a media de %s.", bot.id, wa_id)
             return
@@ -457,6 +492,9 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         return  # nada que procesar
 
     await db.save_message(wa_id, "user", user_text, bot_id=bot.id)
+    if await db.is_chatwoot_handoff_active(bot.id, wa_id):
+        log.info("Relevo humano activo para bot %s y %s; IA en silencio.", bot.id, wa_id)
+        return
     if bot.status == "paused":
         log.info("Bot %s esta pausado. Mensaje de %s guardado, no se responde.", bot.id, wa_id)
         return
@@ -565,8 +603,6 @@ async def debug_waba(
             "last_processed_messages": [serialize_record(r) for r in processed_msgs]
         }
     }
-
-
 @app.post("/debug-waba/{bot_id}/subscribe")
 async def debug_waba_subscribe(request: Request, bot_id: int):
     admin._require_agency(request)
@@ -576,4 +612,3 @@ async def debug_waba_subscribe(request: Request, bot_id: int):
         return await meta_provider.subscribe_app_to_waba(bot_id)
     except Exception as exc:
         return {"error": str(exc)}
-

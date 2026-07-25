@@ -1,7 +1,13 @@
-import httpx
+from __future__ import annotations
+
+import asyncio
 import logging
+from collections import defaultdict
+
+import httpx
 
 logger = logging.getLogger(__name__)
+_sync_locks: dict[tuple[int, str], asyncio.Lock] = defaultdict(asyncio.Lock)
 
 class ChatwootClient:
     def __init__(self, base_url: str, account_id: str, api_token: str):
@@ -27,8 +33,9 @@ class ChatwootClient:
             resp = await client.get(url, headers=self.headers)
             if resp.status_code == 200:
                 data = resp.json()
-                if data.get("payload") and len(data["payload"]) > 0:
-                    return data["payload"][0]["id"]
+                for contact in data.get("payload", []):
+                    if contact.get("phone_number") == clean_phone:
+                        return contact["id"]
                     
         # Create contact if not found
         create_url = f"{self.base_url}/api/v1/accounts/{self.account_id}/contacts"
@@ -42,7 +49,12 @@ class ChatwootClient:
             data = resp.json()
             return data["payload"]["contact"]["id"]
 
-    async def get_or_create_conversation(self, contact_id: int, inbox_id: str) -> int:
+    async def get_or_create_conversation(
+        self,
+        contact_id: int,
+        inbox_id: str,
+        source_id: str,
+    ) -> int:
         """
         Busca una conversación activa para este contacto en el inbox dado.
         Si no hay, crea una nueva. Retorna el conversation_id.
@@ -58,9 +70,24 @@ class ChatwootClient:
                         return conv["id"]
         
         # Create new conversation
+        contact_inbox_url = (
+            f"{self.base_url}/api/v1/accounts/{self.account_id}/contacts/"
+            f"{contact_id}/contact_inboxes"
+        )
+        contact_inbox_payload = {"inbox_id": int(inbox_id), "source_id": source_id}
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                contact_inbox_url,
+                json=contact_inbox_payload,
+                headers=self.headers,
+            )
+            if resp.status_code not in (200, 201, 422):
+                resp.raise_for_status()
+
         create_url = f"{self.base_url}/api/v1/accounts/{self.account_id}/conversations"
         payload = {
-            "inbox_id": inbox_id,
+            "source_id": source_id,
+            "inbox_id": int(inbox_id),
             "contact_id": contact_id,
             "status": "open"
         }
@@ -70,7 +97,13 @@ class ChatwootClient:
             data = resp.json()
             return data["id"]
 
-    async def send_message(self, conversation_id: int, content: str, message_type: str = "incoming") -> dict:
+    async def send_message(
+        self,
+        conversation_id: int,
+        content: str,
+        message_type: str = "incoming",
+        source: str = "asistto_customer",
+    ) -> dict:
         """
         Envía un mensaje a la conversación.
         message_type: "incoming" (del cliente) o "outgoing" (del bot/agente).
@@ -80,10 +113,21 @@ class ChatwootClient:
         payload = {
             "content": content,
             "message_type": message_type,
-            "private": False
+            "private": False,
+            "content_attributes": {"source": source},
         }
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, json=payload, headers=self.headers)
+            resp.raise_for_status()
+            return resp.json()
+
+    async def validate_inbox(self, inbox_id: str) -> dict:
+        url = (
+            f"{self.base_url}/api/v1/accounts/{self.account_id}/inboxes/"
+            f"{inbox_id}"
+        )
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, headers=self.headers)
             resp.raise_for_status()
             return resp.json()
 
@@ -113,12 +157,24 @@ async def sync_message_to_chatwoot(bot_id: int, wa_id: str, name: str, content: 
         return
         
     try:
-        cw = ChatwootClient(base_url, account_id, api_token)
-        contact_id = await cw.get_or_create_contact(name, wa_id)
-        conversation_id = await cw.get_or_create_conversation(contact_id, inbox_id)
-        
-        msg_type = "incoming" if role == "user" else "outgoing"
-        await cw.send_message(conversation_id, content, message_type=msg_type)
+        async with _sync_locks[(bot_id, wa_id)]:
+            cw = ChatwootClient(base_url, account_id, api_token)
+            contact_id = await cw.get_or_create_contact(name, wa_id)
+            source_id = f"asistto:{bot_id}:{wa_id.lstrip('+')}"
+            conversation_id = await cw.get_or_create_conversation(
+                contact_id,
+                inbox_id,
+                source_id,
+            )
+
+            msg_type = "incoming" if role == "user" else "outgoing"
+            source = "asistto_customer" if role == "user" else "asistto_ai"
+            await cw.send_message(
+                conversation_id,
+                content,
+                message_type=msg_type,
+                source=source,
+            )
     except httpx.HTTPStatusError as e:
         logger.error(f"Chatwoot API HTTP Error: {e.response.status_code} - {e.response.text}")
     except Exception as e:

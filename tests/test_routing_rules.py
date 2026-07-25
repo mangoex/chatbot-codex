@@ -128,7 +128,12 @@ class RoutingRulesTests(unittest.TestCase):
         }
         
         # 2. Run test
-        asyncio.run(main._process_message(payload))
+        with patch.object(
+            main.db,
+            "is_chatwoot_handoff_active",
+            new=AsyncMock(return_value=False),
+        ):
+            asyncio.run(main._process_message(payload))
         
         # 3. Assertions
         mock_was_processed.assert_called_once_with("wamid.msg1")
@@ -309,8 +314,13 @@ class RoutingRulesTests(unittest.TestCase):
         mock_cal_reply.return_value = ("Respuesta de la IA", False)
         mock_ext_reply.return_value = "Respuesta de la IA"
         
-        asyncio.run(main._process_message(payload))
-        
+        with patch.object(
+            main.db,
+            "is_chatwoot_handoff_active",
+            new=AsyncMock(return_value=False),
+        ):
+            asyncio.run(main._process_message(payload))
+
         # Webhook should NOT have been forwarded
         mock_forward.assert_not_called()
         

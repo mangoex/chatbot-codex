@@ -8,9 +8,11 @@ import os
 import uuid
 import csv
 import secrets
+import ipaddress
 import openpyxl
 import asyncio
 from datetime import datetime, timezone
+from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Request, Form, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
@@ -1168,6 +1170,8 @@ async def client_app(
     notice_html = ""
     if saved == "1":
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Configuración guardada correctamente.</div>'
+    elif saved == "chatwoot_api_only":
+        notice_html = f'<div class="notice-banner success">{ICONS["success"]} Conexión API validada. Falta guardar el Webhook Signing Secret para completar la conexión bidireccional.</div>'
     elif saved == "err":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} Ocurrió un error. Revisa los datos.</div>'
     elif saved and saved.startswith("err_"):
@@ -1248,19 +1252,27 @@ async def client_app(
         api_config = api_integration.get("config") or {}
         api_secrets = await db.list_integration_secrets(int(api_integration["id"]))
         
-    chatwoot_integration = await db.get_active_bot_integration(bot_id, "chatwoot")
+    chatwoot_integration = await db.get_bot_integration_by_type(bot_id, "chatwoot")
     chatwoot_config = {}
-    chatwoot_secrets = {}
     chatwoot_enabled = False
+    chatwoot_token_saved = False
+    chatwoot_webhook_secret_saved = False
+    chatwoot_verified = False
     cw_account = ""
     cw_base_url = ""
     if chatwoot_integration:
         chatwoot_config = chatwoot_integration.get("config") or {}
         chatwoot_enabled = chatwoot_integration.get("enabled", False)
-        # Fetch token secret
+        chatwoot_verified = bool(chatwoot_config.get("verified"))
         enc_secrets = await db.get_integration_secret_values(int(chatwoot_integration["id"]))
-        if "api_token" in enc_secrets:
-            chatwoot_secrets["api_token"] = secure_store.decrypt_secret(enc_secrets["api_token"])
+        chatwoot_token_saved = bool(enc_secrets.get("api_token"))
+        chatwoot_webhook_secret_saved = bool(enc_secrets.get("webhook_secret"))
+    chatwoot_ready = (
+        chatwoot_enabled
+        and chatwoot_verified
+        and chatwoot_token_saved
+        and chatwoot_webhook_secret_saved
+    )
         
     # Routing Rules integration
     routing_integration = await db.get_bot_integration_by_type(bot_id, "routing_rules")
@@ -2911,8 +2923,8 @@ async def client_app(
           
           <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
             <span class="bold-text">Estado de Integración</span>
-            <span class="badge {"success" if chatwoot_enabled else "warning"}">
-              {"Conectado" if chatwoot_enabled else "Desconectado"}
+            <span class="badge {"success" if chatwoot_ready else "warning"}">
+              {"Conectado" if chatwoot_ready else ("Configuración incompleta" if chatwoot_enabled else "Desconectado")}
             </span>
           </div>
           
@@ -2938,14 +2950,24 @@ async def client_app(
             
             <label>User API Token</label>
             <div class="password-wrapper">
-              <input type="password" name="api_token" placeholder="Copia aquí el token" autocomplete="new-password" value="{html.escape(chatwoot_secrets.get("api_token") or "")}">
+              <input type="password" name="api_token" placeholder="Copia aquí el token" autocomplete="new-password" value="{"********" if chatwoot_token_saved else ""}">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
             </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">El token guardado nunca vuelve a mostrarse. Deja los asteriscos para conservarlo.</span>
+
+            <label>Webhook Signing Secret</label>
+            <div class="password-wrapper">
+              <input type="password" name="webhook_secret" placeholder="Secreto generado por Chatwoot" autocomplete="new-password" value="{"********" if chatwoot_webhook_secret_saved else ""}">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Crea el webhook en Chatwoot y copia aquí su secreto de firma. URL: <code>{html.escape((config.WEBHOOK_DOMAIN or "https://TU-DOMINIO").rstrip("/") + f"/webhooks/chatwoot/{bot_id}")}</code></span>
             
             <div style="margin-top:20px; display:flex; gap:10px;">
-              <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar Chatwoot</button>
+              <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar y probar Chatwoot</button>
             </div>
           </form>
         </div>
@@ -3706,6 +3728,7 @@ async def client_chatwoot_save(
     account_id: str = Form(""),
     inbox_id: str = Form(""),
     api_token: str = Form(""),
+    webhook_secret: str = Form(""),
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
@@ -3714,15 +3737,93 @@ async def client_chatwoot_save(
     clean_account_id = account_id.strip()
     clean_inbox_id = inbox_id.strip()
     
-    integration = await db.get_active_bot_integration(bot_id, "chatwoot")
+    integration = await db.get_bot_integration_by_type(bot_id, "chatwoot")
+    existing_secrets = {}
+    if integration:
+        existing_secrets = await db.get_integration_secret_values(int(integration["id"]))
+
+    parsed_url = urlparse(clean_base_url)
+    invalid_host = False
+    if parsed_url.hostname:
+        try:
+            invalid_host = ipaddress.ip_address(parsed_url.hostname).is_private
+        except ValueError:
+            invalid_host = parsed_url.hostname.lower() in {"localhost", "localhost.localdomain"}
+    if parsed_url.scheme != "https" or not parsed_url.hostname or invalid_host:
+        message = quote("La URL de Chatwoot debe ser HTTPS y usar un dominio público.")
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=integrations&saved=err_{message}",
+            status_code=302,
+        )
+    if not clean_account_id.isdigit() or not clean_inbox_id.isdigit():
+        message = quote("Account ID e Inbox ID deben ser números.")
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=integrations&saved=err_{message}",
+            status_code=302,
+        )
+
+    clean_api_token = api_token.strip()
+    clean_webhook_secret = webhook_secret.strip()
+    candidate_token = clean_api_token
+    if not candidate_token or re.match(r"^\*+$", candidate_token):
+        candidate_token = secure_store.decrypt_secret(existing_secrets.get("api_token", ""))
+    candidate_webhook_secret = clean_webhook_secret
+    if not candidate_webhook_secret or re.match(r"^\*+$", candidate_webhook_secret):
+        candidate_webhook_secret = secure_store.decrypt_secret(
+            existing_secrets.get("webhook_secret", "")
+        )
+
+    is_enabled = (enabled == "on")
+    verified = False
+    if is_enabled:
+        if not candidate_token:
+            message = quote("Falta el User API Token de Chatwoot.")
+            return RedirectResponse(
+                f"/client/app?bot_id={bot_id}&tab=integrations&saved=err_{message}",
+                status_code=302,
+            )
+        try:
+            from app.chatwoot_client import ChatwootClient
+
+            inbox = await ChatwootClient(
+                clean_base_url,
+                clean_account_id,
+                candidate_token,
+            ).validate_inbox(clean_inbox_id)
+            verified = str(inbox.get("id")) == clean_inbox_id
+            channel_type = str(inbox.get("channel_type") or "").lower()
+            if verified and "api" not in channel_type:
+                message = quote("La bandeja seleccionada debe ser de tipo API.")
+                return RedirectResponse(
+                    f"/client/app?bot_id={bot_id}&tab=integrations&saved=err_{message}",
+                    status_code=302,
+                )
+        except Exception:
+            log.exception(
+                "No se pudo validar Chatwoot para bot %s, cuenta %s, inbox %s",
+                bot_id,
+                clean_account_id,
+                clean_inbox_id,
+            )
+            message = quote("Chatwoot rechazó la conexión. Revisa URL, IDs, token y permisos.")
+            return RedirectResponse(
+                f"/client/app?bot_id={bot_id}&tab=integrations&saved=err_{message}",
+                status_code=302,
+            )
+        if not verified:
+            message = quote("El Inbox ID no coincide con la bandeja devuelta por Chatwoot.")
+            return RedirectResponse(
+                f"/client/app?bot_id={bot_id}&tab=integrations&saved=err_{message}",
+                status_code=302,
+            )
     
     config_data = {
         "base_url": clean_base_url,
         "account_id": clean_account_id,
-        "inbox_id": clean_inbox_id
+        "inbox_id": clean_inbox_id,
+        "verified": verified,
+        "verified_at": datetime.now(timezone.utc).isoformat() if verified else None,
     }
-    
-    is_enabled = (enabled == "on")
     
     if integration:
         integration_id = int(integration["id"])
@@ -3743,10 +3844,22 @@ async def client_chatwoot_save(
             enabled=is_enabled
         )
         
-    clean_api_token = api_token.strip()
     if clean_api_token and not re.match(r"^\*+$", clean_api_token):
         encrypted_token = secure_store.encrypt_secret(clean_api_token)
         await db.upsert_integration_secret(integration_id, "api_token", encrypted_token)
+    if clean_webhook_secret and not re.match(r"^\*+$", clean_webhook_secret):
+        encrypted_secret = secure_store.encrypt_secret(clean_webhook_secret)
+        await db.upsert_integration_secret(
+            integration_id,
+            "webhook_secret",
+            encrypted_secret,
+        )
+
+    saved_param = "1" if candidate_webhook_secret else "chatwoot_api_only"
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=integrations&saved={saved_param}",
+        status_code=302,
+    )
 
 
 @router.post("/bots/{bot_id}/integrations/github")
@@ -3808,7 +3921,6 @@ async def client_github_save(
         )
 
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=github&saved=1", status_code=302)
-
 
 @router.post("/bots/{bot_id}/integrations/routing")
 async def client_routing_rules_save(

@@ -313,6 +313,9 @@ refresh_token
 Tambien puedes activar habilidades por cliente para conectar APIs externas,
 webhooks o CRMs. El flujo es:
 
+Para la bandeja humana de Chatwoot, sigue la guía específica de
+[`docs/CHATWOOT_SETUP.md`](docs/CHATWOOT_SETUP.md).
+
 1. Crea una integracion en `/admin/bots/{bot_id}/integrations`.
 2. Guarda la configuracion publica en JSON.
 3. Guarda tokens o API keys en `Guardar secreto`.
