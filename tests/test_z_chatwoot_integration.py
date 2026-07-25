@@ -76,6 +76,34 @@ class _WebhookRequest:
 
 
 class ChatwootClientTests(unittest.IsolatedAsyncioTestCase):
+    async def test_validate_inbox_uses_collection_endpoint_for_self_hosted_versions(self):
+        _QueuedAsyncClient.calls = []
+        _QueuedAsyncClient.responses = [
+            _Response(
+                200,
+                {
+                    "payload": [
+                        {"id": 2, "channel_type": "Channel::WebWidget"},
+                        {"id": 3, "channel_type": "Channel::Api"},
+                    ]
+                },
+            )
+        ]
+        with patch.object(
+            chatwoot_client.httpx,
+            "AsyncClient",
+            _QueuedAsyncClient,
+        ):
+            cw = chatwoot_client.ChatwootClient(
+                "https://chatwoot.example",
+                "4",
+                "token",
+            )
+            inbox = await cw.validate_inbox("3")
+
+        self.assertEqual(inbox["id"], 3)
+        self.assertTrue(_QueuedAsyncClient.calls[0][1].endswith("/inboxes"))
+
     async def test_conversation_creation_includes_stable_source_id(self):
         _QueuedAsyncClient.calls = []
         _QueuedAsyncClient.responses = [

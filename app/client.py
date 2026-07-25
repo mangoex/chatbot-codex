@@ -3783,7 +3783,7 @@ async def client_chatwoot_save(
                 status_code=302,
             )
         try:
-            from app.chatwoot_client import ChatwootClient
+            from app.chatwoot_client import ChatwootClient, ChatwootInboxNotFound
 
             inbox = await ChatwootClient(
                 clean_base_url,
@@ -3798,6 +3798,16 @@ async def client_chatwoot_save(
                     f"/client/app?bot_id={bot_id}&tab=integrations&saved=err_{message}",
                     status_code=302,
                 )
+        except ChatwootInboxNotFound as exc:
+            available = ", ".join(exc.available_ids) or "ninguno"
+            message = quote(
+                f"Inbox ID {clean_inbox_id} no existe en la cuenta "
+                f"{clean_account_id}. IDs disponibles: {available}."
+            )
+            return RedirectResponse(
+                f"/client/app?bot_id={bot_id}&tab=integrations&saved=err_{message}",
+                status_code=302,
+            )
         except Exception:
             log.exception(
                 "No se pudo validar Chatwoot para bot %s, cuenta %s, inbox %s",

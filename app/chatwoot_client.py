@@ -9,6 +9,14 @@ import httpx
 logger = logging.getLogger(__name__)
 _sync_locks: dict[tuple[int, str], asyncio.Lock] = defaultdict(asyncio.Lock)
 
+
+class ChatwootInboxNotFound(LookupError):
+    def __init__(self, inbox_id: str, available_ids: list[str]):
+        self.inbox_id = inbox_id
+        self.available_ids = available_ids
+        super().__init__(f"Chatwoot inbox {inbox_id} not found")
+
+
 class ChatwootClient:
     def __init__(self, base_url: str, account_id: str, api_token: str):
         self.base_url = base_url.rstrip('/')
@@ -122,14 +130,24 @@ class ChatwootClient:
             return resp.json()
 
     async def validate_inbox(self, inbox_id: str) -> dict:
-        url = (
-            f"{self.base_url}/api/v1/accounts/{self.account_id}/inboxes/"
-            f"{inbox_id}"
-        )
+        # Some self-hosted Chatwoot versions do not expose GET /inboxes/{id},
+        # while the collection endpoint is stable across older releases.
+        url = f"{self.base_url}/api/v1/accounts/{self.account_id}/inboxes"
         async with httpx.AsyncClient() as client:
             resp = await client.get(url, headers=self.headers)
             resp.raise_for_status()
-            return resp.json()
+            data = resp.json()
+
+        inboxes = data.get("payload", []) if isinstance(data, dict) else data
+        for inbox in inboxes or []:
+            if str(inbox.get("id")) == str(inbox_id):
+                return inbox
+        available_ids = [
+            str(inbox.get("id"))
+            for inbox in inboxes or []
+            if inbox.get("id") is not None
+        ]
+        raise ChatwootInboxNotFound(str(inbox_id), available_ids)
 
 async def sync_message_to_chatwoot(bot_id: int, wa_id: str, name: str, content: str, role: str):
     """
