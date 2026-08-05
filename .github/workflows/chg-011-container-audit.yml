@@ -46,6 +46,6 @@ jobs:
       - name: Run the complete suite inside an ephemeral audit container
         run: |
           docker run --rm --entrypoint sh asistto-chg011-audit -c '
-            python -m pip install --no-cache-dir pytest==8.4.2
+            python -m pip install --no-cache-dir pytest==8.4.2 pytest-asyncio==0.24.0
             pytest -q
           '
