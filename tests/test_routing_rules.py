@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 
 # Save mock httpx if it exists
@@ -330,3 +332,45 @@ class RoutingRulesTests(unittest.TestCase):
         # History should be fetched for regular processing
         mock_get_history.assert_called_once()
         mock_openai.assert_called_once()
+
+    def test_disabled_bot_all_media_preserves_historical_reply_without_payment_effects(self):
+        bot = MagicMock()
+        bot.id = 23
+        bot.status = "active"
+        bot.whatsapp_phone_number_id = "phone-23"
+        bot.whatsapp_access_token = "token-23"
+        save = AsyncMock()
+        send = AsyncMock()
+        order_media = AsyncMock(return_value=None)
+        with patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=bot)), \
+             patch.object(main.db, "was_processed", AsyncMock(return_value=False)), \
+             patch.object(main.db, "mark_processed", AsyncMock(return_value=True)), \
+             patch.object(main.db, "get_active_bot_integration", AsyncMock(return_value=None)), \
+             patch.object(main.follow_ups, "cancel", AsyncMock()), \
+             patch.object(main.follow_ups, "schedule", AsyncMock()), \
+             patch.object(main.db, "get_history", AsyncMock(return_value=[])), \
+             patch.object(main.db, "save_message", save), \
+             patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)), \
+             patch.object(main.order_payments, "handle_incoming_media", order_media), \
+             patch.object(main.whatsapp_client, "send_text", send), \
+             patch.object(main.escalations, "record_if_escalated", AsyncMock()):
+            for index, (media_type, mime) in enumerate((
+                ("image", "image/jpeg"),
+                ("audio", "audio/ogg"),
+                ("document", "application/pdf"),
+            )):
+                msg = {
+                    "wa_id": "5216000000023",
+                    "message_id": f"wamid.media-disabled-{index}",
+                    "type": media_type,
+                    "text": "",
+                    "media_id": f"media-23-{index}",
+                    "media_mime": mime,
+                }
+                asyncio.run(main._process_message_impl(msg, {}))
+
+        self.assertEqual(order_media.await_count, 3)
+        self.assertEqual(send.await_count, 3)
+        self.assertTrue(all(call.args[1] == main.MEDIA_REPLY for call in send.await_args_list))
+        assistant_saves = [call for call in save.await_args_list if call.args[1] == "assistant"]
+        self.assertEqual([call.args[2] for call in assistant_saves], [main.MEDIA_REPLY] * 3)

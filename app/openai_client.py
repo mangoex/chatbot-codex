@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import tiktoken
 from openai import AsyncOpenAI
-from app import bot_content, config, db, external_actions
+from app import bot_content, config, db, external_actions, order_payments
 
 _client: AsyncOpenAI | None = None
 
@@ -120,9 +120,13 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
 async def _system_prompt(bot_id: int | None = None, query: str | None = None, lead_info: dict | None = None) -> str:
     prompt = await bot_content.system_prompt_for_bot(bot_id, query)
     extra = await external_actions.system_instructions(bot_id)
+    # The order-payment opt-in is contained in the prompt we just loaded.  Do
+    # not introduce a second tenant-wide DB lookup for ordinary messages.
+    payment = order_payments.system_instructions_from_prompt(prompt)
     runtime = await _runtime_context(bot_id, lead_info)
-    if extra:
-        return f"{prompt}\n\n--- contexto_runtime ---\n{runtime}\n\n{extra}"
+    additions = "\n\n".join(part for part in (extra, payment) if part)
+    if additions:
+        return f"{prompt}\n\n--- contexto_runtime ---\n{runtime}\n\n{additions}"
     return f"{prompt}\n\n--- contexto_runtime ---\n{runtime}"
 
 

@@ -107,6 +107,25 @@ CREATE TABLE IF NOT EXISTS bot_skills (
     UNIQUE(bot_id, skill_type)
 );
 
+CREATE TABLE IF NOT EXISTS order_payment_expectations (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    wa_id TEXT NOT NULL,
+    day TEXT NOT NULL CHECK (day IN ('sabado','domingo')),
+    amount_minor BIGINT NOT NULL CHECK (amount_minor > 0),
+    currency TEXT NOT NULL DEFAULT 'MXN',
+    quote JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status TEXT NOT NULL DEFAULT 'awaiting_receipt'
+        CHECK (status IN ('awaiting_receipt','fields_match','superseded')),
+    last_validation_status TEXT,
+    last_validation_details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_order_payment_expectation_active
+    ON order_payment_expectations(bot_id, wa_id, created_at DESC)
+    WHERE status IN ('awaiting_receipt','fields_match');
+
 CREATE TABLE IF NOT EXISTS bot_integrations (
     id BIGSERIAL PRIMARY KEY,
     bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
@@ -417,6 +436,10 @@ async def purge_old(ttl_days: int) -> int:
     async with _pool.acquire() as conn:
         result = await conn.execute(
             "DELETE FROM conversations WHERE created_at < now() - make_interval(days => $1)",
+            int(ttl_days),
+        )
+        await conn.execute(
+            "DELETE FROM order_payment_expectations WHERE created_at < now() - make_interval(days => $1)",
             int(ttl_days),
         )
         return int(result.split()[-1]) if result else 0
@@ -1077,6 +1100,10 @@ async def clear_contact_data(wa_ids: list[str], bot_id: int | None = None) -> di
                 f"DELETE FROM contacts WHERE wa_id = ANY($1::text[]){bot_filter}",
                 *args,
             ),
+            "order_payment_expectations": await conn.execute(
+                f"DELETE FROM order_payment_expectations WHERE wa_id = ANY($1::text[]){bot_filter}",
+                *args,
+            ),
         }
     return {
         key: int(value.split()[-1]) if value else 0
@@ -1090,6 +1117,10 @@ async def clear_conversation_history(wa_id: str, bot_id: int) -> None:
     async with _pool.acquire() as conn:
         await conn.execute(
             "DELETE FROM conversations WHERE wa_id = ANY($1::text[]) AND bot_id = $2",
+            variants, bot_id
+        )
+        await conn.execute(
+            "DELETE FROM order_payment_expectations WHERE wa_id = ANY($1::text[]) AND bot_id = $2",
             variants, bot_id
         )
 
@@ -1993,6 +2024,87 @@ async def upsert_bot_skill(
             skill_type,
             enabled,
             json.dumps(config_data or {}),
+        )
+
+
+async def upsert_order_payment_expectation(
+    *,
+    bot_id: int,
+    wa_id: str,
+    day: str,
+    amount_minor: int,
+    currency: str,
+    quote: dict,
+) -> int:
+    """Replace only the active expectation for this bot/contact, retaining audit history."""
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE order_payment_expectations
+                SET status = 'superseded', updated_at = now()
+                WHERE bot_id = $1 AND wa_id = $2
+                  AND status IN ('awaiting_receipt','fields_match')
+                """,
+                bot_id,
+                wa_id,
+            )
+            row = await conn.fetchrow(
+                """
+                INSERT INTO order_payment_expectations(
+                    bot_id, wa_id, day, amount_minor, currency, quote
+                )
+                VALUES($1, $2, $3, $4, $5, $6::jsonb)
+                RETURNING id
+                """,
+                bot_id,
+                wa_id,
+                day,
+                amount_minor,
+                currency,
+                json.dumps(quote),
+            )
+    return int(row["id"])
+
+
+async def get_active_order_payment_expectation(bot_id: int, wa_id: str) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT *
+            FROM order_payment_expectations
+            WHERE bot_id = $1 AND wa_id = $2
+              AND status IN ('awaiting_receipt','fields_match')
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            bot_id,
+            wa_id,
+        )
+    return dict(row) if row else None
+
+
+async def record_order_receipt_validation(
+    *,
+    expectation_id: int,
+    status: str,
+    details: dict,
+) -> None:
+    expectation_status = "fields_match" if status == "matching_fields" else "awaiting_receipt"
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE order_payment_expectations
+            SET status = $2,
+                last_validation_status = $3,
+                last_validation_details = $4::jsonb,
+                updated_at = now()
+            WHERE id = $1
+            """,
+            expectation_id,
+            expectation_status,
+            status,
+            json.dumps(details),
         )
 
 

@@ -1,5 +1,8 @@
 from __future__ import annotations
 """Cliente de WhatsApp Cloud API — solo texto en v1."""
+from typing import Collection
+from urllib.parse import urlparse
+
 import httpx
 from app import config
 
@@ -49,6 +52,52 @@ async def send_text(
             )
         r.raise_for_status()
         return r.json()
+
+
+def _trusted_media_host(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    suffixes = (".facebook.com", ".fbcdn.net", ".fbsbx.com", ".whatsapp.net")
+    return parsed.scheme == "https" and any(host == suffix[1:] or host.endswith(suffix) for suffix in suffixes)
+
+
+async def download_media(
+    media_id: str,
+    *,
+    access_token: str,
+    max_bytes: int = 5 * 1024 * 1024,
+    allowed_mime_types: Collection[str] | None = None,
+) -> tuple[bytes, str]:
+    """Stream one Meta media object with per-bot credentials and a hard byte cap."""
+    if not media_id or not access_token or isinstance(max_bytes, bool) or max_bytes <= 0:
+        raise ValueError("missing_media_credentials")
+    version = _graph_version()
+    metadata_url = f"https://graph.facebook.com/{version}/{media_id}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    async with httpx.AsyncClient(timeout=20) as client:
+        metadata_response = await client.get(metadata_url, headers=headers)
+        metadata_response.raise_for_status()
+        metadata = metadata_response.json()
+        download_url = str(metadata.get("url") or "")
+        mime = str(metadata.get("mime_type") or "application/octet-stream").lower()
+        allowed = {item.lower() for item in allowed_mime_types or ()}
+        if allowed and mime not in allowed:
+            raise ValueError("unsupported_media_mime")
+        if not _trusted_media_host(download_url):
+            raise ValueError("untrusted_media_url")
+        async with client.stream("GET", download_url, headers=headers) as media_response:
+            media_response.raise_for_status()
+            content_length = media_response.headers.get("content-length")
+            if content_length and int(content_length) > max_bytes:
+                raise ValueError("media_too_large")
+            chunks: list[bytes] = []
+            received = 0
+            async for chunk in media_response.aiter_bytes():
+                received += len(chunk)
+                if received > max_bytes:
+                    raise ValueError("media_too_large")
+                chunks.append(chunk)
+    return b"".join(chunks), mime
 
 
 def extract_message(payload: dict) -> dict | None:

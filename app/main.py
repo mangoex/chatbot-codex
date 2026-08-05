@@ -29,6 +29,7 @@ from app import (
     follow_ups,
     leads,
     openai_client,
+    order_payments,
     public_pages,
     reply_safety,
     secure_store,
@@ -455,7 +456,7 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
 
     history = await db.get_history(wa_id, config.HISTORY_WINDOW, bot_id=bot.id)
 
-    # Caso A: media entrante → reply fijo, no llamamos OpenAI
+    # Caso A: media entrante. Las capacidades de lectura son opt-in por bot.
     if media_type:
         saved_user_msg = user_text or f"[envió un archivo de tipo {media_type}]"
         await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
@@ -466,7 +467,16 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             log.info("Bot %s esta pausado. Ignorando respuesta a media de %s.", bot.id, wa_id)
             return
             
-        reply = MEDIA_REPLY
+        reply = await order_payments.handle_incoming_media(
+            bot_id=bot.id,
+            wa_id=wa_id,
+            media_type=media_type,
+            media_id=msg.get("media_id"),
+            media_mime=msg.get("media_mime"),
+            access_token=bot.whatsapp_access_token,
+        )
+        if reply is None:
+            reply = MEDIA_REPLY
         await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
         await whatsapp_client.send_text(
             wa_id,
@@ -539,7 +549,8 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         )
         return
 
-    action_reply = await external_actions.process_reply(wa_id, raw_reply, bot_id=bot.id)
+    order_reply = await order_payments.process_reply(wa_id, raw_reply, bot_id=bot.id)
+    action_reply = await external_actions.process_reply(wa_id, order_reply, bot_id=bot.id)
     calendar_reply, scheduled = await calendar_client.process_reply(
         wa_id, action_reply, bot_id=bot.id
     )
