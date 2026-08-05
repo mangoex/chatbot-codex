@@ -115,8 +115,8 @@ CREATE TABLE IF NOT EXISTS order_payment_expectations (
     amount_minor BIGINT NOT NULL CHECK (amount_minor > 0),
     currency TEXT NOT NULL DEFAULT 'MXN',
     quote JSONB NOT NULL DEFAULT '{}'::jsonb,
-    status TEXT NOT NULL DEFAULT 'awaiting_receipt'
-        CHECK (status IN ('awaiting_receipt','fields_match','superseded')),
+    status TEXT NOT NULL DEFAULT 'awaiting_confirmation'
+        CHECK (status IN ('awaiting_confirmation','awaiting_receipt','fields_match','superseded')),
     last_validation_status TEXT,
     last_validation_details JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT now(),
@@ -124,8 +124,7 @@ CREATE TABLE IF NOT EXISTS order_payment_expectations (
 );
 CREATE INDEX IF NOT EXISTS idx_order_payment_expectation_active
     ON order_payment_expectations(bot_id, wa_id, created_at DESC)
-    WHERE status IN ('awaiting_receipt','fields_match');
-
+    WHERE status IN ('awaiting_confirmation','awaiting_receipt','fields_match');
 CREATE TABLE IF NOT EXISTS bot_integrations (
     id BIGSERIAL PRIMARY KEY,
     bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
@@ -369,6 +368,49 @@ async def run_migrations() -> None:
                 """
             )
         await conn.execute(SCHEMA_SQL)
+        # CHG-011 quote confirmation is an additive state transition. Existing
+        # rows remain valid; keep only their newest active record before the
+        # tenant/contact uniqueness constraint is installed.
+        await conn.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'order_payment_expectations_status_check'
+                      AND conrelid = 'order_payment_expectations'::regclass
+                      AND pg_get_constraintdef(oid) LIKE '%awaiting_confirmation%'
+                ) THEN
+                    ALTER TABLE order_payment_expectations
+                    DROP CONSTRAINT IF EXISTS order_payment_expectations_status_check;
+                    ALTER TABLE order_payment_expectations
+                    ADD CONSTRAINT order_payment_expectations_status_check CHECK
+                    (status IN ('awaiting_confirmation','awaiting_receipt','fields_match','superseded'));
+                END IF;
+            END $$;
+            """
+        )
+        await conn.execute(
+            """
+            WITH ranked AS (
+                SELECT id, row_number() OVER (
+                    PARTITION BY bot_id, wa_id ORDER BY created_at DESC, id DESC
+                ) AS row_number
+                FROM order_payment_expectations
+                WHERE status IN ('awaiting_confirmation','awaiting_receipt','fields_match')
+            )
+            UPDATE order_payment_expectations expectation
+            SET status = 'superseded', updated_at = now()
+            FROM ranked
+            WHERE expectation.id = ranked.id AND ranked.row_number > 1
+            """
+        )
+        await conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_order_payment_expectation_one_active "
+            "ON order_payment_expectations(bot_id, wa_id) "
+            "WHERE status IN ('awaiting_confirmation','awaiting_receipt','fields_match')"
+        )
         # Migrar bots de openrouter/free a openai/gpt-4o-mini
         await conn.execute(
             "UPDATE bots SET openai_model = 'openai/gpt-4o-mini' WHERE openai_model = 'openrouter/free'"
@@ -2027,7 +2069,7 @@ async def upsert_bot_skill(
         )
 
 
-async def upsert_order_payment_expectation(
+async def create_order_payment_quote(
     *,
     bot_id: int,
     wa_id: str,
@@ -2035,8 +2077,8 @@ async def upsert_order_payment_expectation(
     amount_minor: int,
     currency: str,
     quote: dict,
-) -> int:
-    """Replace only the active expectation for this bot/contact, retaining audit history."""
+) -> dict:
+    """Persist the canonical quote and supersede only this bot/contact's active state."""
     async with _pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute(
@@ -2044,7 +2086,7 @@ async def upsert_order_payment_expectation(
                 UPDATE order_payment_expectations
                 SET status = 'superseded', updated_at = now()
                 WHERE bot_id = $1 AND wa_id = $2
-                  AND status IN ('awaiting_receipt','fields_match')
+                  AND status IN ('awaiting_confirmation','awaiting_receipt','fields_match')
                 """,
                 bot_id,
                 wa_id,
@@ -2052,10 +2094,10 @@ async def upsert_order_payment_expectation(
             row = await conn.fetchrow(
                 """
                 INSERT INTO order_payment_expectations(
-                    bot_id, wa_id, day, amount_minor, currency, quote
+                    bot_id, wa_id, day, amount_minor, currency, quote, status
                 )
-                VALUES($1, $2, $3, $4, $5, $6::jsonb)
-                RETURNING id
+                VALUES($1, $2, $3, $4, $5, $6::jsonb, 'awaiting_confirmation')
+                RETURNING *
                 """,
                 bot_id,
                 wa_id,
@@ -2064,7 +2106,50 @@ async def upsert_order_payment_expectation(
                 currency,
                 json.dumps(quote),
             )
-    return int(row["id"])
+    return dict(row)
+
+
+async def promote_order_payment_quote(
+    *,
+    bot_id: int,
+    wa_id: str,
+    quote: dict,
+) -> tuple[str, dict | None]:
+    """Atomically promote the exact canonical quote, or report a safe non-promotion."""
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                SELECT *
+                FROM order_payment_expectations
+                WHERE bot_id = $1 AND wa_id = $2
+                  AND status IN ('awaiting_confirmation','awaiting_receipt','fields_match')
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                FOR UPDATE
+                """,
+                bot_id,
+                wa_id,
+            )
+            if not row:
+                return "missing_confirmation", None
+            stored = dict(row)
+            if stored.get("quote") != quote:
+                return "quote_mismatch", None
+            if stored.get("status") == "awaiting_receipt":
+                return "already_promoted", stored
+            if stored.get("status") != "awaiting_confirmation":
+                return "not_confirmable", None
+            promoted = await conn.fetchrow(
+                """
+                UPDATE order_payment_expectations
+                SET status = 'awaiting_receipt', updated_at = now()
+                WHERE id = $1 AND status = 'awaiting_confirmation'
+                RETURNING *
+                """,
+                stored["id"],
+            )
+    return "promoted", dict(promoted) if promoted else None
 
 
 async def get_active_order_payment_expectation(bot_id: int, wa_id: str) -> dict | None:

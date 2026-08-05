@@ -30,6 +30,7 @@ _ALLOWED_DAYS = {"sabado", "domingo"}
 _OCR_CONCURRENCY = 2
 _OCR_TIMEOUT_SECONDS = 15
 _OCR_SEMAPHORE = threading.BoundedSemaphore(_OCR_CONCURRENCY)
+_MAX_RECEIPT_BYTES = 10 * 1024 * 1024
 
 
 class OrderPaymentError(ValueError):
@@ -326,7 +327,7 @@ def _receipt_download_policy(config_data: dict[str, Any]) -> tuple[tuple[str, ..
         or max_bytes <= 0
     ):
         raise OrderPaymentError("invalid_receipt_download_policy")
-    return tuple(value.lower() for value in allowed), max_bytes
+    return tuple(value.lower() for value in allowed), min(max_bytes, _MAX_RECEIPT_BYTES)
 
 
 def _render_payment(quote: dict[str, Any], config_data: dict[str, Any]) -> str:
@@ -361,20 +362,32 @@ async def process_reply(wa_id: str, reply: str, bot_id: int | None) -> str:
         if not isinstance(payload, dict):
             raise OrderPaymentError("invalid_payload")
         quote = calculate_quote(payload.get("day"), payload.get("items"), config_data)
-        if marker_type == "MARONA_QUOTE":
-            return _render_quote(quote, payload)
-
-        _bank_details(config_data)
         if bot_id is None:
             raise OrderPaymentError("missing_bot")
-        await db.upsert_order_payment_expectation(
+        if marker_type == "MARONA_QUOTE":
+            await db.create_order_payment_quote(
+                bot_id=bot_id,
+                wa_id=wa_id,
+                day=quote["day"],
+                amount_minor=quote["total_minor"],
+                currency=quote["currency"],
+                quote=quote,
+            )
+            return _render_quote(quote, payload)
+
+        # Validate config before the database transition, but never expose bank
+        # details until the exact canonical quote has been atomically promoted.
+        _bank_details(config_data)
+        promotion, _stored = await db.promote_order_payment_quote(
             bot_id=bot_id,
             wa_id=wa_id,
-            day=quote["day"],
-            amount_minor=quote["total_minor"],
-            currency=quote["currency"],
             quote=quote,
         )
+        if promotion in {"missing_confirmation", "quote_mismatch", "not_confirmable"}:
+            return "La confirmación no coincide con el último resumen. Vuelve a revisar y confirmar ese resumen antes de pagar."
+        if promotion not in {"promoted", "already_promoted"}:
+            log.warning("Transicion de pago inesperada para bot_id=%s", bot_id)
+            return "No pude preparar el pago de forma segura. Intenta de nuevo más tarde."
         payment = _render_payment(quote, config_data)
         return "\n\n".join(part for part in (clean, payment) if part)
     except (json.JSONDecodeError, OrderPaymentError):
@@ -383,6 +396,11 @@ async def process_reply(wa_id: str, reply: str, bot_id: int | None) -> str:
             "No pude validar el total de forma segura. Conservamos tu selección y "
             "el equipo de Marona te ayudará a revisarla."
         )
+    except Exception as exc:
+        log.warning("Fallo de persistencia order_payments para bot_id=%s tipo=%s", bot_id, type(exc).__name__)
+        if marker_type == "MARONA_QUOTE":
+            return "No pude guardar el resumen de forma segura. Intenta de nuevo más tarde."
+        return "No pude preparar el pago de forma segura. Intenta de nuevo más tarde."
 
 
 def _receipt_reply(result: dict[str, Any], expected: dict[str, Any]) -> str:
@@ -434,7 +452,11 @@ async def handle_incoming_media(
 
     if media_mime and media_mime.lower() not in allowed:
         return "Ese formato no es compatible. Envíanos el comprobante como imagen JPG o PNG."
-    expected = await db.get_active_order_payment_expectation(bot_id, wa_id)
+    try:
+        expected = await db.get_active_order_payment_expectation(bot_id, wa_id)
+    except Exception as exc:
+        log.warning("Fallo al consultar comprobante para bot_id=%s tipo=%s", bot_id, type(exc).__name__)
+        return "No pude consultar el pago pendiente de forma segura. Intenta de nuevo más tarde."
     if not expected:
         return (
             "Recibimos la imagen, pero no encontramos un pago pendiente en esta conversación. "
@@ -454,19 +476,23 @@ async def handle_incoming_media(
         timezone = str(config_data.get("timezone") or "America/Mazatlan")
         current_day = datetime.now(ZoneInfo(timezone)).date()
         result = validate_receipt_fields(expected, extracted, today=current_day)
-    except Exception:
-        log.exception("No se pudo leer el comprobante para bot_id=%s", bot_id)
+    except Exception as exc:
+        log.warning("Fallo al leer comprobante para bot_id=%s tipo=%s", bot_id, type(exc).__name__)
         result = {"status": "insufficient_evidence"}
 
-    await db.record_order_receipt_validation(
-        expectation_id=int(expected["id"]),
-        status=result["status"],
-        details={
-            key: value
-            for key, value in result.items()
-            if key in {"status", "observed_amount_minor", "transfer_date"}
-        },
-    )
+    try:
+        await db.record_order_receipt_validation(
+            expectation_id=int(expected["id"]),
+            status=result["status"],
+            details={
+                key: value
+                for key, value in result.items()
+                if key in {"status", "observed_amount_minor", "transfer_date"}
+            },
+        )
+    except Exception as exc:
+        log.warning("Fallo al registrar comprobante para bot_id=%s tipo=%s", bot_id, type(exc).__name__)
+        return "No pude registrar la validación de forma segura. Intenta de nuevo más tarde."
     return _receipt_reply(result, expected)
 
 

@@ -39,6 +39,7 @@ class MultiBotSchemaTests(unittest.TestCase):
         self.assertIn("enabled BOOLEAN NOT NULL DEFAULT FALSE", sql)
         self.assertIn("amount_minor BIGINT NOT NULL CHECK (amount_minor > 0)", sql)
         self.assertIn("idx_order_payment_expectation_active", sql)
+        self.assertIn("ux_order_payment_expectation_one_active", inspect.getsource(db.run_migrations))
 
     def test_existing_tables_get_bot_id(self):
         sql = db.SCHEMA_SQL
@@ -116,7 +117,8 @@ class MultiBotSchemaTests(unittest.TestCase):
             "list_bot_skills",
             "get_bot_skill",
             "upsert_bot_skill",
-            "upsert_order_payment_expectation",
+            "create_order_payment_quote",
+            "promote_order_payment_quote",
             "get_active_order_payment_expectation",
             "record_order_receipt_validation",
         ):

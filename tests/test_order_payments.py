@@ -173,7 +173,8 @@ class ReplyProcessingTests(unittest.IsolatedAsyncioTestCase):
             '"pickup_name":"Miguel González","pickup_time":"2:00 p. m.",'
             '"pickup_time_status":"propuesta pendiente de confirmación"}]]</respuesta>'
         )
-        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)):
+        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
+             patch.object(order_payments.db, "create_order_payment_quote", AsyncMock(return_value={"id": 70})):
             visible = await order_payments.process_reply("521555", reply, bot_id=7)
 
         self.assertIn("$500 MXN c/u — subtotal $1,000 MXN", visible)
@@ -191,9 +192,9 @@ class ReplyProcessingTests(unittest.IsolatedAsyncioTestCase):
             '{"product_id":"croquetas_jamon","quantity":3}]}]]\n'
             "</respuesta>"
         )
-        save = AsyncMock()
+        promote = AsyncMock(return_value=("promoted", {"id": 71}))
         with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
-             patch.object(order_payments.db, "upsert_order_payment_expectation", save):
+             patch.object(order_payments.db, "promote_order_payment_quote", promote):
             visible = await order_payments.process_reply("521555", reply, bot_id=7)
 
         self.assertIn("$2,500 MXN", visible)
@@ -201,10 +202,10 @@ class ReplyProcessingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("MARONA SABADO", visible)
         self.assertNotIn("MARONA_PAYMENT", visible)
         self.assertNotIn("<respuesta>", visible)
-        save.assert_awaited_once()
-        self.assertEqual(save.await_args.kwargs["amount_minor"], 250000)
-        self.assertEqual(save.await_args.kwargs["bot_id"], 7)
-        self.assertEqual(save.await_args.kwargs["wa_id"], "521555")
+        promote.assert_awaited_once()
+        self.assertEqual(promote.await_args.kwargs["quote"]["total_minor"], 250000)
+        self.assertEqual(promote.await_args.kwargs["bot_id"], 7)
+        self.assertEqual(promote.await_args.kwargs["wa_id"], "521555")
 
     async def test_disabled_bot_marker_is_byte_for_byte_passthrough(self) -> None:
         reply = 'Resumen [[MARONA_QUOTE:{"day":"sabado","items":[]}]]'
@@ -394,6 +395,169 @@ class PromptIsolationTests(unittest.IsolatedAsyncioTestCase):
             '<order_payments_config>{"enabled":true}</order_payments_config>'
         )
         self.assertEqual(order_payments.system_instructions_from_prompt(prompt), "")
+
+
+class QuoteConfirmationTests(unittest.IsolatedAsyncioTestCase):
+    def _marker(self, marker_type: str, product_id: str, quantity: int) -> str:
+        return (
+            f'[[{marker_type}:{{"day":"sabado","items":'
+            f'[{{"product_id":"{product_id}","quantity":{quantity}}}]}}]]'
+        )
+
+    async def test_payment_with_different_quote_is_rejected_without_account_or_expectation(self) -> None:
+        quote_save = AsyncMock(return_value={"id": 101})
+        promote = AsyncMock(return_value=("quote_mismatch", None))
+        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
+             patch.object(order_payments.db, "create_order_payment_quote", quote_save), \
+             patch.object(order_payments.db, "promote_order_payment_quote", promote):
+            visible_quote = await order_payments.process_reply(
+                "wa-a", self._marker("MARONA_QUOTE", "ensalada_encurtidos", 1), bot_id=7,
+            )
+            visible_payment = await order_payments.process_reply(
+                "wa-a", self._marker("MARONA_PAYMENT", "croquetas_jamon", 9), bot_id=7,
+            )
+
+        self.assertIn("$500 MXN", visible_quote)
+        self.assertIn("revisar y confirmar", visible_payment)
+        self.assertNotIn("CLABE", visible_payment)
+        self.assertNotIn("123451234512345678", visible_payment)
+        self.assertEqual(quote_save.await_args.kwargs["bot_id"], 7)
+        self.assertEqual(quote_save.await_args.kwargs["wa_id"], "wa-a")
+        self.assertEqual(promote.await_args.kwargs["quote"]["items"][0]["product_id"], "croquetas_jamon")
+        self.assertEqual(promote.await_args.kwargs["quote"]["total_minor"], 450000)
+
+    async def test_matching_payment_promotes_saved_quote_and_retry_is_idempotent(self) -> None:
+        quote_save = AsyncMock(return_value={"id": 101})
+        promote = AsyncMock(side_effect=[("promoted", {"id": 101}), ("already_promoted", {"id": 101})])
+        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
+             patch.object(order_payments.db, "create_order_payment_quote", quote_save), \
+             patch.object(order_payments.db, "promote_order_payment_quote", promote):
+            await order_payments.process_reply(
+                "wa-a", self._marker("MARONA_QUOTE", "ensalada_encurtidos", 1), bot_id=7,
+            )
+            first = await order_payments.process_reply(
+                "wa-a", self._marker("MARONA_PAYMENT", "ensalada_encurtidos", 1), bot_id=7,
+            )
+            retry = await order_payments.process_reply(
+                "wa-a", self._marker("MARONA_PAYMENT", "ensalada_encurtidos", 1), bot_id=7,
+            )
+
+        self.assertEqual(quote_save.await_count, 1)
+        self.assertEqual(promote.await_count, 2)
+        self.assertIn("123451234512345678", first)
+        self.assertEqual(retry, first)
+
+    async def test_concurrent_matching_payments_do_not_create_more_than_one_active_expectation(self) -> None:
+        quote = order_payments.calculate_quote(
+            "sabado", [{"product_id": "ensalada_encurtidos", "quantity": 1}], CONFIG,
+        )
+        calls = 0
+        lock = asyncio.Lock()
+
+        async def promote_once(**_kwargs):
+            nonlocal calls
+            async with lock:
+                calls += 1
+                return ("promoted", {"id": 101}) if calls == 1 else ("already_promoted", {"id": 101})
+
+        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
+             patch.object(order_payments.db, "promote_order_payment_quote", side_effect=promote_once):
+            replies = await asyncio.gather(*(
+                order_payments.process_reply(
+                    "wa-a", self._marker("MARONA_PAYMENT", "ensalada_encurtidos", 1), bot_id=7,
+                )
+                for _ in range(2)
+            ))
+
+        self.assertEqual(calls, 2)
+        self.assertTrue(all("123451234512345678" in reply for reply in replies))
+        self.assertEqual(quote["total_minor"], 50000)
+
+    async def test_quote_and_payment_state_is_scoped_to_bot_and_contact(self) -> None:
+        quote_save = AsyncMock(return_value={"id": 101})
+        promote = AsyncMock(return_value=("promoted", {"id": 101}))
+        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
+             patch.object(order_payments.db, "create_order_payment_quote", quote_save), \
+             patch.object(order_payments.db, "promote_order_payment_quote", promote):
+            await order_payments.process_reply(
+                "wa-one", self._marker("MARONA_QUOTE", "ensalada_encurtidos", 1), bot_id=7,
+            )
+            await order_payments.process_reply(
+                "wa-two", self._marker("MARONA_PAYMENT", "ensalada_encurtidos", 1), bot_id=8,
+            )
+
+        self.assertEqual(quote_save.await_args.kwargs["bot_id"], 7)
+        self.assertEqual(quote_save.await_args.kwargs["wa_id"], "wa-one")
+        self.assertEqual(promote.await_args.kwargs["bot_id"], 8)
+        self.assertEqual(promote.await_args.kwargs["wa_id"], "wa-two")
+
+    async def test_quote_persistence_failure_returns_safe_reply(self) -> None:
+        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
+             patch.object(order_payments.db, "create_order_payment_quote", AsyncMock(side_effect=RuntimeError("db down"))):
+            visible = await order_payments.process_reply(
+                "wa-a", self._marker("MARONA_QUOTE", "ensalada_encurtidos", 1), bot_id=7,
+            )
+
+        self.assertIn("No pude guardar", visible)
+        self.assertNotIn("CLABE", visible)
+
+    async def test_payment_promotion_failure_returns_safe_reply_without_account(self) -> None:
+        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
+             patch.object(order_payments.db, "promote_order_payment_quote", AsyncMock(side_effect=RuntimeError("db down"))):
+            visible = await order_payments.process_reply(
+                "wa-a", self._marker("MARONA_PAYMENT", "ensalada_encurtidos", 1), bot_id=7,
+            )
+
+        self.assertIn("No pude preparar", visible)
+        self.assertNotIn("CLABE", visible)
+
+
+class ReceiptDatabaseFailureTests(unittest.IsolatedAsyncioTestCase):
+    async def test_expectation_lookup_failure_returns_safe_reply(self) -> None:
+        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
+             patch.object(order_payments.db, "get_active_order_payment_expectation", AsyncMock(side_effect=RuntimeError("db down"))):
+            visible = await order_payments.handle_incoming_media(
+                bot_id=7, wa_id="wa-a", media_type="image", media_id="media-1",
+                media_mime="image/jpeg", access_token="bot-token",
+            )
+
+        self.assertIn("No pude consultar", visible)
+
+    async def test_receipt_validation_record_failure_returns_safe_reply(self) -> None:
+        expected = {"id": 81, "day": "sabado", "amount_minor": 50000, "currency": "MXN"}
+        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
+             patch.object(order_payments.db, "get_active_order_payment_expectation", AsyncMock(return_value=expected)), \
+             patch.object(order_payments.whatsapp_client, "download_media", AsyncMock(return_value=(b"image", "image/jpeg"))), \
+             patch.object(order_payments, "extract_receipt_fields_without_blocking", AsyncMock(return_value={"readable": False})), \
+             patch.object(order_payments.db, "record_order_receipt_validation", AsyncMock(side_effect=RuntimeError("db down"))):
+            visible = await order_payments.handle_incoming_media(
+                bot_id=7, wa_id="wa-a", media_type="image", media_id="media-1",
+                media_mime="image/jpeg", access_token="bot-token",
+            )
+
+        self.assertIn("No pude registrar", visible)
+
+
+class ReceiptLimitsTests(unittest.TestCase):
+    def test_prompt_cannot_raise_global_receipt_size_limit(self) -> None:
+        excessive = {**CONFIG, "receipt_max_bytes": 100 * 1024 * 1024}
+        _allowed, max_bytes = order_payments._receipt_download_policy(excessive)
+        self.assertEqual(max_bytes, 10 * 1024 * 1024)
+
+    def test_excessive_prompt_limit_is_clamped_before_media_download(self) -> None:
+        excessive = {**CONFIG, "receipt_max_bytes": 100 * 1024 * 1024}
+        expected = {"id": 81, "day": "sabado", "amount_minor": 50000, "currency": "MXN"}
+        download = AsyncMock(side_effect=ValueError("media_too_large"))
+        with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=excessive)), \
+             patch.object(order_payments.db, "get_active_order_payment_expectation", AsyncMock(return_value=expected)), \
+             patch.object(order_payments.whatsapp_client, "download_media", download), \
+             patch.object(order_payments.db, "record_order_receipt_validation", AsyncMock()):
+            asyncio.run(order_payments.handle_incoming_media(
+                bot_id=7, wa_id="wa-a", media_type="image", media_id="media-1",
+                media_mime="image/jpeg", access_token="bot-token",
+            ))
+
+        self.assertEqual(download.await_args.kwargs["max_bytes"], 10 * 1024 * 1024)
 
 
 if __name__ == "__main__":
