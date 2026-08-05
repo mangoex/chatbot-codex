@@ -43,5 +43,9 @@ jobs:
             --volume "$PWD/.tmp/chg-011-audit/receipt.png:/tmp/receipt.png:ro" \
             --entrypoint python asistto-chg011-audit -c 'from app.order_payments import extract_receipt_fields_local; data = open("/tmp/receipt.png", "rb").read(); fields = extract_receipt_fields_local(data, "image/png"); assert fields["amount"] == "2,500.00", fields; assert fields["currency"] == "MXN", fields; assert fields["transfer_date"] == "2026-08-04", fields; assert fields["reference"] == "MARONA SABADO", fields; assert fields["readable"] is True, fields'
 
-      - name: Run the complete suite inside the image
-        run: docker run --rm --entrypoint python asistto-chg011-audit -m unittest discover -s tests -v
+      - name: Run the complete suite inside an ephemeral audit container
+        run: |
+          docker run --rm --entrypoint sh asistto-chg011-audit -c '
+            python -m pip install --no-cache-dir pytest==8.4.2
+            pytest -q
+          '
