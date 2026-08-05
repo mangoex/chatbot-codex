@@ -234,11 +234,12 @@ class ReplyProcessingTests(unittest.IsolatedAsyncioTestCase):
         extracted = {
             "amount": "2500.00",
             "currency": "MXN",
-            "transfer_date": date.today().isoformat(),
+            "transfer_date": "2026-08-04",
             "reference": "MARONA SABADO",
             "readable": True,
         }
         record = AsyncMock()
+        fixed_now = type("FixedNow", (), {"date": lambda self: date(2026, 8, 4)})()
         with patch.object(order_payments, "_enabled_config", AsyncMock(return_value=CONFIG)), \
              patch.object(
                  order_payments.db,
@@ -251,7 +252,9 @@ class ReplyProcessingTests(unittest.IsolatedAsyncioTestCase):
                  AsyncMock(return_value=(b"image", "image/jpeg")),
              ), \
              patch.object(order_payments, "extract_receipt_fields_without_blocking", AsyncMock(return_value=extracted)), \
-             patch.object(order_payments.db, "record_order_receipt_validation", record):
+             patch.object(order_payments.db, "record_order_receipt_validation", record), \
+             patch.object(order_payments, "datetime") as mocked_datetime:
+            mocked_datetime.now.return_value = fixed_now
             reply = await order_payments.handle_incoming_media(
                 bot_id=7,
                 wa_id="521555",
