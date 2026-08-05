@@ -100,7 +100,7 @@ CREATE TABLE IF NOT EXISTS bot_skills (
     id BIGSERIAL PRIMARY KEY,
     bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
     skill_type TEXT NOT NULL,
-    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    enabled BOOLEAN NOT NULL DEFAULT FALSE,
     config JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now(),

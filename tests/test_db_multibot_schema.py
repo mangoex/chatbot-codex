@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import inspect
 import sys
 import types
@@ -33,6 +35,7 @@ class MultiBotSchemaTests(unittest.TestCase):
             "connected_at TIMESTAMPTZ",
         ):
             self.assertIn(column, sql)
+        self.assertIn("enabled BOOLEAN NOT NULL DEFAULT FALSE", sql)
 
     def test_existing_tables_get_bot_id(self):
         sql = db.SCHEMA_SQL

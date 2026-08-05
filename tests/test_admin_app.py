@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import unittest
 import sys
 import types
@@ -64,6 +66,9 @@ sys.modules.pop("cryptography.fernet", None)
 
 
 class AdminControlAppTests(unittest.TestCase):
+    def test_calendar_skill_is_not_enabled_by_default(self):
+        self.assertFalse(admin._default_skill_enabled("google_calendar"))
+
     def test_admin_app_href_replaces_bot_id(self):
         self.assertEqual(
             admin._admin_app_href("/admin/bots/{bot_id}/prompt", 7),
@@ -477,5 +482,4 @@ class AdminControlAppTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 

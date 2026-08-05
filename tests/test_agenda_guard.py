@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 import types
 import unittest
@@ -23,6 +25,37 @@ from app import agenda_guard
 
 
 class AgendaGuardTests(unittest.TestCase):
+    def test_food_order_confirmation_does_not_enter_call_scheduling(self):
+        async def run():
+            history = [
+                {"role": "assistant", "content": "¿A nombre de quién dejo la solicitud?"},
+                {"role": "user", "content": "Miguel González"},
+                {"role": "assistant", "content": "¿A qué hora pasarías por tu pedido el sábado?"},
+                {"role": "user", "content": "Como a las 8 porque salgo de la ciudad"},
+                {
+                    "role": "assistant",
+                    "content": (
+                        "¿Confirma su solicitud para el sábado? 2 porciones de ensalada. "
+                        "A nombre de: Miguel González. Hora de recolección: 8:00 p.m. "
+                        "(horario propuesto, pendiente de confirmación por Marona)."
+                    ),
+                },
+                {"role": "user", "content": "Sí"},
+            ]
+
+            reply, scheduled = await agenda_guard.maybe_handle(
+                "5215550000000",
+                "Sí",
+                history,
+                bot_id=41,
+            )
+
+            self.assertIsNone(reply)
+            self.assertFalse(scheduled)
+
+        import asyncio
+        asyncio.run(run())
+
     def test_reuses_name_from_recent_assistant_confirmation(self):
         history = [
             {

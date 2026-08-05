@@ -3594,7 +3594,9 @@ def _default_skill_config(skill_type: str) -> dict:
 
 
 def _default_skill_enabled(skill_type: str) -> bool:
-    return skill_type == "google_calendar"
+    # Every capability is opt-in per bot. In particular, calendar must not be
+    # inherited by bots that only collect order or pickup information.
+    return False
 
 
 @router.get("/bots/{bot_id}/skills", response_class=HTMLResponse)

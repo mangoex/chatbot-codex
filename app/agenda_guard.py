@@ -278,7 +278,7 @@ def _looks_like_service_scheduling(user_text: str, history: list[dict]) -> bool:
 
 def _is_booking_context(text: str) -> bool:
     return bool(re.search(
-        r"\b(?:agend\w*|cit[as]\w*|llamada\w*|demo\b|demostr\w*|reuni\w*|reserv\w*|calendario\w*|d[ií]a\s*y\s*hora|fecha\s*y\s*hora|horario\w*)\b",
+        r"\b(?:agend\w*|cit[as]\w*|llamada\w*|demo\b|demostr\w*|reuni\w*|calendario\w*|d[ií]a\s*y\s*hora|fecha\s*y\s*hora)\b",
         text,
         re.IGNORECASE
     ))
