@@ -1,0 +1,56 @@
+name: CHG-011 container audit
+
+on:
+  push:
+    branches:
+      - codex/chg-011-container-audit
+
+permissions:
+  contents: read
+
+jobs:
+  container-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the audited Dockerfile
+        run: docker build --file Dockerfile --tag asistto-chg011-audit .
+
+      - name: Verify Tesseract and required languages
+        run: |
+          docker run --rm --entrypoint sh asistto-chg011-audit -c '
+            tesseract --version
+            tesseract --list-langs | grep -Fx eng
+            tesseract --list-langs | grep -Fx spa
+          '
+
+      - name: Create a controlled readable receipt PNG
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends imagemagick fonts-dejavu-core
+          mkdir -p .tmp/chg-011-audit
+          convert -size 1800x800 xc:white \
+            -font /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf \
+            -pointsize 48 -fill black -gravity northwest \
+            -annotate +40+80 $'TRANSFERENCIA EXITOSA\nMONTO PAGADO: $2,500.00 MXN\nFECHA: 04/08/2026\nCONCEPTO: MARONA SABADO' \
+            .tmp/chg-011-audit/receipt.png
+
+      - name: Validate local OCR receipt fields
+        run: |
+          docker run --rm \
+            --volume "$PWD/.tmp/chg-011-audit/receipt.png:/tmp/receipt.png:ro" \
+            --entrypoint python asistto-chg011-audit -c '
+            from app.order_payments import extract_receipt_fields_local
+            with open("/tmp/receipt.png", "rb") as receipt:
+                fields = extract_receipt_fields_local(receipt.read(), "image/png")
+            assert fields["amount"] == "2,500.00", fields
+            assert fields["currency"] == "MXN", fields
+            assert fields["transfer_date"] == "2026-08-04", fields
+            assert fields["reference"] == "MARONA SABADO", fields
+            assert fields["readable"] is True, fields
+            '
+
+      - name: Run the complete suite inside the image
+        run: docker run --rm --entrypoint python asistto-chg011-audit -m unittest discover -s tests -v
