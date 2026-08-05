@@ -1708,6 +1708,19 @@ def _normalize_config(value) -> dict:
     return {}
 
 
+def _json_object_or_none(value) -> dict | None:
+    """Normalize asyncpg JSONB text without treating malformed data as valid."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _dict_rows(rows) -> list[dict]:
     result = []
     for row in rows:
@@ -2134,8 +2147,10 @@ async def promote_order_payment_quote(
             if not row:
                 return "missing_confirmation", None
             stored = dict(row)
-            if stored.get("quote") != quote:
+            stored_quote = _json_object_or_none(stored.get("quote"))
+            if stored_quote != quote:
                 return "quote_mismatch", None
+            stored["quote"] = stored_quote
             if stored.get("status") == "awaiting_receipt":
                 return "already_promoted", stored
             if stored.get("status") != "awaiting_confirmation":

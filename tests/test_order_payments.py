@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 import asyncio
+import json
 import subprocess
 import threading
 import time
@@ -558,6 +559,88 @@ class ReceiptLimitsTests(unittest.TestCase):
             ))
 
         self.assertEqual(download.await_args.kwargs["max_bytes"], 10 * 1024 * 1024)
+
+
+class JsonbQuotePromotionTests(unittest.IsolatedAsyncioTestCase):
+    class _Context:
+        def __init__(self, value):
+            self.value = value
+
+        async def __aenter__(self):
+            return self.value
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class _Connection:
+        def __init__(self, row):
+            self.row = row
+            self.updated = 0
+
+        def transaction(self):
+            return JsonbQuotePromotionTests._Context(None)
+
+        async def fetchrow(self, query, *_args):
+            if "SELECT *" in query:
+                return self.row
+            if "UPDATE order_payment_expectations" in query:
+                self.updated += 1
+                self.row = {**self.row, "status": "awaiting_receipt"}
+                return self.row
+            raise AssertionError("unexpected query")
+
+    class _Pool:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def acquire(self):
+            return JsonbQuotePromotionTests._Context(self.connection)
+
+    async def test_asyncpg_jsonb_string_quote_promotes_matching_dict(self) -> None:
+        quote = order_payments.calculate_quote(
+            "sabado", [{"product_id": "ensalada_encurtidos", "quantity": 1}], CONFIG,
+        )
+        connection = self._Connection({
+            "id": 101,
+            "status": "awaiting_confirmation",
+            "quote": json.dumps(quote),
+        })
+        original_pool = order_payments.db._pool
+        order_payments.db._pool = self._Pool(connection)
+        try:
+            status, stored = await order_payments.db.promote_order_payment_quote(
+                bot_id=7, wa_id="wa-a", quote=quote,
+            )
+        finally:
+            order_payments.db._pool = original_pool
+
+        self.assertEqual(status, "promoted")
+        self.assertEqual(connection.updated, 1)
+        self.assertEqual(stored["status"], "awaiting_receipt")
+
+    async def test_malformed_or_non_object_jsonb_quote_fails_closed_without_update(self) -> None:
+        quote = order_payments.calculate_quote(
+            "sabado", [{"product_id": "ensalada_encurtidos", "quantity": 1}], CONFIG,
+        )
+        for persisted_quote in ("{not-json", "[]", None):
+            with self.subTest(persisted_quote=persisted_quote):
+                connection = self._Connection({
+                    "id": 101,
+                    "status": "awaiting_confirmation",
+                    "quote": persisted_quote,
+                })
+                original_pool = order_payments.db._pool
+                order_payments.db._pool = self._Pool(connection)
+                try:
+                    status, stored = await order_payments.db.promote_order_payment_quote(
+                        bot_id=7, wa_id="wa-a", quote=quote,
+                    )
+                finally:
+                    order_payments.db._pool = original_pool
+
+                self.assertEqual(status, "quote_mismatch")
+                self.assertIsNone(stored)
+                self.assertEqual(connection.updated, 0)
 
 
 if __name__ == "__main__":
