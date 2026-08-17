@@ -3950,7 +3950,7 @@ async def client_routing_rules_save(
     # Process and clean phone numbers list
     phones_list = []
     for p in phone_numbers.split(","):
-        p_clean = p.replace("+", "").replace(" ", "").replace("-", "").strip()
+        p_clean = re.sub(r"[^\d]", "", p)
         if p_clean:
             phones_list.append(p_clean)
             

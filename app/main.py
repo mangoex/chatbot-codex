@@ -424,31 +424,33 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             for rule in rules:
                 if rule.get("action") == "forward_and_bypass":
                     whitelisted_phones = rule.get("phone_numbers") or []
-                    clean_wa = wa_id.replace("+", "").strip()
-                    clean_whitelist = [p.replace("+", "").strip() for p in whitelisted_phones]
-                    if clean_wa in clean_whitelist:
-                        # Fetch token
-                        secrets = await db.get_integration_secret_values(int(routing_integration["id"]))
-                        auth_token = secrets.get("webhook_auth_token") or ""
+                    if bot_control.is_phone_in_list(wa_id, whitelisted_phones):
+                        webhook_url = (rule.get("webhook_url") or "").strip()
                         
-                        # Forward original payload
-                        asyncio.create_task(
-                            forward_payload_to_external_webhook(
-                                rule.get("webhook_url"),
-                                payload,
-                                auth_token
+                        # Si hay webhook_url configurada, reenviar payload de WhatsApp
+                        if webhook_url:
+                            secrets = await db.get_integration_secret_values(int(routing_integration["id"]))
+                            auth_token = secrets.get("webhook_auth_token") or ""
+                            asyncio.create_task(
+                                forward_payload_to_external_webhook(
+                                    webhook_url,
+                                    payload,
+                                    auth_token,
+                                )
                             )
-                        )
                         
-                        # Cancel follow-ups
+                        # Cancelar follow-ups
                         await follow_ups.cancel(wa_id, bot.id)
                         
-                        # Optionally save history
+                        # Registrar opcionalmente en historial
                         if rule.get("save_history"):
                             saved_user_msg = user_text or f"[envió un archivo de tipo {media_type}]" if media_type else user_text
                             await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
                             
-                        log.info(f"Mensaje de {wa_id} interceptado y desviado a {rule.get('webhook_url')}. Bot omitido.")
+                        if webhook_url:
+                            log.info(f"Mensaje de {wa_id} interceptado y desviado a {webhook_url}. Bot omitido.")
+                        else:
+                            log.info(f"Mensaje de {wa_id} interceptado y omitido por regla de exclusión. Bot silenciado.")
                         return
     except Exception as exc:
         log.error("Error al procesar reglas de enrutamiento: %s", exc)

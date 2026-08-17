@@ -236,25 +236,186 @@ class RoutingRulesTests(unittest.TestCase):
     @patch.object(main.db, "was_processed", return_value=False)
     @patch.object(main.db, "mark_processed")
     @patch.object(main.db, "get_active_bot_integration")
+    @patch.object(main.follow_ups, "cancel")
+    @patch.object(main.db, "save_message")
+    @patch.object(main.bots, "resolve_by_phone_number_id")
+    @patch.object(main, "forward_payload_to_external_webhook")
+    @patch.object(main.db, "get_history")
+    def test_process_message_with_bypass_matched_empty_webhook_url(
+        self,
+        mock_get_history,
+        mock_forward,
+        mock_resolve,
+        mock_save_msg,
+        mock_cancel_follow_ups,
+        mock_get_integration,
+        mock_mark_processed,
+        mock_was_processed,
+    ):
+        mock_bot = MagicMock()
+        mock_bot.id = 43
+        mock_resolve.return_value = mock_bot
+        
+        # Whitelisted phone with empty webhook_url (pure silent omission mode)
+        mock_get_integration.return_value = {
+            "id": 100,
+            "config": {
+                "rules": [
+                    {
+                        "action": "forward_and_bypass",
+                        "webhook_url": "",
+                        "phone_numbers": ["5216861234567"],
+                        "save_history": True
+                    }
+                ]
+            }
+        }
+        
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {
+                                    "display_phone_number": "15551234567",
+                                    "phone_number_id": "w1",
+                                },
+                                "messages": [
+                                    {
+                                        "from": "5216861234567",
+                                        "id": "wamid.msg_empty_url",
+                                        "type": "text",
+                                        "text": {"body": "Mensaje de familiar / agente"},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        with patch.object(
+            main.db,
+            "is_chatwoot_handoff_active",
+            new=AsyncMock(return_value=False),
+        ):
+            asyncio.run(main._process_message(payload))
+        
+        mock_cancel_follow_ups.assert_called_once_with("5216861234567", 43)
+        mock_forward.assert_not_called()
+        mock_save_msg.assert_called_once_with("5216861234567", "user", "Mensaje de familiar / agente", bot_id=43)
+        mock_get_history.assert_not_called()
+
+    @patch.object(main.db, "was_processed", return_value=False)
+    @patch.object(main.db, "mark_processed")
+    @patch.object(main.db, "get_active_bot_integration")
+    @patch.object(main.follow_ups, "cancel")
+    @patch.object(main.db, "save_message")
+    @patch.object(main.bots, "resolve_by_phone_number_id")
+    @patch.object(main, "forward_payload_to_external_webhook")
+    @patch.object(main.db, "get_history")
+    def test_process_message_with_bypass_prefix_variations(
+        self,
+        mock_get_history,
+        mock_forward,
+        mock_resolve,
+        mock_save_msg,
+        mock_cancel_follow_ups,
+        mock_get_integration,
+        mock_mark_processed,
+        mock_was_processed,
+    ):
+        mock_bot = MagicMock()
+        mock_bot.id = 43
+        mock_resolve.return_value = mock_bot
+        
+        # Configured with 10 digits without country code
+        mock_get_integration.return_value = {
+            "id": 100,
+            "config": {
+                "rules": [
+                    {
+                        "action": "forward_and_bypass",
+                        "webhook_url": "",
+                        "phone_numbers": ["6861234567"],
+                        "save_history": False
+                    }
+                ]
+            }
+        }
+        
+        # Incoming from Meta with 521 prefix
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {
+                                    "display_phone_number": "15551234567",
+                                    "phone_number_id": "w1",
+                                },
+                                "messages": [
+                                    {
+                                        "from": "5216861234567",
+                                        "id": "wamid.msg_var1",
+                                        "type": "text",
+                                        "text": {"body": "Mensaje desde 521"},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        with patch.object(
+            main.db,
+            "is_chatwoot_handoff_active",
+            new=AsyncMock(return_value=False),
+        ):
+            asyncio.run(main._process_message(payload))
+        
+        # Should be bypassed
+        mock_cancel_follow_ups.assert_called_once_with("5216861234567", 43)
+        mock_get_history.assert_not_called()
+
+    def test_is_phone_in_list_normalization(self):
+        from app.bot_control import is_phone_in_list
+
+        whitelist = ["6861234567", "+52 1 555 987 6543"]
+
+        self.assertTrue(is_phone_in_list("5216861234567", whitelist))
+        self.assertTrue(is_phone_in_list("526861234567", whitelist))
+        self.assertTrue(is_phone_in_list("6861234567", whitelist))
+        self.assertTrue(is_phone_in_list("525559876543", whitelist))
+        self.assertTrue(is_phone_in_list("5215559876543", whitelist))
+
+        self.assertFalse(is_phone_in_list("5216869999999", whitelist))
+        self.assertFalse(is_phone_in_list("", whitelist))
+        self.assertFalse(is_phone_in_list("123", whitelist))
+
+    @patch.object(main.db, "was_processed", return_value=False)
+    @patch.object(main.db, "mark_processed")
+    @patch.object(main.db, "get_active_bot_integration")
     @patch.object(main.db, "get_integration_secret_values")
     @patch.object(main.follow_ups, "cancel")
     @patch.object(main.db, "save_message")
     @patch.object(main.bots, "resolve_by_phone_number_id")
     @patch.object(main, "forward_payload_to_external_webhook")
     @patch.object(main.db, "get_history")
-    @patch.object(main.openai_client, "complete")
-    @patch.object(main.whatsapp_client, "send_text")
+    @patch.object(main.openai_client, "complete", new_callable=AsyncMock)
     @patch.object(main.leads, "process_reply", new_callable=AsyncMock)
-    @patch.object(main.external_actions, "process_reply", new_callable=AsyncMock)
-    @patch.object(main.calendar_client, "process_reply", new_callable=AsyncMock)
+    @patch.object(main.agenda_guard, "maybe_handle", new_callable=AsyncMock, return_value=(None, False))
     @patch.object(main, "_send_and_track", new_callable=AsyncMock)
     def test_process_message_no_bypass_if_number_not_whitelisted(
         self,
         mock_send_and_track,
-        mock_cal_reply,
-        mock_ext_reply,
+        mock_agenda_reply,
         mock_lead_reply,
-        mock_send_text,
         mock_openai,
         mock_get_history,
         mock_forward,
@@ -313,8 +474,6 @@ class RoutingRulesTests(unittest.TestCase):
         mock_get_history.return_value = []
         mock_openai.return_value = "Respuesta de la IA"
         mock_lead_reply.return_value = "Respuesta de la IA"
-        mock_cal_reply.return_value = ("Respuesta de la IA", False)
-        mock_ext_reply.return_value = "Respuesta de la IA"
         
         with patch.object(
             main.db,

@@ -88,21 +88,31 @@ def detect_control_command(text: str) -> str | None:
     return None
 
 
-def is_authorized_admin(wa_id: str, bot: bots.BotContext | None = None) -> bool:
-    """Verifica si el remitente está autorizado para ejecutar comandos de control."""
+def is_phone_in_list(wa_id: str, phone_list: list[str] | tuple[str, ...]) -> bool:
+    """Verifica si un número de teléfono coincide con alguno de la lista considerando prefijos (52/521/10 dígitos)."""
     clean_sender = _clean_phone(wa_id)
     if not clean_sender:
         return False
+    for p in phone_list:
+        clean_p = _clean_phone(p)
+        if not clean_p:
+            continue
+        if clean_sender == clean_p:
+            return True
+        if len(clean_p) == 10 and clean_sender == ("52" + clean_p):
+            return True
+        if len(clean_sender) == 10 and clean_p == ("52" + clean_sender):
+            return True
+    return False
 
-    # 1. Teléfonos administradores globales
-    admin_phones = [_clean_phone(p) for p in config.ADMIN_PHONE_NUMBERS if _clean_phone(p)]
-    if clean_sender in admin_phones:
+
+def is_authorized_admin(wa_id: str, bot: bots.BotContext | None = None) -> bool:
+    """Verifica si el remitente está autorizado para ejecutar comandos de control."""
+    if is_phone_in_list(wa_id, config.ADMIN_PHONE_NUMBERS):
         return True
 
-    # 2. Número display o WABA configurado en el propio bot
-    if bot:
-        bot_display = _clean_phone(bot.display_phone_number)
-        if bot_display and clean_sender == bot_display:
+    if bot and bot.display_phone_number:
+        if is_phone_in_list(wa_id, [bot.display_phone_number]):
             return True
 
     return False
