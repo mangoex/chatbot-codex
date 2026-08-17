@@ -356,7 +356,7 @@ class RoutingRulesTests(unittest.TestCase):
              patch.object(main.escalations, "record_if_escalated", AsyncMock()):
             for index, (media_type, mime) in enumerate((
                 ("image", "image/jpeg"),
-                ("audio", "audio/ogg"),
+                ("video", "video/mp4"),
                 ("document", "application/pdf"),
             )):
                 msg = {

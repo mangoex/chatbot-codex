@@ -18,6 +18,8 @@ from app import (
     admin,
     admin_tools,
     agenda_guard,
+    audio_transcriber,
+    bot_control,
     bots,
     calendar_client,
     client,
@@ -456,55 +458,105 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
 
     history = await db.get_history(wa_id, config.HISTORY_WINDOW, bot_id=bot.id)
 
-    # Caso A: media entrante. Las capacidades de lectura son opt-in por bot.
+    # Caso A: media entrante (audios se transcriben; imágenes/comprobantes u otros se delegan).
     if media_type:
-        saved_user_msg = user_text or f"[envió un archivo de tipo {media_type}]"
-        await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
-        if await db.is_chatwoot_handoff_active(bot.id, wa_id):
-            log.info("Relevo humano activo para bot %s y %s; IA en silencio.", bot.id, wa_id)
-            return
-        if bot.status == "paused":
-            log.info("Bot %s esta pausado. Ignorando respuesta a media de %s.", bot.id, wa_id)
-            return
-            
-        reply = await order_payments.handle_incoming_media(
-            bot_id=bot.id,
-            wa_id=wa_id,
-            media_type=media_type,
-            media_id=msg.get("media_id"),
-            media_mime=msg.get("media_mime"),
-            access_token=bot.whatsapp_access_token,
-        )
-        if reply is None:
-            reply = MEDIA_REPLY
-        await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
-        await whatsapp_client.send_text(
-            wa_id,
-            reply,
-            phone_number_id=bot.whatsapp_phone_number_id,
-            access_token=bot.whatsapp_access_token,
-        )
-        await escalations.record_if_escalated(
-            wa_id=wa_id,
-            user_text=saved_user_msg,
-            bot_reply=reply,
-            message_type=mtype,
-            media_type=media_type,
-            history=history,
-            bot_id=bot.id,
-        )
-        await follow_ups.schedule(wa_id, bot_id=bot.id)
-        log.info("Media recibida de %s (%s)", wa_id, media_type)
-        return
+        if media_type in ("audio", "voice"):
+            if await db.is_chatwoot_handoff_active(bot.id, wa_id):
+                await db.save_message(wa_id, "user", "[Nota de voz/Audio]", bot_id=bot.id)
+                log.info("Relevo humano activo para bot %s y %s; IA en silencio ante audio.", bot.id, wa_id)
+                return
+            if bot.status == "paused":
+                await db.save_message(wa_id, "user", "[Nota de voz/Audio]", bot_id=bot.id)
+                log.info("Bot %s esta pausado. Audio de %s ignorado.", bot.id, wa_id)
+                return
 
-    # Caso B: texto normal → guardar primero para que aparezca en admin de inmediato.
+            media_id = msg.get("media_id")
+            media_mime = msg.get("media_mime")
+            transcribed_text = ""
+            if media_id:
+                try:
+                    audio_bytes, detected_mime = await whatsapp_client.download_media(
+                        media_id,
+                        access_token=bot.whatsapp_access_token,
+                    )
+                    transcribed_text = await audio_transcriber.transcribe_audio(
+                        audio_bytes,
+                        media_mime or detected_mime,
+                    )
+                except Exception as exc:
+                    log.error("Error descargando o transcribiendo audio para bot %s: %s", bot.id, exc)
+
+            if not transcribed_text:
+                await db.save_message(wa_id, "user", "[Audio inaudible]", bot_id=bot.id)
+                fallback_reply = config.AUDIO_FALLBACK_REPLY
+                await db.save_message(wa_id, "assistant", fallback_reply, bot_id=bot.id)
+                await whatsapp_client.send_text(
+                    wa_id,
+                    fallback_reply,
+                    phone_number_id=bot.whatsapp_phone_number_id,
+                    access_token=bot.whatsapp_access_token,
+                )
+                log.info("Audio inaudible o fallido de %s, respuesta de fallback enviada", wa_id)
+                return
+
+            user_text = transcribed_text
+            log.info("Audio de %s transcrito exitosamente: '%s'", wa_id, user_text[:60])
+        else:
+            saved_user_msg = user_text or f"[envió un archivo de tipo {media_type}]"
+            await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
+            if await db.is_chatwoot_handoff_active(bot.id, wa_id):
+                log.info("Relevo humano activo para bot %s y %s; IA en silencio.", bot.id, wa_id)
+                return
+            if bot.status == "paused":
+                log.info("Bot %s esta pausado. Ignorando respuesta a media de %s.", bot.id, wa_id)
+                return
+                
+            reply = await order_payments.handle_incoming_media(
+                bot_id=bot.id,
+                wa_id=wa_id,
+                media_type=media_type,
+                media_id=msg.get("media_id"),
+                media_mime=msg.get("media_mime"),
+                access_token=bot.whatsapp_access_token,
+            )
+            if reply is None:
+                reply = MEDIA_REPLY
+            await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
+            await whatsapp_client.send_text(
+                wa_id,
+                reply,
+                phone_number_id=bot.whatsapp_phone_number_id,
+                access_token=bot.whatsapp_access_token,
+            )
+            await escalations.record_if_escalated(
+                wa_id=wa_id,
+                user_text=saved_user_msg,
+                bot_reply=reply,
+                message_type=mtype,
+                media_type=media_type,
+                history=history,
+                bot_id=bot.id,
+            )
+            await follow_ups.schedule(wa_id, bot_id=bot.id)
+            log.info("Media recibida de %s (%s)", wa_id, media_type)
+            return
+
+    # Caso B: texto normal (o audio transcrito) → guardar primero para que aparezca en admin de inmediato.
     if not user_text.strip():
         return  # nada que procesar
 
     await db.save_message(wa_id, "user", user_text, bot_id=bot.id)
+
+    # Comandos de control administrativo (Pausa / Seguir)
+    control_cmd = bot_control.detect_control_command(user_text)
+    if control_cmd and bot_control.is_authorized_admin(wa_id, bot):
+        await bot_control.handle_control_command(bot, wa_id, control_cmd)
+        return
+
     if await db.is_chatwoot_handoff_active(bot.id, wa_id):
         log.info("Relevo humano activo para bot %s y %s; IA en silencio.", bot.id, wa_id)
         return
+
     if bot.status == "paused":
         log.info("Bot %s esta pausado. Mensaje de %s guardado, no se responde.", bot.id, wa_id)
         return

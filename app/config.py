@@ -52,6 +52,14 @@ OPENAI_TIMEOUT_SECONDS = _int("OPENAI_TIMEOUT_SECONDS", "45")
 OPENAI_MAX_TOKENS = _int("OPENAI_MAX_TOKENS", "1000")
 EMBEDDING_DIMENSIONS = _int("EMBEDDING_DIMENSIONS", "1536")
 
+# Transcripcion de audio con Whisper
+WHISPER_MODEL = os.getenv("WHISPER_MODEL", "whisper-1")
+WHISPER_API_KEY = os.getenv("WHISPER_API_KEY", "")
+AUDIO_FALLBACK_REPLY = os.getenv(
+    "AUDIO_FALLBACK_REPLY",
+    "No alcancé a escuchar con claridad tu mensaje de voz. ¿Podrías repetírmelo o escribírmelo por texto?",
+)
+
 # Asistente opcional del panel para crear/editar prompts. Si se dejan vacias,
 # usa la configuracion global de OpenAI/OpenRouter.
 PROMPT_ASSISTANT_PROVIDER = _env("PROMPT_ASSISTANT_PROVIDER", default="openai_compatible")
@@ -78,6 +86,11 @@ FOLLOW_UP_MINUTES = _int("FOLLOW_UP_MINUTES", "10")
 
 ADMIN_USER = os.getenv("ADMIN_USER", "")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+ADMIN_PHONE_NUMBERS = [
+    p.strip().replace("+", "").replace(" ", "").replace("-", "")
+    for p in os.getenv("ADMIN_PHONE_NUMBERS", "").split(",")
+    if p.strip()
+]
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 INTEGRATION_SECRET_KEY = os.getenv("INTEGRATION_SECRET_KEY", "")
 KNOWLEDGE_UPLOAD_MAX_BYTES = _int("KNOWLEDGE_UPLOAD_MAX_BYTES", str(10 * 1024 * 1024))
