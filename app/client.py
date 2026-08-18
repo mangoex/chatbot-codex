@@ -1291,6 +1291,26 @@ async def client_app(
     routing_save_history = routing_config.get("save_history", False)
     routing_token_saved = bool(routing_secrets.get("webhook_auth_token"))
 
+    # Easybroker integration
+    easybroker_integration = await db.get_bot_integration_by_type(bot_id, "easybroker")
+    easybroker_config = {}
+    easybroker_enabled = False
+    easybroker_secrets = {}
+    if easybroker_integration:
+        easybroker_config = easybroker_integration.get("config") or {}
+        easybroker_enabled = easybroker_integration.get("enabled", False)
+        enc_secrets = await db.get_integration_secret_values(int(easybroker_integration["id"]))
+        if "api_key" in enc_secrets:
+            easybroker_secrets["api_key"] = secure_store.decrypt_secret(enc_secrets["api_key"]) or ""
+    easybroker_card_html = _render_easybroker_card(
+        bot_id=bot_id,
+        session=session,
+        enabled=easybroker_enabled,
+        config_data=easybroker_config,
+        secrets=easybroker_secrets,
+        csrf_token=csrf_token,
+    )
+
     github_integration = await db.get_bot_integration_by_type(bot_id, "github_repository")
     github_config = {
         "mode": "humanio_managed",
@@ -3111,6 +3131,8 @@ async def client_app(
             </div>
           </form>
         </div>
+        
+        {easybroker_card_html}
       </div>
       
       <!-- Skill Templates Catalog -->
@@ -4003,6 +4025,92 @@ async def client_routing_rules_save(
         
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&saved=1", status_code=302)
 
+
+@router.post("/bots/{bot_id}/integrations/easybroker")
+async def client_easybroker_save(
+    request: Request,
+    bot_id: int,
+    enabled: str | None = Form(None),
+    api_key: str = Form(""),
+    auto_sync: str | None = Form(None),
+    lead_forwarding: str | None = Form(None),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+
+    clean_key = api_key.strip()
+    is_enabled = enabled == "on"
+    should_auto_sync = auto_sync == "on"
+    should_lead_forward = lead_forwarding == "on"
+
+    integration = await db.get_bot_integration_by_type(bot_id, "easybroker")
+    existing_cfg = (integration.get("config") or {}) if integration else {}
+
+    config_data = {
+        **existing_cfg,
+        "auto_sync": should_auto_sync,
+        "lead_forwarding": should_lead_forward,
+    }
+
+    if integration:
+        integration_id = int(integration["id"])
+        await db.update_bot_integration(
+            bot_id=bot_id,
+            integration_id=integration_id,
+            integration_type="easybroker",
+            name="Easybroker",
+            config_data=config_data,
+            enabled=is_enabled,
+        )
+    else:
+        integration_id = await db.create_bot_integration(
+            bot_id=bot_id,
+            integration_type="easybroker",
+            name="Easybroker",
+            config_data=config_data,
+            enabled=is_enabled,
+        )
+
+    if clean_key and not re.match(r"^\*+$", clean_key):
+        encrypted_key = secure_store.encrypt_secret(clean_key)
+        await db.upsert_integration_secret(integration_id, "api_key", encrypted_key)
+
+        if is_enabled and should_auto_sync:
+            from app import easybroker_client
+            try:
+                await easybroker_client.sync_properties_to_bot_knowledge(bot_id, clean_key)
+            except Exception as exc:
+                log.warning("Fallo en sync inicial de Easybroker: %s", exc)
+
+    return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&saved=1", status_code=302)
+
+
+@router.post("/bots/{bot_id}/integrations/easybroker/sync")
+async def client_easybroker_sync_now(
+    request: Request,
+    bot_id: int,
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+
+    integration = await db.get_active_bot_integration(bot_id, "easybroker")
+    if not integration:
+        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&error=easybroker_not_active", status_code=302)
+
+    enc_secrets = await db.get_integration_secret_values(int(integration["id"]))
+    api_key = secure_store.decrypt_secret(enc_secrets.get("api_key") or "")
+    if not api_key:
+        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&error=missing_api_key", status_code=302)
+
+    from app import easybroker_client
+    try:
+        await easybroker_client.sync_properties_to_bot_knowledge(bot_id, api_key)
+    except Exception as exc:
+        log.warning("Fallo en sincronización manual de Easybroker: %s", exc)
+
+    return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&synced=1", status_code=302)
+
+
 @router.post("/bots/{bot_id}/skills/templates/install")
 async def client_install_bot_skill_template(
     request: Request,
@@ -4493,3 +4601,94 @@ def _render_skill_templates(bot_id: int, session: dict) -> str:
             """
         )
     return "\n".join(html_cards)
+
+
+def _render_easybroker_card(
+    bot_id: int,
+    session: dict,
+    enabled: bool,
+    config_data: dict,
+    secrets: dict,
+    csrf_token: str,
+) -> str:
+    key_val = secrets.get("api_key") or ""
+    masked_key = "********" if key_val else ""
+    key_saved = bool(key_val)
+    props_count = config_data.get("properties_count", 0)
+    last_synced = config_data.get("last_synced_at", "")
+    auto_sync = config_data.get("auto_sync", True)
+    leads_forward = config_data.get("lead_forwarding", True)
+    is_viewer = session.get("role") == "client_viewer"
+    disabled_attr = "disabled" if is_viewer else ""
+    last_synced_label = last_synced[:19].replace("T", " ") if last_synced else "Nunca"
+
+    status_badge = (
+        '<span class="badge success">Conectado</span>'
+        if enabled
+        else '<span class="badge warning">Inactivo</span>'
+    )
+    checked_enabled = "checked" if enabled else ""
+    checked_auto_sync = "checked" if auto_sync else ""
+    checked_leads = "checked" if leads_forward else ""
+    sync_disabled_attr = "disabled" if (is_viewer or not key_saved) else ""
+
+    return f"""
+        <div class="card">
+          <div class="card-header">
+            <h2>Easybroker (Inmobiliaria)</h2>
+            <p>Conecta tu cuenta de Easybroker para que el Bot acceda a tu catálogo de propiedades y registre prospectos interesados de forma autónoma.</p>
+          </div>
+          
+          <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <span class="bold-text">Estado de Easybroker</span>
+            {status_badge}
+          </div>
+          
+          <form method="post" action="/client/bots/{bot_id}/integrations/easybroker?csrf_token={html.escape(csrf_token)}">
+            <div class="checkbox-group">
+              <input type="checkbox" name="enabled" id="easybrokerEnabledToggle" {checked_enabled}>
+              <label for="easybrokerEnabledToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar Integración con Easybroker</label>
+            </div>
+            
+            <label>API Key de Easybroker</label>
+            <div class="password-wrapper">
+              <input type="password" name="api_key" placeholder="Pega tu API Key de Easybroker" autocomplete="new-password" value="{html.escape(masked_key)}">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Encuéntrala en tu panel de Easybroker > Configuración > Integraciones y API.</span>
+            
+            <div class="checkbox-group" style="margin-bottom:10px;">
+              <input type="checkbox" name="auto_sync" id="easybrokerAutoSyncToggle" {checked_auto_sync}>
+              <label for="easybrokerAutoSyncToggle" style="margin:0; font-weight:500; cursor:pointer; font-size:13px;">Sincronizar propiedades en la Base de Conocimiento (RAG)</label>
+            </div>
+            
+            <div class="checkbox-group" style="margin-bottom:16px;">
+              <input type="checkbox" name="lead_forwarding" id="easybrokerLeadForwardToggle" {checked_leads}>
+              <label for="easybrokerLeadForwardToggle" style="margin:0; font-weight:500; cursor:pointer; font-size:13px;">Registrar prospectos / leads de WhatsApp en Easybroker</label>
+            </div>
+            
+            <div style="background:var(--bg-subtle, #f8fafc); border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:16px; font-size:12.5px;">
+              <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                <span class="muted-text">Propiedades sincronizadas:</span>
+                <strong style="color:var(--ink);">{props_count}</strong>
+              </div>
+              <div style="display:flex; justify-content:space-between;">
+                <span class="muted-text">Última sincronización:</span>
+                <span style="color:var(--ink);">{last_synced_label}</span>
+              </div>
+            </div>
+            
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="btn primary-btn" type="submit" {disabled_attr}>Guardar Configuración</button>
+            </div>
+          </form>
+          
+          <form method="post" action="/client/bots/{bot_id}/integrations/easybroker/sync?csrf_token={html.escape(csrf_token)}" style="margin-top:10px;">
+            <button class="btn secondary" type="submit" {sync_disabled_attr} style="width:100%; justify-content:center;">
+              🔄 Sincronizar Catálogo Ahora
+            </button>
+          </form>
+        </div>
+    """

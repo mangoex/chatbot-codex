@@ -14,7 +14,7 @@ from app import db, secure_store, skill_runtime
 log = logging.getLogger("external-actions")
 
 _MARKER_RE = re.compile(
-    r"\[\[(WEBHOOK_POST|EXTERNAL_API_REQUEST|CRM_LEAD):\s*(\{.*?\})\s*\]\]",
+    r"\[\[(WEBHOOK_POST|EXTERNAL_API_REQUEST|CRM_LEAD|EASYBROKER_LEAD):\s*(\{.*?\})\s*\]\]",
     re.DOTALL,
 )
 
@@ -22,12 +22,14 @@ _ACTION_MAP = {
     "WEBHOOK_POST": "webhook_post",
     "EXTERNAL_API_REQUEST": "external_api_request",
     "CRM_LEAD": "crm_lead",
+    "EASYBROKER_LEAD": "easybroker_lead",
 }
 
 _INTEGRATION_BY_ACTION = {
     "webhook_post": "webhook",
     "external_api_request": "external_api",
     "crm_lead": "crm",
+    "easybroker_lead": "easybroker",
 }
 
 
@@ -267,6 +269,11 @@ async def _skill_on(bot_id: int | None, integration_type: str) -> bool:
         return await skill_runtime.external_api_skill_enabled(bot_id)
     if integration_type == "crm":
         return await skill_runtime.crm_skill_enabled(bot_id)
+    if integration_type == "easybroker":
+        if not bot_id:
+            return False
+        integ = await db.get_active_bot_integration(bot_id, "easybroker")
+        return bool(integ and integ.get("enabled"))
     return False
 
 
@@ -287,6 +294,23 @@ async def _execute_action(bot_id: int | None, wa_id: str, action: dict[str, Any]
 
     encrypted = await db.get_integration_secret_values(int(integration["id"]))
     secrets = _decrypt_secrets(encrypted)
+
+    if action_type == "easybroker_lead":
+        api_key = secrets.get("api_key") or ""
+        from app import easybroker_client
+        ok = await easybroker_client.send_contact_request(api_key, payload)
+        await db.record_external_action_run(
+            bot_id=bot_id,
+            wa_id=wa_id,
+            action_type=action_type,
+            integration_id=int(integration["id"]),
+            operation="contact_request",
+            status="success" if ok else "failed",
+            request_data=_redact_request({"payload": payload}),
+            error_message="" if ok else "Fallo al enviar a Easybroker",
+        )
+        return ok
+
     request_data = build_request(action, integration, secrets)
     if not request_data:
         await db.record_external_action_run(
@@ -374,6 +398,11 @@ async def system_instructions(bot_id: int | None = None) -> str:
         parts.append(
             "- CRM: cuando el usuario comparta datos de lead o cliente que deban guardarse, "
             'agrega [[CRM_LEAD: {"name": "", "phone": "", "status": "new", "notes": ""}]].'
+        )
+    if await _skill_on(bot_id, "easybroker"):
+        parts.append(
+            "- Easybroker CRM: cuando el prospecto muestre interés en una propiedad o comparta sus datos de contacto, "
+            'agrega al final [[EASYBROKER_LEAD: {"name": "Nombre", "phone": "Teléfono", "email": "Email opcional", "property_id": "EB-ID opcional", "message": "Resumen del interés"}]].'
         )
         
     try:
