@@ -4034,6 +4034,7 @@ async def client_easybroker_save(
     api_key: str = Form(""),
     auto_sync: str | None = Form(None),
     lead_forwarding: str | None = Form(None),
+    sync_interval_hours: int = Form(12),
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
@@ -4042,6 +4043,7 @@ async def client_easybroker_save(
     is_enabled = enabled == "on"
     should_auto_sync = auto_sync == "on"
     should_lead_forward = lead_forwarding == "on"
+    interval_hours = max(1, int(sync_interval_hours or 12))
 
     integration = await db.get_bot_integration_by_type(bot_id, "easybroker")
     existing_cfg = (integration.get("config") or {}) if integration else {}
@@ -4050,6 +4052,7 @@ async def client_easybroker_save(
         **existing_cfg,
         "auto_sync": should_auto_sync,
         "lead_forwarding": should_lead_forward,
+        "sync_interval_hours": interval_hours,
     }
 
     if integration:
@@ -4618,9 +4621,15 @@ def _render_easybroker_card(
     last_synced = config_data.get("last_synced_at", "")
     auto_sync = config_data.get("auto_sync", True)
     leads_forward = config_data.get("lead_forwarding", True)
+    sync_interval_hours = int(config_data.get("sync_interval_hours") or 12)
     is_viewer = session.get("role") == "client_viewer"
     disabled_attr = "disabled" if is_viewer else ""
     last_synced_label = last_synced[:19].replace("T", " ") if last_synced else "Nunca"
+
+    opt_1_sel = 'selected' if sync_interval_hours == 1 else ''
+    opt_6_sel = 'selected' if sync_interval_hours == 6 else ''
+    opt_12_sel = 'selected' if sync_interval_hours == 12 else ''
+    opt_24_sel = 'selected' if sync_interval_hours == 24 else ''
 
     status_badge = (
         '<span class="badge success">Conectado</span>'
@@ -4664,6 +4673,14 @@ def _render_easybroker_card(
               <label for="easybrokerAutoSyncToggle" style="margin:0; font-weight:500; cursor:pointer; font-size:13px;">Sincronizar propiedades en la Base de Conocimiento (RAG)</label>
             </div>
             
+            <label>Frecuencia de Actualización Automática</label>
+            <select name="sync_interval_hours" style="margin-bottom:14px;">
+              <option value="1" {opt_1_sel}>Cada 1 hora</option>
+              <option value="6" {opt_6_sel}>Cada 6 horas</option>
+              <option value="12" {opt_12_sel}>Cada 12 horas (Recomendado)</option>
+              <option value="24" {opt_24_sel}>Cada 24 horas (1 vez al día)</option>
+            </select>
+
             <div class="checkbox-group" style="margin-bottom:16px;">
               <input type="checkbox" name="lead_forwarding" id="easybrokerLeadForwardToggle" {checked_leads}>
               <label for="easybrokerLeadForwardToggle" style="margin:0; font-weight:500; cursor:pointer; font-size:13px;">Registrar prospectos / leads de WhatsApp en Easybroker</label>

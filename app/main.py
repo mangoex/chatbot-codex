@@ -26,6 +26,7 @@ from app import (
     config,
     core_replies,
     db,
+    easybroker_client,
     escalations,
     external_actions,
     follow_ups,
@@ -65,9 +66,13 @@ async def lifespan(_app: FastAPI):
         cleared = await db.mark_all_follow_ups_sent()
         if cleared:
             log.info("Follow-ups pendientes desactivados al arrancar: %d", cleared)
+    
+    eb_task = asyncio.create_task(easybroker_client.run_sync_loop())
     yield
     if task:
         task.cancel()
+    if eb_task:
+        eb_task.cancel()
     await db.close_pool()
 
 

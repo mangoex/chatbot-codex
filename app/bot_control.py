@@ -41,6 +41,16 @@ RESUME_COMMANDS = {
     "resume",
 }
 
+SYNC_PROPERTIES_COMMANDS = {
+    "actualizar propiedades",
+    "actualizar catalogo",
+    "actualizar catálogo",
+    "actualizar inmuebles",
+    "sync easybroker",
+    "sincronizar propiedades",
+    "sync propiedades",
+}
+
 PAUSE_CONFIRMATION_TEXT = (
     "⏸️ Bot pausado exitosamente. Ya no responderá mensajes automáticos "
     "hasta recibir el comando \"Seguir\"."
@@ -76,7 +86,7 @@ def normalize_command(text: str) -> str:
 def detect_control_command(text: str) -> str | None:
     """
     Detecta si el texto es un comando de control de bot.
-    Devuelve 'pause', 'resume' o None.
+    Devuelve 'pause', 'resume', 'sync_properties' o None.
     """
     cmd = normalize_command(text)
     if not cmd:
@@ -85,6 +95,8 @@ def detect_control_command(text: str) -> str | None:
         return "pause"
     if cmd in RESUME_COMMANDS:
         return "resume"
+    if cmd in SYNC_PROPERTIES_COMMANDS:
+        return "sync_properties"
     return None
 
 
@@ -124,7 +136,7 @@ async def handle_control_command(
     command: str,
 ) -> dict:
     """
-    Ejecuta el comando de control (pause / resume), actualiza el estado en BD
+    Ejecuta el comando de control (pause / resume / sync_properties), actualiza el estado en BD
     y responde confirmación por WhatsApp.
     """
     if command == "pause":
@@ -138,6 +150,24 @@ async def handle_control_command(
         reply = RESUME_CONFIRMATION_TEXT
         action = "resumed"
         log.info("Comando SEGUIR ejecutado por admin %s para bot %s (%s)", wa_id, bot.id, bot.name)
+    elif command == "sync_properties":
+        integ = await db.get_active_bot_integration(bot.id, "easybroker")
+        if not integ or not integ.get("enabled"):
+            reply = "ℹ️ La integración con Easybroker no está activa en este bot."
+            action = "easybroker_not_active"
+        else:
+            enc_secrets = await db.get_integration_secret_values(int(integ["id"]))
+            from app import secure_store, easybroker_client
+            api_key = secure_store.decrypt_secret(enc_secrets.get("api_key") or "")
+            if not api_key:
+                reply = "⚠️ Falta configurar la API Key de Easybroker en el panel de integraciones."
+                action = "missing_api_key"
+            else:
+                res = await easybroker_client.sync_properties_to_bot_knowledge(bot.id, api_key)
+                count = res.get("synced_count", 0)
+                reply = f"🔄 Catálogo de Easybroker actualizado exitosamente: {count} propiedades sincronizadas en la Base de Conocimiento."
+                action = "properties_synced"
+        log.info("Comando SYNC_PROPERTIES ejecutado por admin %s para bot %s (%s): %s", wa_id, bot.id, bot.name, action)
     else:
         raise ValueError(f"Comando de control no reconocido: {command}")
 

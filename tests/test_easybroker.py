@@ -203,3 +203,64 @@ async def test_easybroker_system_instructions():
         instructions = await external_actions.system_instructions(bot_id=147)
         assert "Easybroker CRM" in instructions
         assert "EASYBROKER_LEAD" in instructions
+
+
+def test_is_sync_due():
+    """Verifica el cálculo de si un bot debe sincronizarse según su intervalo y última sincronización."""
+    from datetime import datetime, timezone, timedelta
+
+    # 1. Nunca sincronizado -> True
+    cfg_never = {"auto_sync": True, "sync_interval_hours": 12, "last_synced_at": ""}
+    assert easybroker_client.is_sync_due(cfg_never) is True
+
+    # 2. Auto sync deshabilitado -> False
+    cfg_disabled = {"auto_sync": False, "sync_interval_hours": 12, "last_synced_at": ""}
+    assert easybroker_client.is_sync_due(cfg_disabled) is False
+
+    # 3. Sincronizado recientemente (hace 2 horas de un intervalo de 6) -> False
+    now = datetime.now(timezone.utc)
+    two_hours_ago = (now - timedelta(hours=2)).isoformat()
+    cfg_recent = {"auto_sync": True, "sync_interval_hours": 6, "last_synced_at": two_hours_ago}
+    assert easybroker_client.is_sync_due(cfg_recent) is False
+
+    # 4. Sincronizado hace 13 horas de un intervalo de 12 -> True
+    thirteen_hours_ago = (now - timedelta(hours=13)).isoformat()
+    cfg_expired = {"auto_sync": True, "sync_interval_hours": 12, "last_synced_at": thirteen_hours_ago}
+    assert easybroker_client.is_sync_due(cfg_expired) is True
+
+
+@pytest.mark.asyncio
+async def test_sync_due_bots():
+    """Verifica que sync_due_bots ejecute la sincronización solo para los bots que lo requieren."""
+    active_integrations = [
+        {
+            "id": 1,
+            "bot_id": 101,
+            "enabled": True,
+            "config": {"auto_sync": True, "sync_interval_hours": 6, "last_synced_at": ""},
+        },
+        {
+            "id": 2,
+            "bot_id": 102,
+            "enabled": True,
+            "config": {"auto_sync": False, "sync_interval_hours": 12, "last_synced_at": ""},
+        },
+    ]
+
+    with patch("app.db._pool") as mock_pool, \
+         patch("app.db.get_integration_secret_values", new_callable=AsyncMock) as mock_secrets, \
+         patch("app.secure_store.decrypt_secret", return_value="valid_key"), \
+         patch("app.easybroker_client.sync_properties_to_bot_knowledge", new_callable=AsyncMock) as mock_sync:
+
+        mock_conn = AsyncMock()
+        mock_conn.fetch.return_value = active_integrations
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+        mock_secrets.return_value = {"api_key": "enc_key"}
+        mock_sync.return_value = {"success": True, "synced_count": 5}
+
+        synced_bots = await easybroker_client.sync_due_bots()
+
+        assert len(synced_bots) == 1
+        assert synced_bots[0]["bot_id"] == 101
+        mock_sync.assert_awaited_once_with(101, "valid_key")
+

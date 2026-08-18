@@ -44,6 +44,14 @@ class BotControlUnitTests(unittest.TestCase):
         self.assertEqual(bot_control.detect_control_command("seguir bot"), "resume")
         self.assertEqual(bot_control.detect_control_command("prender bot"), "resume")
 
+        # Sync Easybroker properties variants
+        self.assertEqual(bot_control.detect_control_command("actualizar propiedades"), "sync_properties")
+        self.assertEqual(bot_control.detect_control_command("actualizar catalogo"), "sync_properties")
+        self.assertEqual(bot_control.detect_control_command("actualizar catálogo"), "sync_properties")
+        self.assertEqual(bot_control.detect_control_command("sync easybroker"), "sync_properties")
+        self.assertEqual(bot_control.detect_control_command("sincronizar propiedades"), "sync_properties")
+        self.assertEqual(bot_control.detect_control_command("actualizar inmuebles"), "sync_properties")
+
         # Regular messages that should not trigger control
         self.assertIsNone(bot_control.detect_control_command("Hola, quiero agendar"))
         self.assertIsNone(bot_control.detect_control_command("Haremos una pausa comercial para el evento"))
@@ -147,6 +155,76 @@ class BotControlUnitTests(unittest.TestCase):
         mock_save_message.assert_awaited_once()
         mock_send_text.assert_awaited_once()
         self.assertIn("reanudado", mock_send_text.call_args[0][1].lower())
+
+    @patch("app.db.get_active_bot_integration", new_callable=AsyncMock)
+    @patch("app.db.get_integration_secret_values", new_callable=AsyncMock)
+    @patch("app.secure_store.decrypt_secret", return_value="eb_api_key_123")
+    @patch("app.easybroker_client.sync_properties_to_bot_knowledge", new_callable=AsyncMock)
+    @patch("app.db.save_message", new_callable=AsyncMock)
+    @patch("app.whatsapp_client.send_text", new_callable=AsyncMock)
+    def test_handle_sync_properties_command_success(
+        self,
+        mock_send_text,
+        mock_save_message,
+        mock_sync_props,
+        mock_decrypt,
+        mock_get_secrets,
+        mock_get_integ,
+    ):
+        bot = bots.BotContext(
+            id=7,
+            client_id=1,
+            slug="real-estate-bot",
+            name="Inmobiliaria Bot",
+            whatsapp_phone_number_id="phone_id_7",
+            whatsapp_access_token="token_7",
+            status="active",
+        )
+        mock_get_integ.return_value = {"id": 10, "enabled": True}
+        mock_get_secrets.return_value = {"api_key": "enc_key"}
+        mock_sync_props.return_value = {"success": True, "synced_count": 12}
+
+        res = asyncio.run(
+            bot_control.handle_control_command(
+                bot=bot,
+                wa_id="5216861234567",
+                command="sync_properties",
+            )
+        )
+
+        self.assertEqual(res["action"], "properties_synced")
+        mock_sync_props.assert_awaited_once_with(7, "eb_api_key_123")
+        mock_save_message.assert_awaited_once()
+        mock_send_text.assert_awaited_once()
+        self.assertIn("12", mock_send_text.call_args[0][1])
+
+    @patch("app.db.get_active_bot_integration", new_callable=AsyncMock, return_value=None)
+    @patch("app.db.save_message", new_callable=AsyncMock)
+    @patch("app.whatsapp_client.send_text", new_callable=AsyncMock)
+    def test_handle_sync_properties_command_not_active(
+        self, mock_send_text, mock_save_message, mock_get_integ
+    ):
+        bot = bots.BotContext(
+            id=8,
+            client_id=1,
+            slug="no-eb-bot",
+            name="Normal Bot",
+            whatsapp_phone_number_id="phone_id_8",
+            whatsapp_access_token="token_8",
+            status="active",
+        )
+
+        res = asyncio.run(
+            bot_control.handle_control_command(
+                bot=bot,
+                wa_id="5216861234567",
+                command="sync_properties",
+            )
+        )
+
+        self.assertEqual(res["action"], "easybroker_not_active")
+        mock_send_text.assert_awaited_once()
+        self.assertIn("no está activa", mock_send_text.call_args[0][1].lower())
 
 
 class BotControlWebhookIntegrationTests(unittest.TestCase):

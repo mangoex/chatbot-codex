@@ -228,3 +228,86 @@ async def send_contact_request(api_key: str, lead_data: dict[str, Any]) -> bool:
     except Exception as exc:
         log.warning("Fallo al enviar prospecto a Easybroker: %s", exc)
         return False
+
+
+def is_sync_due(config_data: dict[str, Any]) -> bool:
+    """Calcula si una integración de Easybroker debe sincronizarse según su intervalo."""
+    if not config_data.get("auto_sync", True):
+        return False
+
+    last_synced_str = config_data.get("last_synced_at")
+    if not last_synced_str:
+        return True
+
+    from datetime import datetime, timezone, timedelta
+    try:
+        last_synced = datetime.fromisoformat(str(last_synced_str))
+        if last_synced.tzinfo is None:
+            last_synced = last_synced.replace(tzinfo=timezone.utc)
+    except Exception:
+        return True
+
+    interval_hours = int(config_data.get("sync_interval_hours") or 12)
+    interval_hours = max(1, interval_hours)
+    now = datetime.now(timezone.utc)
+    return (now - last_synced) >= timedelta(hours=interval_hours)
+
+
+async def sync_due_bots() -> list[dict[str, Any]]:
+    """Busca todas las integraciones activas de Easybroker y sincroniza aquellas cuyo intervalo haya vencido."""
+    import asyncio
+    synced: list[dict[str, Any]] = []
+    if not db._pool:
+        return synced
+
+    try:
+        async with db._pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT id, bot_id, enabled, config
+                FROM bot_integrations
+                WHERE integration_type = 'easybroker' AND enabled = TRUE
+                """
+            )
+    except Exception as exc:
+        log.warning("Error consultando integraciones activas de Easybroker: %s", exc)
+        return synced
+
+    for r in rows:
+        cfg = r["config"] if isinstance(r["config"], dict) else {}
+        if not is_sync_due(cfg):
+            continue
+
+        bot_id = int(r["bot_id"])
+        enc_secrets = await db.get_integration_secret_values(int(r["id"]))
+        api_key = secure_store.decrypt_secret(enc_secrets.get("api_key") or "")
+        if not api_key:
+            continue
+
+        try:
+            res = await sync_properties_to_bot_knowledge(bot_id, api_key)
+            if isinstance(res, dict):
+                res.setdefault("bot_id", bot_id)
+            synced.append(res)
+        except Exception as exc:
+            log.warning("Error en sincronización periódica de Easybroker para bot %s: %s", bot_id, exc)
+
+    return synced
+
+
+async def run_sync_loop(interval_seconds: int = 900) -> None:
+    """Loop en segundo plano que revisa periódicamente si hay bots pendientes de sincronizar con Easybroker."""
+    import asyncio
+    log.info("Easybroker background sync loop iniciado (revisión cada %ds)", interval_seconds)
+    while True:
+        try:
+            await asyncio.sleep(interval_seconds)
+            synced = await sync_due_bots()
+            if synced:
+                log.info("Easybroker sync loop: sincronizados %d bots", len(synced))
+        except asyncio.CancelledError:
+            log.info("Easybroker background sync loop detenido.")
+            break
+        except Exception as exc:
+            log.exception("Error en Easybroker sync loop: %s", exc)
+
