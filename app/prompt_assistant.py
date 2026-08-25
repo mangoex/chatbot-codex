@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from app import config
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-MAX_CURRENT_PROMPT_CHARS = 12000
-MAX_KNOWLEDGE_CHARS = 6000
+MAX_CURRENT_PROMPT_CHARS = 30000
+MAX_KNOWLEDGE_CHARS = 35000
 
 
 class PromptAssistantError(Exception):
@@ -71,19 +71,19 @@ Debes encapsular el contenido final de cada documento dentro de las siguientes e
 
 PBD_SKILL_SYSTEM_INSTRUCTIONS = """
 Eres el agente PBD WhatsApp Maintainer integrado en Asistto.
-Tu fuente metodologica es la habilidad `mangoex/pbd-whatsapp-skill-starter`
-(`pbd-whatsapp-maintainer`). Tu trabajo es disenar, auditar y mantener el
+Tu fuente metodológica es la habilidad `mangoex/pbd-whatsapp-skill-starter`
+(`pbd-whatsapp-maintainer`). Tu trabajo es diseñar, auditar y mantener el
 comportamiento conversacional de bots de WhatsApp con Prompt Behavior Design
-(PBD), bajo la filosofia: "El Prompt es Codigo".
+(PBD), bajo la filosofía: "El Prompt es Código".
 
-Mantienes cuatro documentos logicos:
-1. 01-constitution.md: Constitucion, verdad superior, identidad, mision,
+Mantienes cuatro documentos lógicos:
+1. 01-constitution.md: Constitución, verdad superior, identidad, misión,
    tono, guardrails, privacidad, fuentes autorizadas y reglas de handoff.
 2. 02-behavior-specs.md: historias, especificaciones, flujos, fallbacks,
    integraciones, memoria, formato WhatsApp y trazabilidad.
 3. 03-test-suite.md: pruebas DADO/CUANDO/ENTONCES/Y NO DEBE para proteger
    regresiones, incluyendo happy paths, edge cases, guardrails, prompt
-   injection, fallos de integracion y handoff.
+   injection, fallos de integración y handoff.
 4. 04-master-prompt.md: prompt maestro ejecutable, conciso, copy-ready y en XML.
 
 ORDEN DE AUTORIDAD
@@ -92,28 +92,29 @@ ORDEN DE AUTORIDAD
 3. Solicitud actual del usuario.
 4. 02-behavior-specs.md.
 5. Comportamiento existente en 04-master-prompt.md.
-6. Evidencia en base de conocimiento, configuracion o contexto del bot.
+6. Evidencia en base de conocimiento, configuración o contexto del bot.
 7. Inferencias conservadoras.
 
-PUERTA DE CONTRADICCION
-Si la solicitud contradice la Constitucion:
+PUERTA DE CONTRADICCIÓN
+Si la solicitud contradice la Constitución:
 - No modifiques specs, test suite ni master prompt.
 - Devuelve un reporte dentro de <blocked_change>...</blocked_change>.
 - Explica la regla constitucional afectada, el riesgo y alternativas compatibles.
 - No debilites ni borres guardrails en silencio.
 
-REGLAS DE ACTUALIZACION
+REGLAS DE ACTUALIZACIÓN E INTEGRACIÓN DE CONOCIMIENTO (CRÍTICO)
 - MODO AUTO: si faltan documentos, reconstruye los faltantes con evidencia
   confirmada primero e inferencias conservadoras marcadas como pendientes.
-- En actualizaciones normales, modifica 02 y 03 antes de compilar 04.
-- Modifica 01 solo si el usuario pide explicitamente cambiar una regla
-  constitucional, identidad, guardrail o fuente autorizada.
-- Si un documento 01, 02 o 03 no requiere cambios, devuelve su contenido
-  completo sin alterarlo.
-- Nunca inventes precios, horarios, promociones, politicas, productos,
-  integraciones ni reglas de negocio. Usa `[TBD: requiere validacion del propietario]`.
+- CUANDO EL USUARIO SOLICITE AGREGAR O CONSULTAR UN TEMA O ARCHIVO DE LA BASE DE CONOCIMIENTO
+  (ej. menús del comedor, políticas, horarios, vacantes, catálogos, enlaces, etc.):
+  1. EN `02-behavior-specs.md`: Agrega la nueva User Story (`US-XXX`), especificación (`SPEC-XXX`) y flujo (`FLOW-XXX`) detallando la lógica de atención para esa consulta.
+  2. EN `03-test-suite.md`: Agrega los casos de prueba (`TEST-XXX`) correspondientes para validar que el bot responda con precisión a consultas sobre ese tema.
+  3. EN `04-master-prompt.md`: Incorpora obligatoriamente el nuevo flujo en `<flujos>`, la referencia al archivo o tema en `<fuentes_autorizadas>`, y las instrucciones de respuesta en `<criterios_de_respuesta>` y `<guardrails>`.
+- Si el usuario pide explícitamente cambiar una regla constitucional, identidad o guardrail, actualiza también `01-constitution.md`.
+- Nunca inventes precios, horarios, promociones, políticas, productos,
+  integraciones ni reglas de negocio. Usa `[TBD: requiere validación del propietario]`.
 - Clasifica reglas relevantes como CONFIRMADO, INFERIDO, NO ENCONTRADO,
-  CONTRADICTORIO o PENDIENTE DE DECISION.
+  CONTRADICTORIO o PENDIENTE DE DECISIÓN.
 
 CONTRATO DE DOCUMENTOS
 - Usa IDs estables y no renumeres reglas existentes:
@@ -123,7 +124,7 @@ CONTRATO DE DOCUMENTOS
   <fuentes_autorizadas>, <estados_conversacionales>, <flujos>, <fallbacks>,
   <transferencia_humana>, <uso_de_herramientas>, <memoria_y_contexto>,
   <formato_whatsapp>, <criterios_de_respuesta>, <ejemplos>, <autoverificacion>.
-- El master prompt no debe incluir notas de auditoria, secretos o afirmaciones
+- El master prompt no debe incluir notas de auditoría, secretos o afirmaciones
   de acciones ejecutadas si solo fueron planificadas.
 
 FORMATO DE SALIDA OBLIGATORIO
@@ -236,21 +237,25 @@ def resolve_settings(
 
 def _knowledge_context(knowledge_docs: list[dict]) -> str:
     if not knowledge_docs:
-        return "Sin documentos activos."
+        return "Sin documentos activos en la Base de Conocimiento."
 
-    chunks: list[str] = []
+    doc_titles = [f"{idx}. {(d.get('title') or 'Doc').strip()}" for idx, d in enumerate(knowledge_docs, start=1)]
+    titles_summary = "Documentos indexados en la Base de Conocimiento:\n" + "\n".join(doc_titles)
+
+    chunks: list[str] = [titles_summary]
     remaining = MAX_KNOWLEDGE_CHARS
-    for index, doc in enumerate(knowledge_docs[:8], start=1):
+    for index, doc in enumerate(knowledge_docs[:30], start=1):
         title = (doc.get("title") or f"Documento {index}").strip()
-        content = _trim(str(doc.get("content") or ""), min(1200, remaining))
+        content = _trim(str(doc.get("content") or ""), min(2500, remaining))
         if not content:
             continue
-        block = f"## {title}\n{content}"
+        block = f"### [{index}] {title}\n{content}"
         chunks.append(block)
         remaining -= len(block)
         if remaining <= 0:
             break
-    return "\n\n".join(chunks) or "Sin documentos activos."
+    return "\n\n".join(chunks)
+
 
 
 def _integrations_context(integrations: list[dict] | None, skills: list[dict] | None) -> str:

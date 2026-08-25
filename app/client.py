@@ -2628,7 +2628,9 @@ async def client_app(
     
     <!-- 3. TAB PANEL: COMPORTAMIENTO (PROMPT) -->
     <div id="panel-prompt" class="tab-panel">
-      <form id="behaviorForm" method="post" action="/client/bots/{bot_id}/prompt/save">
+      <form id="behaviorForm" method="post" action="/client/bots/{bot_id}/prompt/save?csrf_token={html.escape(csrf_token)}">
+        <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
+
         <div class="prompt-workspace">
           <div class="card">
             <div class="card-header" style="display:flex; justify-content:space-between; align-items:flex-start;">
@@ -2821,6 +2823,7 @@ async def client_app(
             if (data.published) {{
               autoBadge.style.display = "inline-block";
               applyGeneratedPrompt(false);
+              alert("✅ ¡Comportamiento y reglas PBD publicados exitosamente en producción! Los 4 documentos han sido guardados en la base de datos.");
             }} else {{
               autoBadge.style.display = "none";
             }}
@@ -2828,8 +2831,7 @@ async def client_app(
             previewBlock.style.display = "block";
           }} catch (e) {{
             alert(e.message);
-          }}
- finally {{
+          }} finally {{
             loader.style.display = "none";
             btn.disabled = false;
           }}
@@ -2843,10 +2845,11 @@ async def client_app(
 
           if (window.promptEditor) {{
             window.promptEditor.value(generated);
-          }} else {{
-            document.getElementById("activePromptEditor").value = generated;
+            if (window.promptEditor.codemirror) {{
+              window.promptEditor.codemirror.save();
+            }}
           }}
-          
+          document.getElementById("activePromptEditor").value = generated;
           document.getElementById("activeConstitutionEditor").value = generatedConst;
           document.getElementById("activeSpecsEditor").value = generatedSpecs;
           document.getElementById("activeTestSuiteEditor").value = generatedTest;
@@ -2855,6 +2858,7 @@ async def client_app(
             alert("Documentos sincronizados en los editores. Haz clic en 'Publicar comportamiento' para guardar definitivamente.");
           }}
         }}
+
       </script>
 
       <style>
