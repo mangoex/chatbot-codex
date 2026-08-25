@@ -10,11 +10,14 @@ sys.modules.pop("fastapi", None)
 sys.modules.pop("fastapi.responses", None)
 sys.modules.setdefault("asyncpg", types.SimpleNamespace(Pool=object))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
-sys.modules.setdefault("httpx", types.SimpleNamespace(HTTPStatusError=Exception, AsyncClient=object))
-sys.modules.setdefault("cryptography", types.SimpleNamespace())
-sys.modules.setdefault("cryptography.fernet", types.SimpleNamespace(Fernet=lambda key: None, InvalidToken=Exception))
 
 from app import calendar_client, escalations
+
+# Clean sys.modules after module loading
+sys.modules.pop("httpx", None)
+sys.modules.pop("cryptography", None)
+sys.modules.pop("cryptography.fernet", None)
+
 
 class TestClientPanelFeatures:
     def test_client_layout_logout_includes_csrf_token(self):

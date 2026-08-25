@@ -1311,7 +1311,28 @@ async def client_app(
         csrf_token=csrf_token,
     )
 
+    # Google Drive integration
+    google_drive_integration = await db.get_bot_integration_by_type(bot_id, "google_drive")
+    google_drive_config = {}
+    google_drive_enabled = False
+    google_drive_secrets = {}
+    if google_drive_integration:
+        google_drive_config = google_drive_integration.get("config") or {}
+        google_drive_enabled = google_drive_integration.get("enabled", False)
+        enc_secrets_gd = await db.get_integration_secret_values(int(google_drive_integration["id"]))
+        if "service_account_json" in enc_secrets_gd:
+            google_drive_secrets["service_account_json"] = secure_store.decrypt_secret(enc_secrets_gd["service_account_json"]) or ""
+    google_drive_card_html = _render_google_drive_card(
+        bot_id=bot_id,
+        session=session,
+        enabled=google_drive_enabled,
+        config_data=google_drive_config,
+        secrets=google_drive_secrets,
+        csrf_token=csrf_token,
+    )
+
     github_integration = await db.get_bot_integration_by_type(bot_id, "github_repository")
+
     github_config = {
         "mode": "humanio_managed",
         "owner": "",
@@ -3133,7 +3154,9 @@ async def client_app(
         </div>
         
         {easybroker_card_html}
+        {google_drive_card_html}
       </div>
+
       
       <!-- Skill Templates Catalog -->
       <div style="margin-top: 40px; margin-bottom: 20px; border-top: 1px solid var(--line); padding-top: 30px; width: 100%;">
@@ -4114,6 +4137,99 @@ async def client_easybroker_sync_now(
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&synced=1", status_code=302)
 
 
+@router.post("/bots/{bot_id}/integrations/google_drive")
+async def client_google_drive_save(
+    request: Request,
+    bot_id: int,
+    enabled: str | None = Form(None),
+    folder_id: str = Form(""),
+    service_account_json: str = Form(""),
+    auto_sync: str | None = Form(None),
+    sync_interval_hours: int = Form(12),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+
+    clean_folder = folder_id.strip()
+    clean_sa = service_account_json.strip()
+    is_enabled = enabled == "on"
+    should_auto_sync = auto_sync == "on"
+    interval_hours = max(1, int(sync_interval_hours or 12))
+
+    integration = await db.get_bot_integration_by_type(bot_id, "google_drive")
+    existing_cfg = (integration.get("config") or {}) if integration else {}
+
+    config_data = {
+        **existing_cfg,
+        "folder_id": clean_folder,
+        "auto_sync": should_auto_sync,
+        "sync_interval_hours": interval_hours,
+    }
+
+    if integration:
+        integration_id = int(integration["id"])
+        await db.update_bot_integration(
+            bot_id=bot_id,
+            integration_id=integration_id,
+            integration_type="google_drive",
+            name="Google Drive",
+            config_data=config_data,
+            enabled=is_enabled,
+        )
+    else:
+        integration_id = await db.create_bot_integration(
+            bot_id=bot_id,
+            integration_type="google_drive",
+            name="Google Drive",
+            config_data=config_data,
+            enabled=is_enabled,
+        )
+
+    if clean_sa and not re.match(r"^\*+$", clean_sa):
+        encrypted_sa = secure_store.encrypt_secret(clean_sa)
+        await db.upsert_integration_secret(integration_id, "service_account_json", encrypted_sa)
+
+        if is_enabled and clean_folder:
+            from app import google_drive_client
+            try:
+                await google_drive_client.sync_google_drive_to_bot_knowledge(bot_id, clean_folder, clean_sa)
+            except Exception as exc:
+                log.warning("Fallo en sync inicial de Google Drive: %s", exc)
+
+    return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&saved=1", status_code=302)
+
+
+@router.post("/bots/{bot_id}/integrations/google_drive/sync")
+async def client_google_drive_sync_now(
+    request: Request,
+    bot_id: int,
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+
+    integration = await db.get_active_bot_integration(bot_id, "google_drive")
+    if not integration:
+        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&error=google_drive_not_active", status_code=302)
+
+    enc_secrets = await db.get_integration_secret_values(int(integration["id"]))
+    sa_json = secure_store.decrypt_secret(enc_secrets.get("service_account_json") or "")
+    if not sa_json:
+        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&error=missing_service_account", status_code=302)
+
+    folder_id = (integration.get("config") or {}).get("folder_id", "")
+    if not folder_id:
+        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&error=missing_folder_id", status_code=302)
+
+    from app import google_drive_client
+    try:
+        await google_drive_client.sync_google_drive_to_bot_knowledge(bot_id, folder_id, sa_json)
+    except Exception as exc:
+        log.warning("Fallo en sincronización manual de Google Drive: %s", exc)
+
+    return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&synced=1", status_code=302)
+
+
+
 @router.post("/bots/{bot_id}/skills/templates/install")
 async def client_install_bot_skill_template(
     request: Request,
@@ -4709,3 +4825,115 @@ def _render_easybroker_card(
           </form>
         </div>
     """
+
+
+def _render_google_drive_card(
+    bot_id: int,
+    session: dict,
+    enabled: bool,
+    config_data: dict,
+    secrets: dict,
+    csrf_token: str,
+) -> str:
+    sa_val = secrets.get("service_account_json") or ""
+    masked_sa = "********" if sa_val else ""
+    sa_saved = bool(sa_val)
+    folder_id = config_data.get("folder_id", "")
+    client_email = config_data.get("client_email", "")
+    files_count = config_data.get("files_count", 0)
+    last_synced = config_data.get("last_synced_at", "")
+    auto_sync = config_data.get("auto_sync", True)
+    sync_interval_hours = int(config_data.get("sync_interval_hours") or 12)
+    is_viewer = session.get("role") == "client_viewer"
+    disabled_attr = "disabled" if is_viewer else ""
+    last_synced_label = last_synced[:19].replace("T", " ") if last_synced else "Nunca"
+
+    opt_1_sel = 'selected' if sync_interval_hours == 1 else ''
+    opt_6_sel = 'selected' if sync_interval_hours == 6 else ''
+    opt_12_sel = 'selected' if sync_interval_hours == 12 else ''
+    opt_24_sel = 'selected' if sync_interval_hours == 24 else ''
+
+    status_badge = (
+        '<span class="badge success">Conectado</span>'
+        if enabled
+        else '<span class="badge warning">Inactivo</span>'
+    )
+    checked_enabled = "checked" if enabled else ""
+    checked_auto_sync = "checked" if auto_sync else ""
+    sync_disabled_attr = "disabled" if (is_viewer or not sa_saved or not folder_id) else ""
+
+    email_hint = (
+        f"<div style='margin:10px 0; padding:10px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; font-size:12px; color:#166534;'>"
+        f"<strong>💡 Correo a compartir en Google Drive:</strong><br>"
+        f"<code style='user-select:all; display:block; margin-top:4px;'>{html.escape(client_email)}</code>"
+        f"<span style='font-size:11px; color:#15803d; display:block; margin-top:2px;'>Comparte tu carpeta de Drive con este correo como <em>Lector</em>.</span>"
+        f"</div>"
+        if client_email
+        else ""
+    )
+
+    return f"""
+        <div class="card">
+          <div class="card-header">
+            <h2>Google Drive (Base de Conocimiento)</h2>
+            <p>Conecta una carpeta compartida de Google Drive para sincronizar automáticamente documentos, hojas de cálculo, PDFs y manuales con el RAG del Bot.</p>
+          </div>
+          
+          <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <span class="bold-text">Estado de Google Drive</span>
+            {status_badge}
+          </div>
+          
+          <form method="post" action="/client/bots/{bot_id}/integrations/google_drive?csrf_token={html.escape(csrf_token)}">
+            <div class="checkbox-group">
+              <input type="checkbox" name="enabled" id="googleDriveEnabledToggle" {checked_enabled}>
+              <label for="googleDriveEnabledToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar Sincronización con Google Drive</label>
+            </div>
+            
+            <label>ID o URL de la Carpeta de Google Drive</label>
+            <input type="text" name="folder_id" placeholder="Ej. 1aBcDeFgHiJkLmNoP... o URL completa de la carpeta" value="{html.escape(folder_id)}">
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Pega el enlace o el identificador de la carpeta compartida en Google Drive.</span>
+            
+            <label>Service Account JSON (Credenciales de Google Cloud)</label>
+            <textarea name="service_account_json" style="min-height:85px; font-family:monospace; font-size:11px;" placeholder='{{"type": "service_account", "project_id": "...", ...}}'>{html.escape(masked_sa)}</textarea>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-4px; margin-bottom:8px;">Pega el contenido del archivo JSON de tu Cuenta de Servicio de Google Cloud.</span>
+            
+            {email_hint}
+
+            <div class="checkbox-group" style="margin-bottom:10px;">
+              <input type="checkbox" name="auto_sync" id="googleDriveAutoSyncToggle" {checked_auto_sync}>
+              <label for="googleDriveAutoSyncToggle" style="margin:0; font-weight:500; cursor:pointer; font-size:13px;">Auto-sincronizar cambios periódicamente en la Base de Conocimiento</label>
+            </div>
+            
+            <label>Frecuencia de Actualización Automática</label>
+            <select name="sync_interval_hours" style="margin-bottom:14px;">
+              <option value="1" {opt_1_sel}>Cada 1 hora</option>
+              <option value="6" {opt_6_sel}>Cada 6 horas</option>
+              <option value="12" {opt_12_sel}>Cada 12 horas (Recomendado)</option>
+              <option value="24" {opt_24_sel}>Cada 24 horas (1 vez al día)</option>
+            </select>
+            
+            <div style="background:var(--bg-subtle, #f8fafc); border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:16px; font-size:12.5px;">
+              <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+                <span class="muted-text">Documentos sincronizados:</span>
+                <strong style="color:var(--ink);">{files_count}</strong>
+              </div>
+              <div style="display:flex; justify-content:space-between;">
+                <span class="muted-text">Última sincronización:</span>
+                <span style="color:var(--ink);">{last_synced_label}</span>
+              </div>
+            </div>
+            
+            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+              <button class="btn primary-btn" type="submit" {disabled_attr}>Guardar Configuración</button>
+            </div>
+          </form>
+          
+          <form method="post" action="/client/bots/{bot_id}/integrations/google_drive/sync?csrf_token={html.escape(csrf_token)}" style="margin-top:10px;">
+            <button class="btn secondary" type="submit" {sync_disabled_attr} style="width:100%; justify-content:center;">
+              🔄 Sincronizar Google Drive Ahora
+            </button>
+          </form>
+        </div>
+    """
+

@@ -169,7 +169,12 @@ async def index_document(conn, bot_id: int, knowledge_id: int, content: str) -> 
         )
 
 
+async def delete_document_chunks(conn, knowledge_id: int) -> None:
+    await conn.execute("DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1", knowledge_id)
+
+
 async def reindex_bot_knowledge(conn, bot_id: int) -> int:
+
     """Re-chunks and re-indexes all active knowledge documents for a bot."""
     rows = await conn.fetch(
         "SELECT id, content FROM bot_knowledge WHERE bot_id = $1 AND status = 'active'",

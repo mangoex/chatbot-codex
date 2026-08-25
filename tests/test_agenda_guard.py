@@ -8,20 +8,10 @@ from zoneinfo import ZoneInfo
 
 sys.modules.setdefault("asyncpg", types.SimpleNamespace(Pool=object))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
-sys.modules.setdefault(
-    "httpx",
-    types.SimpleNamespace(HTTPStatusError=Exception, AsyncClient=object),
-)
-sys.modules.setdefault("cryptography", types.SimpleNamespace())
-sys.modules.setdefault(
-    "cryptography.fernet",
-    types.SimpleNamespace(
-        Fernet=lambda key: None,
-        InvalidToken=Exception,
-    ),
-)
 
 from app import agenda_guard
+
+
 
 
 class AgendaGuardTests(unittest.TestCase):

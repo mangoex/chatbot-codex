@@ -1,16 +1,4 @@
 from __future__ import annotations
-import sys
-
-# Save mock httpx if it exists
-mock_httpx = sys.modules.get("httpx")
-if mock_httpx is not None:
-    del sys.modules["httpx"]
-    import httpx as real_httpx
-    for attr in dir(real_httpx):
-        if not attr.startswith("__") and not hasattr(mock_httpx, attr):
-            setattr(mock_httpx, attr, getattr(real_httpx, attr))
-    sys.modules["httpx"] = mock_httpx
-
 import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -61,6 +49,15 @@ class BotControlUnitTests(unittest.TestCase):
         self.assertEqual(bot_control.detect_control_command("sync easybroker"), "sync_properties")
         self.assertEqual(bot_control.detect_control_command("sincronizar propiedades"), "sync_properties")
         self.assertEqual(bot_control.detect_control_command("actualizar inmuebles"), "sync_properties")
+
+        # Sync Google Drive variants
+        self.assertEqual(bot_control.detect_control_command("sincronizar drive"), "sync_drive")
+        self.assertEqual(bot_control.detect_control_command("sync drive"), "sync_drive")
+        self.assertEqual(bot_control.detect_control_command("sincronizar google drive"), "sync_drive")
+        self.assertEqual(bot_control.detect_control_command("actualizar drive"), "sync_drive")
+        self.assertEqual(bot_control.detect_control_command("actualizar documentos"), "sync_drive")
+        self.assertEqual(bot_control.detect_control_command("actualizar conocimiento"), "sync_drive")
+
 
         # Regular messages that should not trigger control
         self.assertIsNone(bot_control.detect_control_command("Hola, quiero agendar"))
@@ -465,3 +462,43 @@ class BotControlWebhookIntegrationTests(unittest.TestCase):
         # Normal complete was called
         mock_openai_complete.assert_awaited_once()
         mock_send_and_track.assert_awaited_once()
+
+    @patch("app.whatsapp_client.send_text", new_callable=AsyncMock)
+    @patch("app.db.save_message", new_callable=AsyncMock)
+    @patch("app.google_drive_client.sync_google_drive_to_bot_knowledge", new_callable=AsyncMock)
+    @patch("app.secure_store.decrypt_secret")
+    @patch("app.db.get_integration_secret_values", new_callable=AsyncMock)
+    @patch("app.db.get_active_bot_integration", new_callable=AsyncMock)
+    def test_handle_control_command_sync_drive(
+        self,
+        mock_get_integ,
+        mock_get_secrets,
+        mock_decrypt,
+        mock_sync_drive,
+        mock_save_msg,
+        mock_send_text,
+    ):
+        mock_bot = bots.BotContext(
+            id=170,
+            client_id=1,
+            slug="mobibot",
+            name="Mobibot",
+            whatsapp_phone_number_id="phone_170",
+            whatsapp_access_token="token_170",
+            display_phone_number="5216671020672",
+            status="active",
+        )
+        mock_get_integ.return_value = {
+            "id": 12,
+            "enabled": True,
+            "config": {"folder_id": "1folderDrive123"},
+        }
+        mock_get_secrets.return_value = {"service_account_json": "enc_sa_json"}
+        mock_decrypt.return_value = '{"type": "service_account"}'
+        mock_sync_drive.return_value = {"ok": True, "synced_count": 8}
+
+        res = asyncio.run(bot_control.handle_control_command(mock_bot, "5216671020672", "sync_drive"))
+        self.assertEqual(res["action"], "google_drive_synced")
+        self.assertIn("8 documentos actualizados", res["reply"])
+        mock_sync_drive.assert_awaited_once_with(170, "1folderDrive123", '{"type": "service_account"}')
+        mock_send_text.assert_awaited_once()

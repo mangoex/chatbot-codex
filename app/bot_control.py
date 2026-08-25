@@ -70,6 +70,19 @@ SYNC_PROPERTIES_COMMANDS = {
     "sync propiedades",
 }
 
+SYNC_DRIVE_COMMANDS = {
+    "sincronizar drive",
+    "sync drive",
+    "sincronizar google drive",
+    "sync google drive",
+    "actualizar drive",
+    "actualizar documentos",
+    "actualizar conocimiento",
+    "actualiza drive",
+    "actualiza documentos",
+    "actualiza conocimiento",
+}
+
 PAUSE_CONFIRMATION_TEXT = (
     "⏸️ Bot pausado exitosamente. Ya no responderá mensajes automáticos "
     "hasta recibir el comando \"Seguir\"."
@@ -113,7 +126,7 @@ def normalize_command(text: str) -> str:
 def detect_control_command(text: str) -> str | None:
     """
     Detecta si el texto es un comando de control de bot.
-    Devuelve 'pause', 'resume', 'sync_properties' o None.
+    Devuelve 'pause', 'resume', 'sync_properties', 'sync_drive' o None.
     """
     cmd = normalize_command(text)
     if not cmd:
@@ -124,7 +137,10 @@ def detect_control_command(text: str) -> str | None:
         return "resume"
     if cmd in SYNC_PROPERTIES_COMMANDS:
         return "sync_properties"
+    if cmd in SYNC_DRIVE_COMMANDS:
+        return "sync_drive"
     return None
+
 
 
 def is_phone_in_list(wa_id: str, phone_list: list[str] | tuple[str, ...]) -> bool:
@@ -208,8 +224,35 @@ async def handle_control_command(
                 reply = f"🔄 Catálogo de Easybroker actualizado exitosamente: {count} propiedades sincronizadas en la Base de Conocimiento."
                 action = "properties_synced"
         log.info("Comando SYNC_PROPERTIES ejecutado por admin %s para bot %s (%s): %s", wa_id, bot.id, bot.name, action)
+    elif command == "sync_drive":
+        integ = await db.get_active_bot_integration(bot.id, "google_drive")
+        if not integ or not integ.get("enabled"):
+            reply = "ℹ️ La integración con Google Drive no está activa en este bot."
+            action = "google_drive_not_active"
+        else:
+            enc_secrets = await db.get_integration_secret_values(int(integ["id"]))
+            from app import secure_store, google_drive_client
+            sa_json = secure_store.decrypt_secret(enc_secrets.get("service_account_json") or "")
+            folder_id = (integ.get("config") or {}).get("folder_id", "")
+            if not sa_json:
+                reply = "⚠️ Falta configurar el Service Account JSON de Google Drive en el panel."
+                action = "missing_service_account"
+            elif not folder_id:
+                reply = "⚠️ Falta configurar el Folder ID de Google Drive en el panel."
+                action = "missing_folder_id"
+            else:
+                try:
+                    res = await google_drive_client.sync_google_drive_to_bot_knowledge(bot.id, folder_id, sa_json)
+                    count = res.get("synced_count", 0)
+                    reply = f"🔄 Google Drive sincronizado exitosamente: {count} documentos actualizados en la Base de Conocimiento."
+                    action = "google_drive_synced"
+                except Exception as exc:
+                    reply = f"⚠️ Ocurrió un error al sincronizar con Google Drive: {exc}"
+                    action = "google_drive_error"
+        log.info("Comando SYNC_DRIVE ejecutado por admin %s para bot %s (%s): %s", wa_id, bot.id, bot.name, action)
     else:
         raise ValueError(f"Comando de control no reconocido: {command}")
+
 
     await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
     await whatsapp_client.send_text(

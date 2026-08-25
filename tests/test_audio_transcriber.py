@@ -1,18 +1,8 @@
 from __future__ import annotations
-import sys
-
-# Save mock httpx if it exists
-mock_httpx = sys.modules.get("httpx")
-if mock_httpx is not None:
-    del sys.modules["httpx"]
-    import httpx as real_httpx
-    for attr in dir(real_httpx):
-        if not attr.startswith("__") and not hasattr(mock_httpx, attr):
-            setattr(mock_httpx, attr, getattr(real_httpx, attr))
-    sys.modules["httpx"] = mock_httpx
-
 import asyncio
 import unittest
+
+
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from app import audio_transcriber, bots, config

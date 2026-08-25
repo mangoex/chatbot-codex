@@ -4,10 +4,8 @@ import types
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-sys.modules.setdefault("httpx", types.SimpleNamespace(AsyncClient=None))
-sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
-
 from app import whatsapp_client
+
 
 
 class WhatsAppClientTests(unittest.TestCase):
@@ -53,7 +51,7 @@ class WhatsAppClientTests(unittest.TestCase):
         client = AsyncMock()
         client.__aenter__.return_value.post.return_value = response
 
-        with patch("httpx.AsyncClient", return_value=client):
+        with patch("app.whatsapp_client.httpx.AsyncClient", return_value=client):
             result = asyncio.run(
                 whatsapp_client.send_text(
                     "5216671234567",
@@ -99,7 +97,7 @@ class WhatsAppClientTests(unittest.TestCase):
         client.__aenter__ = AsyncMock(return_value=client_instance)
         client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("httpx.AsyncClient", return_value=client):
+        with patch("app.whatsapp_client.httpx.AsyncClient", return_value=client):
             content, mime = asyncio.run(
                 whatsapp_client.download_media(
                     "media-123",
@@ -128,7 +126,7 @@ class WhatsAppClientTests(unittest.TestCase):
         client.__aenter__ = AsyncMock(return_value=client_instance)
         client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("httpx.AsyncClient", return_value=client):
+        with patch("app.whatsapp_client.httpx.AsyncClient", return_value=client):
             with self.assertRaises(ValueError):
                 asyncio.run(
                     whatsapp_client.download_media(
@@ -165,7 +163,7 @@ class WhatsAppClientTests(unittest.TestCase):
         client.__aenter__ = AsyncMock(return_value=client_instance)
         client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("httpx.AsyncClient", return_value=client):
+        with patch("app.whatsapp_client.httpx.AsyncClient", return_value=client):
             with self.assertRaisesRegex(ValueError, "media_too_large"):
                 asyncio.run(
                     whatsapp_client.download_media(
@@ -186,7 +184,7 @@ class WhatsAppClientTests(unittest.TestCase):
         client.__aenter__ = AsyncMock(return_value=client_instance)
         client.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("httpx.AsyncClient", return_value=client):
+        with patch("app.whatsapp_client.httpx.AsyncClient", return_value=client):
             with self.assertRaisesRegex(ValueError, "unsupported_media_mime"):
                 asyncio.run(
                     whatsapp_client.download_media(
