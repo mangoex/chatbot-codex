@@ -332,12 +332,17 @@ Base de conocimiento activa:
 Solicitud del usuario:
 {clean_instruction}
 
-Instrucciones de ejecución del agente:
+Instrucciones de ejecución del agente PBD (OBLIGATORIAS):
 - Modo seleccionado: {clean_mode.upper()}
 - {mode_instructions}
 - Mantén IDs estables: CON-001.., US-001.., SPEC-001.., FLOW-001.., FB-001.., AC-001.., TEST-001..
-- El Master Prompt final (04) debe ser conciso, en XML completo y copy-ready con etiquetas:
-  <rol>, <contexto_negocio>, <mision>, <jerarquia_de_reglas>, <guardrails>, <fuentes_autorizadas>, <estados_conversacionales>, <flujos>, <fallbacks>, <transferencia_humana>, <uso_de_herramientas>, <memoria_y_contexto>, <formato_whatsapp>, <criterios_de_respuesta>, <ejemplos>, <autoverificacion>.
+- CRÍTICO: REGLA DE COMPILACIÓN DEL MASTER PROMPT (04):
+  El Master Prompt (04) NUNCA debe dejarse intacto cuando se agrega o modifica un requerimiento.
+  DEBES EDITAR OBLIGATORIAMENTE las secciones dentro del XML de 04:
+  1. `<fuentes_autorizadas>`: Agregar las fuentes o archivos mencionados (ej. Menu_Agosto_2026_Mobi.md, políticas, etc.).
+  2. `<flujos>`: Agregar o actualizar el `<flujo id="...">` detallando paso a paso cómo responder a la consulta del usuario (ej. cómo desglosar el menú según día de la semana y semana del mes usando el conocimiento oficial).
+  3. `<criterios_de_respuesta>` y `<guardrails>`: Definir las reglas estrictas de fidelidad a la información oficial.
+- Devuelve los 4 documentos completos encapsulados en sus etiquetas correspondientes: <constitution_doc>, <specs_doc>, <test_suite_doc>, <master_prompt_doc>.
 - Si detectas una contradicción constitucional insalvable con la solicitud, devuelve obligatoriamente el reporte dentro de <blocked_change>...</blocked_change>.
 """.strip()
     return [
@@ -382,7 +387,7 @@ async def _openai_compatible_chat(
         api_key=settings.api_key,
         base_url=settings.base_url or None,
         default_headers=headers or None,
-        timeout=config.OPENAI_TIMEOUT_SECONDS,
+        timeout=max(config.OPENAI_TIMEOUT_SECONDS, 150),
     )
     kwargs = {
         "model": settings.model,
@@ -416,7 +421,7 @@ async def _anthropic_chat(settings: PromptAssistantSettings, messages: list[dict
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",
     }
-    async with httpx.AsyncClient(timeout=config.OPENAI_TIMEOUT_SECONDS) as client:
+    async with httpx.AsyncClient(timeout=max(config.OPENAI_TIMEOUT_SECONDS, 150)) as client:
         response = await client.post(
             f"{settings.base_url.rstrip('/')}/messages",
             json=payload,
@@ -433,6 +438,7 @@ async def _anthropic_chat(settings: PromptAssistantSettings, messages: list[dict
         for block in blocks
         if isinstance(block, dict) and block.get("type") == "text"
     )
+
 
 
 async def assist_prompt(
