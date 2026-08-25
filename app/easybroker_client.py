@@ -155,27 +155,28 @@ async def sync_properties_to_bot_knowledge(
         }
 
     async with db._pool.acquire() as conn:
-        # 1. Eliminar documentos anteriores generados por Easybroker para este bot
-        await conn.execute(
-            "DELETE FROM bot_knowledge WHERE bot_id = $1 AND title LIKE '[Easybroker]%'",
-            bot_id,
-        )
-
-        # 2. Insertar cada ficha de propiedad formateada
-        synced_count = 0
-        for p in props:
-            doc_title, doc_content = format_property_doc(p)
-            await conn.fetchrow(
-                """
-                INSERT INTO bot_knowledge (bot_id, title, content, status, created_at, updated_at)
-                VALUES ($1, $2, $3, 'active', NOW(), NOW())
-                RETURNING id
-                """,
+        async with conn.transaction():
+            # 1. Eliminar documentos anteriores generados por Easybroker para este bot
+            await conn.execute(
+                "DELETE FROM bot_knowledge WHERE bot_id = $1 AND title LIKE '[Easybroker]%'",
                 bot_id,
-                doc_title,
-                doc_content,
             )
-            synced_count += 1
+
+            # 2. Insertar cada ficha de propiedad formateada
+            synced_count = 0
+            for p in props:
+                doc_title, doc_content = format_property_doc(p)
+                await conn.fetchrow(
+                    """
+                    INSERT INTO bot_knowledge (bot_id, title, content, status, created_at, updated_at)
+                    VALUES ($1, $2, $3, 'active', NOW(), NOW())
+                    RETURNING id
+                    """,
+                    bot_id,
+                    doc_title,
+                    doc_content,
+                )
+                synced_count += 1
 
     # Actualizar metadatos en la configuración de la integración
     integration = await db.get_active_bot_integration(bot_id, "easybroker")
@@ -244,13 +245,15 @@ def is_sync_due(config_data: dict[str, Any]) -> bool:
         last_synced = datetime.fromisoformat(str(last_synced_str))
         if last_synced.tzinfo is None:
             last_synced = last_synced.replace(tzinfo=timezone.utc)
-    except Exception:
-        return True
+    except Exception as exc:
+        log.warning("Formato no válido en last_synced_at (%s): %s", last_synced_str, exc)
+        return False
 
     interval_hours = int(config_data.get("sync_interval_hours") or 12)
     interval_hours = max(1, interval_hours)
     now = datetime.now(timezone.utc)
     return (now - last_synced) >= timedelta(hours=interval_hours)
+
 
 
 async def sync_due_bots() -> list[dict[str, Any]]:

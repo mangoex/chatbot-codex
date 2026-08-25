@@ -156,11 +156,14 @@ async def test_sync_properties_to_bot_knowledge():
          patch("app.db._pool") as mock_pool:
 
         mock_fetch.return_value = sample_props
-        mock_conn = AsyncMock()
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock(return_value="DELETE 1")
+        mock_conn.fetchrow = AsyncMock(return_value={"id": 99})
+        mock_tx = MagicMock()
+        mock_tx.__aenter__ = AsyncMock(return_value=mock_tx)
+        mock_tx.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.transaction.return_value = mock_tx
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
-
-        mock_conn.execute.return_value = "DELETE 1"
-        mock_conn.fetchrow.return_value = {"id": 99}
 
         res = await easybroker_client.sync_properties_to_bot_knowledge(
             bot_id=147,
@@ -228,6 +231,38 @@ def test_is_sync_due():
     cfg_expired = {"auto_sync": True, "sync_interval_hours": 12, "last_synced_at": thirteen_hours_ago}
     assert easybroker_client.is_sync_due(cfg_expired) is True
 
+    # 5. Formato de fecha corrupto/inválido -> False (no ciclar infinitamente)
+    cfg_corrupt = {"auto_sync": True, "sync_interval_hours": 12, "last_synced_at": "fecha_invalida_123"}
+    assert easybroker_client.is_sync_due(cfg_corrupt) is False
+
+
+@pytest.mark.asyncio
+async def test_sync_properties_atomic_transaction():
+    """Verifica que la sincronización utilice una transacción para atomicidad."""
+    sample_props = [
+        {"public_id": "EB-10", "title": "Casa 10", "property_type": "House", "operations": []}
+    ]
+    with patch("app.easybroker_client.fetch_all_properties", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.db._pool") as mock_pool:
+
+        mock_fetch.return_value = sample_props
+        mock_conn = MagicMock()
+        mock_conn.execute = AsyncMock(return_value="DELETE 1")
+        mock_conn.fetchrow = AsyncMock(return_value={"id": 10})
+        mock_tx = MagicMock()
+        mock_tx.__aenter__ = AsyncMock(return_value=mock_tx)
+        mock_tx.__aexit__ = AsyncMock(return_value=None)
+        mock_conn.transaction.return_value = mock_tx
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        res = await easybroker_client.sync_properties_to_bot_knowledge(
+            bot_id=147,
+            api_key="valid_key",
+        )
+
+        assert res["success"] is True
+        mock_conn.transaction.assert_called_once()
+
 
 @pytest.mark.asyncio
 async def test_sync_due_bots():
@@ -257,6 +292,7 @@ async def test_sync_due_bots():
         mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
         mock_secrets.return_value = {"api_key": "enc_key"}
         mock_sync.return_value = {"success": True, "synced_count": 5}
+
 
         synced_bots = await easybroker_client.sync_due_bots()
 

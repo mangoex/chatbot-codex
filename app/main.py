@@ -485,11 +485,13 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
                     audio_bytes, detected_mime = await whatsapp_client.download_media(
                         media_id,
                         access_token=bot.whatsapp_access_token,
+                        max_bytes=config.MAX_MEDIA_BYTES,
                     )
                     transcribed_text = await audio_transcriber.transcribe_audio(
                         audio_bytes,
                         media_mime or detected_mime,
                     )
+
                 except Exception as exc:
                     log.error("Error descargando o transcribiendo audio para bot %s: %s", bot.id, exc)
 

@@ -2027,6 +2027,13 @@ async def is_chatwoot_handoff_active(bot_id: int, wa_id: str) -> bool:
     return row is not None
 
 
+# Unified aliases for conversation-level handoffs (Chatwoot, Admin Panel, Escalations)
+set_conversation_handoff_active = set_chatwoot_handoff_active
+clear_conversation_handoff = clear_chatwoot_handoff
+is_conversation_handoff_active = is_chatwoot_handoff_active
+
+
+
 async def list_bot_skills(bot_id: int) -> list[dict]:
     async with _pool.acquire() as conn:
         rows = await conn.fetch(

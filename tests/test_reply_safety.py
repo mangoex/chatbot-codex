@@ -190,6 +190,17 @@ class ReplySafetyTests(unittest.TestCase):
         reply = reply_safety.polish(text, [])
         self.assertEqual(reply, "¡Hola! Soy el asistente.")
 
+    def test_preserves_english_content_inside_respuesta_tags(self):
+        text = "Thinking process: User asked in English.\n<respuesta>Hello! We provide automated WhatsApp bots for your business. How can I help you today?</respuesta>"
+        reply = reply_safety.polish(text, [], user_text="Hello, what services do you offer?")
+        self.assertEqual(reply, "Hello! We provide automated WhatsApp bots for your business. How can I help you today?")
+
+    def test_preserves_legitimate_english_conversation_without_tags(self):
+        text = "Hello! We offer automated scheduling and customer support solutions for your company."
+        reply = reply_safety.polish(text, [], user_text="Hello, what do you offer?")
+        self.assertEqual(reply, text)
+
 
 if __name__ == "__main__":
     unittest.main()
+

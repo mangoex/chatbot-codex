@@ -157,8 +157,9 @@ class AudioWebhookIntegrationTests(unittest.TestCase):
         asyncio.run(main._process_message_impl(msg, payload))
 
         # Media downloaded and transcribed
-        mock_download_media.assert_awaited_once_with("media_audio_id_1", access_token="token_10")
+        mock_download_media.assert_awaited_once_with("media_audio_id_1", access_token="token_10", max_bytes=unittest.mock.ANY)
         mock_transcribe.assert_awaited_once_with(b"OGG_BINARY", "audio/ogg; codecs=opus")
+
 
         # OpenAI complete called with the transcribed text
         mock_openai_complete.assert_awaited_once()

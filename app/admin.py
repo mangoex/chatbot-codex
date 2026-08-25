@@ -4189,5 +4189,14 @@ async def escalation_update(
     _require_agency(request)
     if status not in ("pendiente", "en_proceso", "resuelto"):
         raise HTTPException(400, "Estado invalido")
+    esc = await db.get_escalation(eid)
     await db.update_escalation_status(eid, status, notes=notes or None)
+    if esc and esc.get("bot_id") and esc.get("wa_id"):
+        bot_id = int(esc["bot_id"])
+        wa_id = str(esc["wa_id"])
+        if status == "en_proceso":
+            await db.set_conversation_handoff_active(bot_id, wa_id)
+        elif status == "resuelto":
+            await db.clear_conversation_handoff(bot_id, wa_id)
     return RedirectResponse(f"/admin/escalations/{eid}", status_code=302)
+
