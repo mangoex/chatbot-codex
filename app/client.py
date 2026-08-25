@@ -2775,7 +2775,8 @@ async def client_app(
           const testPreview = document.getElementById("aiTestSuitePreview");
           const autoBadge = document.getElementById("pbdAutoSavedBadge");
           
-          loader.style.display = "inline";
+          loader.innerHTML = '<span style="display:inline-block; width:12px; height:12px; border:2px solid #2563eb; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:6px;"></span> 🤖 Compilando arquitectura PBD (01 Constitución, 02 Specs, 03 Pruebas, 04 Master Prompt)... (~30-50s)';
+          loader.style.display = "inline-block";
           btn.disabled = true;
           blockedAlert.style.display = "none";
           previewBlock.style.display = "none";
@@ -2816,6 +2817,7 @@ async def client_app(
             if (data.blocked) {{
               blockedText.textContent = data.blocked_reason || data.error || "El cambio solicitado viola una regla constitucional activa.";
               blockedAlert.style.display = "block";
+              blockedAlert.scrollIntoView({{ behavior: "smooth", block: "center" }});
               return;
             }}
 
@@ -2830,19 +2832,22 @@ async def client_app(
             
             if (data.published) {{
               autoBadge.style.display = "inline-block";
+              pbdPreviewTitle.textContent = "🎉 ¡Comportamiento y reglas PBD compilados y guardados en producción!";
               applyGeneratedPrompt(false);
-              alert("✅ ¡Comportamiento y reglas PBD publicados exitosamente en producción! Los 4 documentos han sido guardados en la base de datos.");
             }} else {{
               autoBadge.style.display = "none";
+              pbdPreviewTitle.textContent = "✅ Comportamiento PBD generado exitosamente";
             }}
 
             previewBlock.style.display = "block";
+            previewBlock.scrollIntoView({{ behavior: "smooth", block: "start" }});
           }} catch (e) {{
             alert(e.message);
           }} finally {{
             loader.style.display = "none";
             btn.disabled = false;
           }}
+
         }}
         
         function applyGeneratedPrompt(showAlert = true) {{
