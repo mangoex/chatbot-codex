@@ -472,20 +472,107 @@ async def assist_prompt(
 
     import re
 
-    def extract_tag(text: str, tag: str) -> str:
-        pattern = rf"<{tag}>(.*?)</{tag}>"
-        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
-        if match:
-            return clean_prompt_text(match.group(1).strip())
-        return ""
+    def parse_pbd_response(text: str) -> tuple[bool, str, str, str, str, str]:
+        """
+        Parses LLM output into (is_blocked, blocked_reason, constitution, specs, test_suite, prompt)
+        using multi-alias tags, markdown section fallbacks, and unclosed tag recovery.
+        """
+        clean_raw = (text or "").strip()
+        
+        # 1. Check for blocked change
+        blocked_match = re.search(
+            r"<(blocked_change|blocked|cambio_bloqueado)>(.*?)(?:</\1>|\Z)",
+            clean_raw,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if blocked_match:
+            return True, clean_prompt_text(blocked_match.group(2).strip()), "", "", "", ""
+        if "BLOCKED CHANGE - MASTER PROMPT NOT MODIFIED" in clean_raw:
+            return True, clean_prompt_text(clean_raw), "", "", "", ""
 
-    blocked = extract_tag(raw, "blocked_change")
-    if blocked:
+        def extract_section(tag_pattern: str, header_pattern: str, next_patterns: str) -> str:
+            # Try closed tag
+            closed = re.search(
+                rf"<({tag_pattern})>(.*?)</\1>",
+                clean_raw,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if closed and closed.group(2).strip():
+                return clean_prompt_text(closed.group(2).strip())
+
+            # Try unclosed tag
+            unclosed = re.search(
+                rf"<({tag_pattern})>(.*?)(?=(?:<{next_patterns}>)|\Z)",
+                clean_raw,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if unclosed and unclosed.group(2).strip():
+                return clean_prompt_text(unclosed.group(2).strip())
+
+            # Try markdown header
+            if header_pattern:
+                md_match = re.search(
+                    rf"(?=(?:#+|##)\s*{header_pattern}\b)(.*?)(?=(?:#+|##)\s*(?:{next_patterns})|\Z)",
+                    clean_raw,
+                    re.DOTALL | re.IGNORECASE,
+                )
+                if md_match and md_match.group(1).strip():
+                    return clean_prompt_text(md_match.group(1).strip())
+            return ""
+
+        const = extract_section(
+            tag_pattern=r"constitution_doc|constitution|01_constitution|constitution_md|acta_constitucion",
+            header_pattern=r"01|01\s*[-—]",
+            next_patterns=r"specs_doc|specs|02_specs|test_suite_doc|master_prompt_doc|02|03|04",
+        ) or (pbd_constitution or "").strip()
+
+        specs_doc = extract_section(
+            tag_pattern=r"specs_doc|specs|behavior_specs_doc|behavior_specs|02_specs|specs_md|especificaciones",
+            header_pattern=r"02|02\s*[-—]",
+            next_patterns=r"test_suite_doc|test_suite|03_test_suite|master_prompt_doc|03|04",
+        ) or (pbd_specs or "").strip()
+
+        tests_doc = extract_section(
+            tag_pattern=r"test_suite_doc|test_suite|tests_doc|tests|03_test_suite|test_suite_md|suite_pruebas",
+            header_pattern=r"03|03\s*[-—]",
+            next_patterns=r"master_prompt_doc|master_prompt|04_master_prompt|04",
+        ) or (pbd_test_suite or "").strip()
+
+        # Master prompt extraction
+        master_doc = extract_section(
+            tag_pattern=r"master_prompt_doc|master_prompt|prompt_doc|master|04_master_prompt|master_prompt_md|master_doc|prompt",
+            header_pattern=r"04|04\s*[-—]|master\s*prompt",
+            next_patterns=r"constitution_doc|specs_doc",
+        )
+
+        # If not extracted via section, search for XML root tags
+        if not master_doc:
+            xml_match = re.search(
+                r"(<sistema[\s\S]*</sistema>|<rol[\s\S]*</autoverificacion>|<rol[\s\S]*</ejemplos>)",
+                clean_raw,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if xml_match:
+                master_doc = clean_prompt_text(xml_match.group(1).strip())
+
+        # If still empty and no other sections found, use entire clean_raw
+        if not master_doc and not const and not specs_doc:
+            master_doc = clean_prompt_text(clean_raw)
+
+        # Fallback to current_prompt if all else fails
+        if not master_doc:
+            master_doc = (current_prompt or "").strip()
+
+        return False, "", const, specs_doc, tests_doc, master_doc
+
+    is_blocked, blocked_reason, constitution, specs, test_suite, prompt = parse_pbd_response(raw)
+
+    if is_blocked:
         return {
             "ok": False,
             "blocked": True,
-            "error": blocked,
-            "blocked_reason": blocked,
+            "error": blocked_reason,
+            "blocked_reason": blocked_reason,
             "prompt": current_prompt,
             "pbd_constitution": pbd_constitution,
             "pbd_specs": pbd_specs,
@@ -495,16 +582,10 @@ async def assist_prompt(
             "model": settings.model,
         }
 
-    constitution = extract_tag(raw, "constitution_doc") or (pbd_constitution or "").strip()
-    specs = extract_tag(raw, "specs_doc") or (pbd_specs or "").strip()
-    test_suite = extract_tag(raw, "test_suite_doc") or (pbd_test_suite or "").strip()
-    prompt = extract_tag(raw, "master_prompt_doc")
-
-    # Si por alguna razón el modelo no usó las etiquetas, devolver raw como prompt fallback
-    if not prompt and not constitution and not specs:
-        prompt = clean_prompt_text(raw)
-
     if not prompt:
+        prompt = (current_prompt or "").strip()
+
+    if not prompt and not constitution and not specs:
         raise PromptAssistantError("El modelo no devolvió un prompt ejecutable.")
 
     return {
@@ -518,4 +599,5 @@ async def assist_prompt(
         "provider_label": settings.provider_label,
         "model": settings.model,
     }
+
 
