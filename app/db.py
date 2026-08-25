@@ -2416,7 +2416,28 @@ async def upsert_contact(
         )
 
 
+async def get_contact_by_wa_id(bot_id: int, wa_id: str) -> dict | None:
+    """Busca un contacto por su número exacto o coincidencia de los últimos 10 dígitos."""
+
+    clean = re.sub(r"[^\d]", "", str(wa_id or ""))
+    d10 = clean[-10:] if len(clean) >= 10 else clean
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT *
+            FROM contacts
+            WHERE bot_id = $1 AND (wa_id = $2 OR wa_id LIKE '%' || $3)
+            LIMIT 1
+            """,
+            bot_id,
+            wa_id,
+            d10,
+        )
+    return dict(row) if row else None
+
+
 async def list_contacts(
+
     bot_id: int,
     search: str | None = None,
     tag: str | None = None,

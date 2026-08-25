@@ -13,31 +13,50 @@ PAUSE_COMMANDS = {
     "pausar",
     "detener",
     "detente",
+    "deten",
     "stop",
     "apagar",
+    "apaga",
+    "apagate",
     "apagar bot",
+    "apaga bot",
     "pausa bot",
     "pausar bot",
     "detener bot",
     "pause",
+    "pausate",
 }
 
 RESUME_COMMANDS = {
     "seguir",
+    "sigue",
     "continuar",
+    "continua",
     "reanudar",
     "reanuda",
     "iniciar",
+    "inicia",
     "start",
     "play",
     "prender",
+    "prende",
+    "prendete",
     "prender bot",
+    "prende bot",
+    "encender",
+    "enciende",
+    "enciendete",
+    "encender bot",
+    "enciende bot",
     "seguir bot",
+    "sigue bot",
     "continuar bot",
     "reanudar bot",
     "iniciar bot",
     "activar",
+    "activa",
     "activar bot",
+    "activa bot",
     "resume",
 }
 
@@ -68,6 +87,14 @@ def _clean_phone(phone: str | None) -> str:
     if digits.startswith("521") and len(digits) == 13:
         digits = "52" + digits[3:]
     return digits
+
+
+def extract_10_digits(phone: str | None) -> str:
+    """Extrae los últimos 10 dígitos numéricos para comparación libre de prefijos (52, 521, 1, etc.)."""
+    if not phone:
+        return ""
+    digits = re.sub(r"[^\d]", "", str(phone))
+    return digits[-10:] if len(digits) >= 10 else digits
 
 
 def normalize_command(text: str) -> str:
@@ -103,6 +130,7 @@ def detect_control_command(text: str) -> str | None:
 def is_phone_in_list(wa_id: str, phone_list: list[str] | tuple[str, ...]) -> bool:
     """Verifica si un número de teléfono coincide con alguno de la lista considerando prefijos (52/521/10 dígitos)."""
     clean_sender = _clean_phone(wa_id)
+    sender_10 = extract_10_digits(wa_id)
     if not clean_sender:
         return False
     for p in phone_list:
@@ -115,10 +143,17 @@ def is_phone_in_list(wa_id: str, phone_list: list[str] | tuple[str, ...]) -> boo
             return True
         if len(clean_sender) == 10 and clean_p == ("52" + clean_sender):
             return True
+        p_10 = extract_10_digits(p)
+        if sender_10 and p_10 and len(sender_10) == 10 and len(p_10) == 10 and sender_10 == p_10:
+            return True
     return False
 
 
-def is_authorized_admin(wa_id: str, bot: bots.BotContext | None = None) -> bool:
+def is_authorized_admin(
+    wa_id: str,
+    bot: bots.BotContext | None = None,
+    extra_phone: str | None = None,
+) -> bool:
     """Verifica si el remitente está autorizado para ejecutar comandos de control."""
     if is_phone_in_list(wa_id, config.ADMIN_PHONE_NUMBERS):
         return True
@@ -127,7 +162,12 @@ def is_authorized_admin(wa_id: str, bot: bots.BotContext | None = None) -> bool:
         if is_phone_in_list(wa_id, [bot.display_phone_number]):
             return True
 
+    if extra_phone:
+        if is_phone_in_list(wa_id, [extra_phone]):
+            return True
+
     return False
+
 
 
 async def handle_control_command(

@@ -34,15 +34,25 @@ class BotControlUnitTests(unittest.TestCase):
         self.assertEqual(bot_control.detect_control_command("stop"), "pause")
         self.assertEqual(bot_control.detect_control_command("apagar bot"), "pause")
         self.assertEqual(bot_control.detect_control_command("pausa bot"), "pause")
+        self.assertEqual(bot_control.detect_control_command("apagate"), "pause")
+        self.assertEqual(bot_control.detect_control_command("apágate"), "pause")
+        self.assertEqual(bot_control.detect_control_command("apaga"), "pause")
+        self.assertEqual(bot_control.detect_control_command("paúsate"), "pause")
 
         # Resume variants
         self.assertEqual(bot_control.detect_control_command("Seguir"), "resume")
+        self.assertEqual(bot_control.detect_control_command("sigue"), "resume")
         self.assertEqual(bot_control.detect_control_command("continuar"), "resume")
         self.assertEqual(bot_control.detect_control_command("reanudar"), "resume")
         self.assertEqual(bot_control.detect_control_command("start"), "resume")
         self.assertEqual(bot_control.detect_control_command("iniciar"), "resume")
         self.assertEqual(bot_control.detect_control_command("seguir bot"), "resume")
         self.assertEqual(bot_control.detect_control_command("prender bot"), "resume")
+        self.assertEqual(bot_control.detect_control_command("encender"), "resume")
+        self.assertEqual(bot_control.detect_control_command("enciende"), "resume")
+        self.assertEqual(bot_control.detect_control_command("enciéndete"), "resume")
+        self.assertEqual(bot_control.detect_control_command("enciendete"), "resume")
+        self.assertEqual(bot_control.detect_control_command("prende"), "resume")
 
         # Sync Easybroker properties variants
         self.assertEqual(bot_control.detect_control_command("actualizar propiedades"), "sync_properties")
@@ -92,7 +102,33 @@ class BotControlUnitTests(unittest.TestCase):
         with patch.object(bot_control.config, "ADMIN_PHONE_NUMBERS", []):
             self.assertTrue(bot_control.is_authorized_admin("5216865554433", bot))
             self.assertTrue(bot_control.is_authorized_admin("526865554433", bot))
+            self.assertTrue(bot_control.is_authorized_admin("6865554433", bot))
             self.assertFalse(bot_control.is_authorized_admin("5219991112233", bot))
+
+    def test_is_authorized_admin_mexico_10_digits_variants(self):
+        # Bot configured with +52 1 667 102 0672
+        bot = bots.BotContext(
+            id=170,
+            client_id=1,
+            slug="mobi",
+            name="Mobi Muebles",
+            whatsapp_phone_number_id="12345",
+            whatsapp_access_token="token",
+            display_phone_number="+52 1 667 102 0672",
+            status="active",
+        )
+        with patch.object(bot_control.config, "ADMIN_PHONE_NUMBERS", []):
+            # Incoming from 5216671020672
+            self.assertTrue(bot_control.is_authorized_admin("5216671020672", bot))
+            # Incoming from 526671020672
+            self.assertTrue(bot_control.is_authorized_admin("526671020672", bot))
+            # Incoming from 16671020672
+            self.assertTrue(bot_control.is_authorized_admin("16671020672", bot))
+            # Incoming from 6671020672
+            self.assertTrue(bot_control.is_authorized_admin("6671020672", bot))
+            # Fallback to extra_phone metadata
+            self.assertTrue(bot_control.is_authorized_admin("5216671020672", bot=None, extra_phone="16671020672"))
+
 
     @patch("app.db.update_bot_status", new_callable=AsyncMock)
     @patch("app.db.save_message", new_callable=AsyncMock)

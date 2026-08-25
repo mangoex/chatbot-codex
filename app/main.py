@@ -558,7 +558,7 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
 
     # Comandos de control administrativo (Pausa / Seguir)
     control_cmd = bot_control.detect_control_command(user_text)
-    if control_cmd and bot_control.is_authorized_admin(wa_id, bot):
+    if control_cmd and bot_control.is_authorized_admin(wa_id, bot, extra_phone=msg.get("display_phone_number")):
         await bot_control.handle_control_command(bot, wa_id, control_cmd)
         return
 

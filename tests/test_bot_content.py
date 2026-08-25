@@ -150,7 +150,13 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("RAG Chunk 1", result)
         self.assertNotIn("LargeDoc", result)
 
+    async def test_runtime_context_injects_user_phone(self):
+        from app import openai_client
+        runtime = await openai_client._runtime_context(bot_id=170, wa_id="5216671020672")
+        self.assertIn("Teléfono/WhatsApp del usuario: 6671020672 (ID: 5216671020672)", runtime)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

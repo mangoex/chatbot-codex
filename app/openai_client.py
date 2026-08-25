@@ -47,7 +47,7 @@ def _encoder():
         return tiktoken.get_encoding("cl100k_base")
 
 
-async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = None) -> str:
+async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = None, wa_id: str | None = None) -> str:
     tz_name = config.GOOGLE_CALENDAR_TIMEZONE or "America/Chihuahua"
     calendar_state = "inactivo"
     duration = None
@@ -86,6 +86,15 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
         hour_12 = 12
     time_human = f"{day_name}, {now.day} de {month_name} de {now.year}, {now.hour:02d}:{now.minute:02d} ({hour_12}:{now.minute:02d} {ampm})"
     
+    user_phone_line = ""
+    if wa_id:
+        from app.bot_control import extract_10_digits
+        digits10 = extract_10_digits(wa_id)
+        if digits10:
+            user_phone_line = f"- Teléfono/WhatsApp del usuario: {digits10} (ID: {wa_id})\n"
+        else:
+            user_phone_line = f"- Teléfono/WhatsApp del usuario: {wa_id}\n"
+
     lead_context = ""
     if lead_info:
         parts = []
@@ -105,6 +114,7 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
 
     return (
         "Contexto operativo actual:\n"
+        f"{user_phone_line}"
         f"{lead_context}"
         f"- Fecha y hora actual: {time_human}\n"
         f"- Zona horaria: {tz_name}\n"
@@ -117,17 +127,23 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
     )
 
 
-async def _system_prompt(bot_id: int | None = None, query: str | None = None, lead_info: dict | None = None) -> str:
+async def _system_prompt(
+    bot_id: int | None = None,
+    query: str | None = None,
+    lead_info: dict | None = None,
+    wa_id: str | None = None,
+) -> str:
     prompt = await bot_content.system_prompt_for_bot(bot_id, query)
     extra = await external_actions.system_instructions(bot_id)
     # The order-payment opt-in is contained in the prompt we just loaded.  Do
     # not introduce a second tenant-wide DB lookup for ordinary messages.
     payment = order_payments.system_instructions_from_prompt(prompt)
-    runtime = await _runtime_context(bot_id, lead_info)
+    runtime = await _runtime_context(bot_id, lead_info, wa_id=wa_id)
     additions = "\n\n".join(part for part in (extra, payment) if part)
     if additions:
         return f"{prompt}\n\n--- contexto_runtime ---\n{runtime}\n\n{additions}"
     return f"{prompt}\n\n--- contexto_runtime ---\n{runtime}"
+
 
 
 def _safe_error(exc: Exception) -> str:
@@ -187,10 +203,17 @@ async def complete(
     if wa_id:
         try:
             lead_info = await db.get_lead(wa_id, bot_id)
+            if bot_id and (not lead_info or not lead_info.get("nombre")):
+                contact = await db.get_contact_by_wa_id(bot_id, wa_id)
+                if contact and contact.get("name"):
+                    lead_info = lead_info or {}
+                    lead_info["nombre"] = contact["name"]
+                    if contact.get("business") and not lead_info.get("negocio"):
+                        lead_info["negocio"] = contact["business"]
         except Exception:
             pass
 
-    system = await _system_prompt(bot_id, query=user_message, lead_info=lead_info)
+    system = await _system_prompt(bot_id, query=user_message, lead_info=lead_info, wa_id=wa_id)
     fitted = fit_history(system, history, user_message, config.MAX_PROMPT_TOKENS)
     messages = (
         [{"role": "system", "content": system}]
