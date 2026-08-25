@@ -2685,12 +2685,15 @@ async def client_app(
 
             <!-- VISTA PREVIA Y RESULTADOS -->
             <div id="promptPreviewBlock" style="margin-top:20px; display:none; background:#f0fdf4; border:1px solid #bbf7d0; padding:16px; border-radius:8px;">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
                 <div>
                   <span class="bold-text" style="font-size:13.5px; color:#166534;" id="pbdPreviewTitle">✅ Comportamiento PBD generado exitosamente</span>
                   <span id="pbdAutoSavedBadge" style="display:none; margin-left:8px; background:#22c55e; color:#fff; font-size:10.5px; padding:2px 8px; border-radius:10px; font-weight:600;">Publicado en producción</span>
                 </div>
-                <button class="btn secondary" type="button" style="padding:4px 10px; font-size:11px;" onclick="applyGeneratedPrompt()">Sincronizar Editores</button>
+                <div style="display:flex; gap:6px;">
+                  <button class="btn secondary" type="button" style="padding:4px 10px; font-size:11px;" onclick="applyGeneratedPrompt()">Sincronizar Editores</button>
+                  <button class="btn" type="button" style="background:#16a34a; color:#fff; padding:4px 12px; font-size:11.5px; font-weight:600;" onclick="applyAndPublishNow()">⚡ Publicar Todo Ahora</button>
+                </div>
               </div>
               
               <label style="color:#166534; font-size:12px; font-weight:600;">01 - Constitución (Preview)</label>
@@ -2717,10 +2720,6 @@ async def client_app(
   
               <label>03 - Suite de Pruebas (Casos de uso)</label>
               <textarea id="activeTestSuiteEditor" name="pbd_test_suite" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 16px;">{html.escape(current_test_suite)}</textarea>
-
-              <div style="margin-top:4px;">
-                <button class="btn secondary" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar documentos PBD</button>
-              </div>
             </div>
           </div>
           
@@ -2733,9 +2732,9 @@ async def client_app(
             <label>04 - Master Prompt (Código del Bot)</label>
             <textarea id="activePromptEditor" name="prompt" style="min-height: 520px; width: 100%; font-family:monospace; font-size:12.5px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;" placeholder="System prompt...">{html.escape(current_prompt_content)}</textarea>
             
-            <div style="margin-top:16px; display:flex; gap:10px;">
-              <button class="btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Publicar comportamiento</button>
-              <a href="/client/bots/{bot_id}/prompt/pbd/export" class="btn secondary" style="text-decoration:none;" title="Descargar paquete completo de documentación">Descargar .zip</a>
+            <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
+              <button class="btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""} style="font-weight:700;">🚀 Publicar y Guardar Todos los Documentos PBD</button>
+              <a href="/client/bots/{bot_id}/prompt/pbd/export" class="btn secondary" style="text-decoration:none;" title="Descargar paquete completo de documentación">📥 Descargar .zip</a>
             </div>
           </div>
         </div>
@@ -2747,6 +2746,15 @@ async def client_app(
             window.promptEditor.codemirror.save();
           }}
         }});
+
+        function applyAndPublishNow() {{
+          applyGeneratedPrompt(false);
+          if (window.promptEditor?.codemirror) {{
+            window.promptEditor.codemirror.save();
+          }}
+          document.getElementById("behaviorForm")?.submit();
+        }}
+
 
         async function requestAIPrompt() {{
           const instruction = document.getElementById("aiPromptInstruction").value.trim();
