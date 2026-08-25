@@ -2773,6 +2773,7 @@ async def client_app(
           const mode = document.getElementById("aiPbdMode")?.value || "auto";
           const autoPublish = document.getElementById("aiAutoPublish")?.checked ? "true" : "false";
 
+          const csrfToken = "{html.escape(csrf_token)}";
           const formData = new FormData();
           formData.append("instruction", instruction);
           formData.append("current_prompt", current);
@@ -2781,13 +2782,26 @@ async def client_app(
           formData.append("pbd_test_suite", document.getElementById("activeTestSuiteEditor").value);
           formData.append("mode", mode);
           formData.append("auto_publish", autoPublish);
+          formData.append("csrf_token", csrfToken);
           
           try {{
-            const response = await fetch("/client/bots/{bot_id}/prompt/assist", {{
+            const fetchUrl = `/client/bots/{bot_id}/prompt/assist?csrf_token=${{encodeURIComponent(csrfToken)}}`;
+            const response = await fetch(fetchUrl, {{
               method: "POST",
+              headers: {{
+                "X-CSRF-Token": csrfToken,
+                "Accept": "application/json"
+              }},
               body: formData
             }});
-            const data = await response.json();
+            
+            const rawText = await response.text();
+            let data;
+            try {{
+              data = JSON.parse(rawText);
+            }} catch (jsonErr) {{
+              throw new Error(rawText || "Error de comunicación con el servidor");
+            }}
             
             if (data.blocked) {{
               blockedText.textContent = data.blocked_reason || data.error || "El cambio solicitado viola una regla constitucional activa.";
@@ -2814,7 +2828,8 @@ async def client_app(
             previewBlock.style.display = "block";
           }} catch (e) {{
             alert(e.message);
-          }} finally {{
+          }}
+ finally {{
             loader.style.display = "none";
             btn.disabled = false;
           }}

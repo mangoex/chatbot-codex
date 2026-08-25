@@ -2330,7 +2330,9 @@ async def bot_whatsapp_templates_submit(
 @router.get("/bots/{bot_id}/prompt", response_class=HTMLResponse)
 async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = None):
     session = _require_login(request)
+    csrf_token = session.get("_csrf_token") or ""
     bot = await _require_bot_access(session, bot_id)
+
     prompt = await db.get_active_bot_prompt(bot_id)
     content = (prompt or {}).get("content") or ""
     pbd_constitution = (prompt or {}).get("pbd_constitution") or ""
@@ -2457,15 +2459,26 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
           if (runButton) runButton.disabled = true;
           if (applyButton) applyButton.disabled = true;
           try {{
-            const response = await fetch("/admin/bots/{bot_id}/prompt/assist", {{
+            const fetchUrl = `/admin/bots/{bot_id}/prompt/assist?csrf_token=${{encodeURIComponent("{html.escape(csrf_token)}")}}`;
+            const response = await fetch(fetchUrl, {{
               method: "POST",
-              headers: {{ "Accept": "application/json" }},
+              headers: {{
+                "X-CSRF-Token": "{html.escape(csrf_token)}",
+                "Accept": "application/json"
+              }},
               body: payload,
             }});
-            const data = await response.json().catch(() => ({{}}));
+            const rawText = await response.text();
+            let data;
+            try {{
+              data = JSON.parse(rawText);
+            }} catch (jsonErr) {{
+              throw new Error(rawText || "Error en el servidor al generar el prompt");
+            }}
             if (!response.ok || !data.ok) {{
               throw new Error(data.error || "No se pudo generar el prompt.");
             }}
+
             result.value = data.prompt || "";
             document.getElementById("aiConstitutionPreview").value = data.pbd_constitution || "";
             document.getElementById("aiSpecsPreview").value = data.pbd_specs || "";
