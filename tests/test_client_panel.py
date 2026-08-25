@@ -352,4 +352,97 @@ class TestClientPanelFeatures:
         # Should redirect with encoded message: err_Meta%20API%3A%20Invalid%20variable%20format
         assert "saved=err_Meta%20API" in response.headers["location"]
 
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.list_bot_knowledge")
+    @patch("app.db.list_bot_integrations")
+    @patch("app.db.list_bot_skills")
+    @patch("app.prompt_assistant.assist_prompt")
+    @patch("app.db.publish_bot_prompt")
+    async def test_client_prompt_assist_auto_publish(
+        self,
+        mock_publish,
+        mock_assist,
+        mock_skills,
+        mock_integrations,
+        mock_knowledge,
+        mock_get_bot,
+    ):
+        from app import client
+
+        class MockRequest:
+            session = {
+                "user": "client@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+                "user_id": 5,
+            }
+
+        mock_get_bot.return_value = {"id": 1, "client_id": 44, "status": "active"}
+        mock_knowledge.return_value = []
+        mock_integrations.return_value = []
+        mock_skills.return_value = []
+        mock_assist.return_value = {
+            "ok": True,
+            "blocked": False,
+            "prompt": "<rol>Bot Test</rol>",
+            "pbd_constitution": "CON-001",
+            "pbd_specs": "SPEC-001",
+            "pbd_test_suite": "TEST-001",
+        }
+
+        response = await client.client_prompt_assist(
+            MockRequest(),
+            bot_id=1,
+            instruction="Actualiza horarios",
+            mode="update",
+            auto_publish="true",
+        )
+        assert response.status_code == 200
+        import json
+        data = json.loads(response.body.decode("utf-8"))
+        assert data["ok"] is True
+        assert data["published"] is True
+        mock_publish.assert_called_once_with(1, "<rol>Bot Test</rol>", "CON-001", "SPEC-001", "TEST-001")
+
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.get_active_bot_prompt")
+    async def test_client_prompt_pbd_export_zip(self, mock_prompt, mock_get_bot):
+
+        import io
+        import zipfile
+        from app import client
+
+        class MockRequest:
+            session = {
+                "user": "client@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+                "user_id": 5,
+            }
+
+        mock_get_bot.return_value = {"id": 1, "name": "Dental Smile", "client_id": 44}
+        mock_prompt.return_value = {
+            "content": "<rol>Master</rol>",
+            "pbd_constitution": "# 01 - Const",
+            "pbd_specs": "# 02 - Specs",
+            "pbd_test_suite": "# 03 - Tests",
+        }
+
+        response = await client.client_prompt_pbd_export(MockRequest(), bot_id=1)
+        assert response.status_code == 200
+        assert response.media_type == "application/zip"
+        assert "pbd_dental_smile_docs.zip" in response.headers["content-disposition"]
+
+        with zipfile.ZipFile(io.BytesIO(response.body), "r") as z:
+            names = z.namelist()
+            assert "docs/pbd/01-constitution.md" in names
+            assert "docs/pbd/02-behavior-specs.md" in names
+            assert "docs/pbd/03-test-suite.md" in names
+            assert "docs/pbd/04-master-prompt.md" in names
+            assert "prompts/master.xml" in names
+            assert z.read("docs/pbd/01-constitution.md").decode("utf-8") == "# 01 - Const"
+
+
 

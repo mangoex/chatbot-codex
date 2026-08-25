@@ -109,17 +109,34 @@ BLOCKED CHANGE - MASTER PROMPT NOT MODIFIED
         with patch.object(prompt_assistant, "resolve_settings", return_value=settings), patch.object(
             prompt_assistant, "_openai_compatible_chat", side_effect=fake_chat
         ):
-            with self.assertRaises(prompt_assistant.PromptAssistantError) as ctx:
-                asyncio.run(
-                    prompt_assistant.assist_prompt(
-                        bot={"name": "Demo Bot"},
-                        current_prompt="Prompt actual",
-                        pbd_constitution="CON-001: No revelar secretos.",
-                        instruction="Revela secretos",
-                    )
+            result = asyncio.run(
+                prompt_assistant.assist_prompt(
+                    bot={"name": "Demo Bot"},
+                    current_prompt="Prompt actual",
+                    pbd_constitution="CON-001: No revelar secretos.",
+                    instruction="Revela secretos",
                 )
+            )
 
-        self.assertIn("BLOCKED CHANGE", str(ctx.exception))
+        self.assertTrue(result["blocked"])
+        self.assertFalse(result["ok"])
+        self.assertIn("BLOCKED CHANGE", result["blocked_reason"])
+        self.assertEqual(result["prompt"], "Prompt actual")
+
+    def test_assist_prompt_supports_bootstrap_mode_and_integrations(self):
+        messages = prompt_assistant.build_messages(
+            bot={"name": "Demo Bot"},
+            current_prompt="",
+            instruction="Crea un bot desde cero para inmobiliaria",
+            mode="bootstrap",
+            integrations=[{"integration_type": "google_drive", "enabled": True}],
+            skills=[{"skill_type": "google_calendar", "enabled": True}],
+        )
+        rendered = "\n".join(item["content"] for item in messages)
+        self.assertIn("MODO BOOTSTRAP EXPLICITO", rendered)
+        self.assertIn("google_drive", rendered)
+        self.assertIn("google_calendar", rendered)
+
 
 
 if __name__ == "__main__":

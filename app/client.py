@@ -2630,42 +2630,82 @@ async def client_app(
     <div id="panel-prompt" class="tab-panel">
       <form id="behaviorForm" method="post" action="/client/bots/{bot_id}/prompt/save">
         <div class="prompt-workspace">
-        <div class="card">
-          <div class="card-header">
-            <h2>Agente PBD con IA</h2>
-            <p>Escribe qué quieres que haga tu bot en WhatsApp y la IA generará el prompt final integrando tu base de conocimientos.</p>
-          </div>
-          <div style="margin-bottom:14px;">
-            <label>Describe el comportamiento que buscas</label>
-            <textarea id="aiPromptInstruction" style="min-height: 120px;" placeholder="Ej. Eres un bot de la Clínica Dental Smile. Tu objetivo es agendar citas de diagnóstico dental. Saluda amablemente, solicita nombre completo y busca un espacio libre. Si tienen urgencias de dolor fuerte, pásalo a humano de inmediato..."></textarea>
-          </div>
-          <div>
-            <button class="btn primary-btn" type="button" id="btnAssistPrompt" onclick="requestAIPrompt()">
-              Diseñar comportamiento con PBD
-            </button>
-            <span id="aiAssistLoader" style="display:none; margin-left:12px; font-size:13px; color:var(--primary); font-weight:600;">Generando prompt óptimo...</span>
-          </div>
-          
-          <div id="promptPreviewBlock" style="margin-top:24px; display:none;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-              <span class="bold-text" style="font-size:13px; color:var(--primary-dark);">Vista previa del prompt generado</span>
-              <button class="btn secondary" style="padding:4px 10px; font-size:11px;" onclick="applyGeneratedPrompt()">Aplicar Preview</button>
+          <div class="card">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:flex-start;">
+              <div>
+                <h2>Agente PBD con IA (Prompt Behavior Design)</h2>
+                <p>Describe las reglas de tu bot en WhatsApp y la IA estructurará y sincronizará automáticamente los 4 documentos PBD y el Prompt Maestro.</p>
+              </div>
+              <a href="/client/bots/{bot_id}/prompt/pbd/export" class="btn secondary" style="font-size:12px; padding:6px 12px; text-decoration:none; display:inline-flex; align-items:center; gap:6px;" title="Descargar paquete completo de documentación .md">
+                📥 Descargar PBD (.zip)
+              </a>
             </div>
             
-            <label>01 - Constitución (Preview)</label>
-            <textarea id="aiConstitutionPreview" style="min-height: 120px; background:#f8fafc; font-family:monospace; font-size:12px; border-color:var(--primary-light); margin-bottom: 12px;" readonly></textarea>
+            <div style="margin-bottom:14px;">
+              <label>Describe el comportamiento que buscas o el cambio que necesitas</label>
+              <textarea id="aiPromptInstruction" style="min-height: 110px;" placeholder="Ej. Actualiza el bot para que cuando pregunten por citas agende usando Google Calendar, solicite nombre y teléfono, y si el usuario cancela o reagenda aplique el protocolo de confirmación respetando los horarios comerciales..."></textarea>
+            </div>
             
-            <label>02 - Especificaciones (Preview)</label>
-            <textarea id="aiSpecsPreview" style="min-height: 120px; background:#f8fafc; font-family:monospace; font-size:12px; border-color:var(--primary-light); margin-bottom: 12px;" readonly></textarea>
-            
-            <label>03 - Suite de Pruebas (Preview)</label>
-            <textarea id="aiTestSuitePreview" style="min-height: 120px; background:#f8fafc; font-family:monospace; font-size:12px; border-color:var(--primary-light); margin-bottom: 12px;" readonly></textarea>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:14px; background:#f8fafc; padding:12px; border-radius:6px; border:1px solid var(--border-color);">
+              <div>
+                <label style="font-size:12px; font-weight:600; margin-bottom:4px; display:block;">Modo de Operación PBD</label>
+                <select id="aiPbdMode" style="width:100%; padding:6px 10px; font-size:12.5px; border-radius:4px; border:1px solid var(--border-color); background:#fff;">
+                  <option value="auto" selected>⚡ Auto (Detectar y actualizar sin romper reglas)</option>
+                  <option value="bootstrap">🔄 Bootstrap (Crear o reconstruir todo desde cero)</option>
+                  <option value="update">🎯 Update (Adecuar especificaciones y flujos)</option>
+                </select>
+              </div>
+              <div style="display:flex; align-items:center; padding-top:16px;">
+                <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:600; cursor:pointer;">
+                  <input type="checkbox" id="aiAutoPublish" style="width:16px; height:16px; cursor:pointer;" checked>
+                  🚀 Publicar automáticamente en producción
+                </label>
+              </div>
+            </div>
 
-            <label>04 - Master Prompt (Preview)</label>
-            <textarea id="aiPromptPreview" style="min-height: 240px; background:#f8fafc; font-family:monospace; font-size:12px; border-color:var(--primary-light);" readonly></textarea>
-          </div>
-            <div style="margin-top:24px; border-top: 1px solid var(--border-color); padding-top: 24px;">
-              <h3 style="margin-bottom: 12px; font-size: 14px;">Documentos de Referencia PBD</h3>
+            <div style="display:flex; align-items:center; gap:12px;">
+              <button class="btn primary-btn" type="button" id="btnAssistPrompt" onclick="requestAIPrompt()">
+                ✨ Diseñar / Actualizar Comportamiento con PBD
+              </button>
+              <span id="aiAssistLoader" style="display:none; font-size:13px; color:var(--primary); font-weight:600;">
+                🧠 Ejecutando PBD WhatsApp Maintainer...
+              </span>
+            </div>
+            
+            <!-- ALERTA DE CONTRADICCIÓN CONSTITUCIONAL -->
+            <div id="pbdBlockedAlert" style="margin-top:16px; display:none; background:#fff1f2; border:1px solid #fda4af; border-left:4px solid #e11d48; padding:14px; border-radius:6px;">
+              <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
+                <span style="font-size:16px;">⛔</span>
+                <span style="font-weight:700; color:#9f1239; font-size:13.5px;">Cambio Bloqueado por Contradicción Constitucional</span>
+              </div>
+              <p id="pbdBlockedText" style="font-size:12.5px; color:#881337; margin:0; line-height:1.5; white-space:pre-wrap;"></p>
+            </div>
+
+            <!-- VISTA PREVIA Y RESULTADOS -->
+            <div id="promptPreviewBlock" style="margin-top:20px; display:none; background:#f0fdf4; border:1px solid #bbf7d0; padding:16px; border-radius:8px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+                <div>
+                  <span class="bold-text" style="font-size:13.5px; color:#166534;" id="pbdPreviewTitle">✅ Comportamiento PBD generado exitosamente</span>
+                  <span id="pbdAutoSavedBadge" style="display:none; margin-left:8px; background:#22c55e; color:#fff; font-size:10.5px; padding:2px 8px; border-radius:10px; font-weight:600;">Publicado en producción</span>
+                </div>
+                <button class="btn secondary" type="button" style="padding:4px 10px; font-size:11px;" onclick="applyGeneratedPrompt()">Sincronizar Editores</button>
+              </div>
+              
+              <label style="color:#166534; font-size:12px; font-weight:600;">01 - Constitución (Preview)</label>
+              <textarea id="aiConstitutionPreview" style="min-height: 100px; background:#fff; font-family:monospace; font-size:12px; border-color:#86efac; margin-bottom: 10px;" readonly></textarea>
+              
+              <label style="color:#166534; font-size:12px; font-weight:600;">02 - Especificaciones (Preview)</label>
+              <textarea id="aiSpecsPreview" style="min-height: 100px; background:#fff; font-family:monospace; font-size:12px; border-color:#86efac; margin-bottom: 10px;" readonly></textarea>
+              
+              <label style="color:#166534; font-size:12px; font-weight:600;">03 - Suite de Pruebas (Preview)</label>
+              <textarea id="aiTestSuitePreview" style="min-height: 100px; background:#fff; font-family:monospace; font-size:12px; border-color:#86efac; margin-bottom: 10px;" readonly></textarea>
+
+              <label style="color:#166534; font-size:12px; font-weight:600;">04 - Master Prompt (Preview)</label>
+              <textarea id="aiPromptPreview" style="min-height: 180px; background:#fff; font-family:monospace; font-size:12px; border-color:#86efac;" readonly></textarea>
+            </div>
+            
+            <div style="margin-top:24px; border-top: 1px solid var(--border-color); padding-top: 20px;">
+              <h3 style="margin-bottom: 12px; font-size: 14px;">Documentos de Referencia PBD (Editables)</h3>
               
               <label>01 - Constitución (Verdad Absoluta)</label>
               <textarea id="activeConstitutionEditor" name="pbd_constitution" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 16px;">{html.escape(current_constitution)}</textarea>
@@ -2685,14 +2725,15 @@ async def client_app(
           <div class="card">
             <div class="card-header">
               <h2>Estructura del Comportamiento (PBD)</h2>
-              <p>Puedes editar el comportamiento manualmente o usar el Asistente de IA a la izquierda.</p>
+              <p>Puedes editar el comportamiento manualmente o usar el Asistente PBD con IA a la izquierda.</p>
             </div>
             
             <label>04 - Master Prompt (Código del Bot)</label>
             <textarea id="activePromptEditor" name="prompt" style="min-height: 520px; width: 100%; font-family:monospace; font-size:12.5px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;" placeholder="System prompt...">{html.escape(current_prompt_content)}</textarea>
             
-            <div style="margin-top:16px;">
+            <div style="margin-top:16px; display:flex; gap:10px;">
               <button class="btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Publicar comportamiento</button>
+              <a href="/client/bots/{bot_id}/prompt/pbd/export" class="btn secondary" style="text-decoration:none;" title="Descargar paquete completo de documentación">Descargar .zip</a>
             </div>
           </div>
         </div>
@@ -2716,40 +2757,61 @@ async def client_app(
           const loader = document.getElementById("aiAssistLoader");
           const btn = document.getElementById("btnAssistPrompt");
           const previewBlock = document.getElementById("promptPreviewBlock");
+          const blockedAlert = document.getElementById("pbdBlockedAlert");
+          const blockedText = document.getElementById("pbdBlockedText");
           const previewArea = document.getElementById("aiPromptPreview");
           const constPreview = document.getElementById("aiConstitutionPreview");
           const specsPreview = document.getElementById("aiSpecsPreview");
           const testPreview = document.getElementById("aiTestSuitePreview");
+          const autoBadge = document.getElementById("pbdAutoSavedBadge");
           
           loader.style.display = "inline";
           btn.disabled = true;
+          blockedAlert.style.display = "none";
+          previewBlock.style.display = "none";
           
+          const mode = document.getElementById("aiPbdMode")?.value || "auto";
+          const autoPublish = document.getElementById("aiAutoPublish")?.checked ? "true" : "false";
+
           const formData = new FormData();
           formData.append("instruction", instruction);
           formData.append("current_prompt", current);
           formData.append("pbd_constitution", document.getElementById("activeConstitutionEditor").value);
           formData.append("pbd_specs", document.getElementById("activeSpecsEditor").value);
           formData.append("pbd_test_suite", document.getElementById("activeTestSuiteEditor").value);
+          formData.append("mode", mode);
+          formData.append("auto_publish", autoPublish);
           
           try {{
             const response = await fetch("/client/bots/{bot_id}/prompt/assist", {{
               method: "POST",
               body: formData
             }});
-            if (!response.ok) {{
-              const err = await response.json();
-              throw new Error(err.detail || "Error generando el prompt");
-            }}
             const data = await response.json();
-            if (data.ok) {{
-              previewArea.value = data.prompt;
-              constPreview.value = data.pbd_constitution || "";
-              specsPreview.value = data.pbd_specs || "";
-              testPreview.value = data.pbd_test_suite || "";
-              previewBlock.style.display = "block";
-            }} else {{
-              alert("Error: " + data.error);
+            
+            if (data.blocked) {{
+              blockedText.textContent = data.blocked_reason || data.error || "El cambio solicitado viola una regla constitucional activa.";
+              blockedAlert.style.display = "block";
+              return;
             }}
+
+            if (!response.ok || !data.ok) {{
+              throw new Error(data.error || "Error generando el prompt");
+            }}
+
+            previewArea.value = data.prompt || "";
+            constPreview.value = data.pbd_constitution || "";
+            specsPreview.value = data.pbd_specs || "";
+            testPreview.value = data.pbd_test_suite || "";
+            
+            if (data.published) {{
+              autoBadge.style.display = "inline-block";
+              applyGeneratedPrompt(false);
+            }} else {{
+              autoBadge.style.display = "none";
+            }}
+
+            previewBlock.style.display = "block";
           }} catch (e) {{
             alert(e.message);
           }} finally {{
@@ -2758,7 +2820,7 @@ async def client_app(
           }}
         }}
         
-        function applyGeneratedPrompt() {{
+        function applyGeneratedPrompt(showAlert = true) {{
           const generated = document.getElementById("aiPromptPreview").value;
           const generatedConst = document.getElementById("aiConstitutionPreview").value;
           const generatedSpecs = document.getElementById("aiSpecsPreview").value;
@@ -2774,10 +2836,12 @@ async def client_app(
           document.getElementById("activeSpecsEditor").value = generatedSpecs;
           document.getElementById("activeTestSuiteEditor").value = generatedTest;
 
-          document.getElementById("promptPreviewBlock").style.display = "none";
-          alert("Documentos aplicados a los campos. Haz clic en 'Publicar comportamiento' para guardarlo definitivamente.");
+          if (showAlert) {{
+            alert("Documentos sincronizados en los editores. Haz clic en 'Publicar comportamiento' para guardar definitivamente.");
+          }}
         }}
       </script>
+
       <style>
         /* Estilos para hacer EasyMDE más presentable y acorde al diseño */
         .editor-toolbar {{
@@ -3468,11 +3532,15 @@ async def client_prompt_assist(
     pbd_constitution: str = Form(""),
     pbd_specs: str = Form(""),
     pbd_test_suite: str = Form(""),
+    mode: str = Form("auto"),
+    auto_publish: str | None = Form(None),
 ):
     session = _require_client_login(request)
     bot = await _require_bot_editor(session, bot_id)
     try:
         knowledge_docs = await db.list_bot_knowledge(bot_id, active_only=True)
+        integrations = await db.list_bot_integrations(bot_id)
+        skills = await db.list_bot_skills(bot_id)
         result = await prompt_assistant.assist_prompt(
             bot=bot,
             current_prompt=current_prompt,
@@ -3481,12 +3549,67 @@ async def client_prompt_assist(
             pbd_test_suite=pbd_test_suite,
             instruction=instruction,
             knowledge_docs=knowledge_docs,
+            integrations=integrations,
+            skills=skills,
+            mode=mode,
         )
+        if (auto_publish in ("true", "1", "on")) and result.get("ok") and not result.get("blocked"):
+            await db.publish_bot_prompt(
+                bot_id,
+                result["prompt"],
+                result.get("pbd_constitution"),
+                result.get("pbd_specs"),
+                result.get("pbd_test_suite"),
+            )
+            result["published"] = True
         return JSONResponse(result)
     except prompt_assistant.PromptAssistantError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     except Exception as exc:
         return JSONResponse({"ok": False, "error": prompt_assistant.safe_error(exc)}, status_code=502)
+
+@router.get("/bots/{bot_id}/prompt/pbd/export")
+async def client_prompt_pbd_export(request: Request, bot_id: int):
+    session = _require_client_login(request)
+    bot = await _require_bot_editor(session, bot_id)
+    prompt_row = await db.get_active_bot_prompt(bot_id)
+
+    bot_name = (bot.get("name") or f"bot_{bot_id}").lower().replace(" ", "_")
+    
+    constitution = (prompt_row.get("pbd_constitution") or "").strip() if prompt_row else ""
+    specs = (prompt_row.get("pbd_specs") or "").strip() if prompt_row else ""
+    test_suite = (prompt_row.get("pbd_test_suite") or "").strip() if prompt_row else ""
+    master_prompt = (prompt_row.get("content") or "").strip() if prompt_row else ""
+    
+    if not constitution:
+        constitution = f"# 01 — Constitución del bot {bot.get('name')}\n\n- CON-001: Identidad y misión de {bot.get('name')}.\n- CON-002: Guardrails y no invención de información.\n"
+    if not specs:
+        specs = f"# 02 — Especificaciones de Comportamiento {bot.get('name')}\n\n- SPEC-001: Flujos principales del asistente.\n- FLOW-001: Saludo y calificación.\n"
+    if not test_suite:
+        test_suite = f"# 03 — Suite de Pruebas {bot.get('name')}\n\n### TEST-001 - Happy Path\nGIVEN Usuario saluda\nWHEN Envía mensaje\nTHEN Responde amablemente con datos autorizados\nAND MUST NOT inventar hechos no confirmados.\n"
+    if not master_prompt:
+        master_prompt = f"# 04 — Master Prompt {bot.get('name')}\n\n<rol>\nEres el asistente de {bot.get('name')}.\n</rol>\n<mision>\nAtender a los usuarios con información oficial.\n</mision>\n"
+    
+    import io
+    import zipfile
+    from fastapi.responses import Response
+    
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        zip_file.writestr("docs/pbd/01-constitution.md", constitution)
+        zip_file.writestr("docs/pbd/02-behavior-specs.md", specs)
+        zip_file.writestr("docs/pbd/03-test-suite.md", test_suite)
+        zip_file.writestr("docs/pbd/04-master-prompt.md", master_prompt)
+        zip_file.writestr("prompts/master.xml", master_prompt)
+        
+    zip_buffer.seek(0)
+    filename = f"pbd_{bot_name}_docs.zip"
+    return Response(
+        content=zip_buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 @router.post("/bots/{bot_id}/hours")
 async def client_hours_save(request: Request, bot_id: int, enabled: str | None = Form(None)):

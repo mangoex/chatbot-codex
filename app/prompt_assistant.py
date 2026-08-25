@@ -253,6 +253,21 @@ def _knowledge_context(knowledge_docs: list[dict]) -> str:
     return "\n\n".join(chunks) or "Sin documentos activos."
 
 
+def _integrations_context(integrations: list[dict] | None, skills: list[dict] | None) -> str:
+    lines: list[str] = []
+    if integrations:
+        for it in integrations:
+            itype = it.get("integration_type") or "desconocida"
+            active = "activa" if it.get("enabled", True) else "inactiva"
+            lines.append(f"- Integración: {itype} ({active})")
+    if skills:
+        for sk in skills:
+            stype = sk.get("skill_type") or "desconocida"
+            active = "habilitada" if sk.get("enabled", True) else "deshabilitada"
+            lines.append(f"- Skill: {stype} ({active})")
+    return "\n".join(lines) if lines else "Sin integraciones configuradas."
+
+
 def build_messages(
     *,
     bot: dict,
@@ -262,35 +277,49 @@ def build_messages(
     pbd_test_suite: str = "",
     instruction: str,
     knowledge_docs: list[dict] | None = None,
+    integrations: list[dict] | None = None,
+    skills: list[dict] | None = None,
+    mode: str = "auto",
 ) -> list[dict]:
     clean_instruction = (instruction or "").strip()
     if not clean_instruction:
-        raise PromptAssistantError("Escribe que quieres crear, editar o corregir.")
+        raise PromptAssistantError("Escribe qué comportamiento deseas crear, editar o actualizar.")
 
     bot_context = "\n".join(
         [
             f"Nombre del bot: {bot.get('name') or '-'}",
             f"Cliente: {bot.get('client_name') or '-'}",
-            "Telefono WhatsApp: "
+            "Teléfono WhatsApp: "
             f"{bot.get('display_phone_number') or bot.get('phone_number_id') or '-'}",
-            f"Descripcion: {bot.get('description') or '-'}",
+            f"Descripción: {bot.get('description') or '-'}",
         ]
     )
+    
+    clean_mode = (mode or "auto").strip().lower()
+    mode_instructions = {
+        "bootstrap": "MODO BOOTSTRAP EXPLICITO: Reconstruye desde cero los 4 documentos PBD (01-constitution.md, 02-behavior-specs.md, 03-test-suite.md y 04-master-prompt.md) basándote en la descripción y base de conocimiento.",
+        "update": "MODO UPDATE EXPLICITO: Compara la solicitud contra la Constitución (01). Si no hay contradicción, actualiza Specs (02), Test Suite (03) y compila Master Prompt (04) al final conservando los IDs estables.",
+        "auto": "MODO AUTO: Si 01, 02 y 03 existen, ejecuta UPDATE respetando la Constitución. Si faltan documentos, ejecuta BOOTSTRAP reconstruyendo los faltantes con evidencia confirmada e inferencias conservadoras.",
+    }.get(clean_mode, "MODO AUTO: Analiza el contexto y procede según la metodología PBD.")
+
     user_message = f"""
 Contexto del bot:
 {bot_context}
 
+Integraciones y herramientas del bot:
+{_integrations_context(integrations, skills)}
+
 Master Prompt actual (04):
-{_trim(current_prompt, MAX_CURRENT_PROMPT_CHARS) or "Vacio"}
+{_trim(current_prompt, MAX_CURRENT_PROMPT_CHARS) or "Vacío"}
 
 Constitución actual (01):
-{_trim(pbd_constitution, MAX_CURRENT_PROMPT_CHARS) or "Vacio"}
+{_trim(pbd_constitution, MAX_CURRENT_PROMPT_CHARS) or "Vacío"}
 
 Especificaciones actuales (02):
-{_trim(pbd_specs, MAX_CURRENT_PROMPT_CHARS) or "Vacio"}
+{_trim(pbd_specs, MAX_CURRENT_PROMPT_CHARS) or "Vacío"}
 
 Test Suite actual (03):
-{_trim(pbd_test_suite, MAX_CURRENT_PROMPT_CHARS) or "Vacio"}
+{_trim(pbd_test_suite, MAX_CURRENT_PROMPT_CHARS) or "Vacío"}
 
 Base de conocimiento activa:
 {_knowledge_context(knowledge_docs or [])}
@@ -298,12 +327,13 @@ Base de conocimiento activa:
 Solicitud del usuario:
 {clean_instruction}
 
-Instrucciones de ejecucion del agente:
-- Trabaja en MODO AUTO.
-- Si 01, 02 o 03 existen, respetalos como documentos fuente.
-- Si el cambio no requiere modificar 01, 02 o 03, devuelvelos completos sin alterarlos.
-- Si actualizas el comportamiento, actualiza primero 02 y 03, y compila 04 al final.
-- Si detectas contradiccion constitucional, devuelve solo <blocked_change>.
+Instrucciones de ejecución del agente:
+- Modo seleccionado: {clean_mode.upper()}
+- {mode_instructions}
+- Mantén IDs estables: CON-001.., US-001.., SPEC-001.., FLOW-001.., FB-001.., AC-001.., TEST-001..
+- El Master Prompt final (04) debe ser conciso, en XML completo y copy-ready con etiquetas:
+  <rol>, <contexto_negocio>, <mision>, <jerarquia_de_reglas>, <guardrails>, <fuentes_autorizadas>, <estados_conversacionales>, <flujos>, <fallbacks>, <transferencia_humana>, <uso_de_herramientas>, <memoria_y_contexto>, <formato_whatsapp>, <criterios_de_respuesta>, <ejemplos>, <autoverificacion>.
+- Si detectas una contradicción constitucional insalvable con la solicitud, devuelve obligatoriamente el reporte dentro de <blocked_change>...</blocked_change>.
 """.strip()
     return [
         {"role": "system", "content": PBD_SKILL_SYSTEM_INSTRUCTIONS},
@@ -389,7 +419,7 @@ async def _anthropic_chat(settings: PromptAssistantSettings, messages: list[dict
         )
     if response.status_code >= 400:
         raise PromptAssistantError(
-            f"Claude respondio HTTP {response.status_code}: {response.text[:500]}"
+            f"Claude respondió HTTP {response.status_code}: {response.text[:500]}"
         )
     data = response.json()
     blocks = data.get("content") or []
@@ -409,6 +439,9 @@ async def assist_prompt(
     pbd_test_suite: str = "",
     instruction: str,
     knowledge_docs: list[dict] | None = None,
+    integrations: list[dict] | None = None,
+    skills: list[dict] | None = None,
+    mode: str = "auto",
     provider: str | None = None,
     api_key: str | None = None,
     base_url: str | None = None,
@@ -428,6 +461,9 @@ async def assist_prompt(
         pbd_test_suite=pbd_test_suite,
         instruction=instruction,
         knowledge_docs=knowledge_docs or [],
+        integrations=integrations or [],
+        skills=skills or [],
+        mode=mode,
     )
     if settings.provider == "anthropic":
         raw = await _anthropic_chat(settings, messages)
@@ -437,28 +473,43 @@ async def assist_prompt(
     import re
 
     def extract_tag(text: str, tag: str) -> str:
-        match = re.search(f"<{tag}>(.*?)</{tag}>", text, re.DOTALL | re.IGNORECASE)
+        pattern = rf"<{tag}>(.*?)</{tag}>"
+        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
         if match:
             return clean_prompt_text(match.group(1).strip())
         return ""
 
     blocked = extract_tag(raw, "blocked_change")
     if blocked:
-        raise PromptAssistantError(blocked)
+        return {
+            "ok": False,
+            "blocked": True,
+            "error": blocked,
+            "blocked_reason": blocked,
+            "prompt": current_prompt,
+            "pbd_constitution": pbd_constitution,
+            "pbd_specs": pbd_specs,
+            "pbd_test_suite": pbd_test_suite,
+            "provider": settings.provider,
+            "provider_label": settings.provider_label,
+            "model": settings.model,
+        }
 
     constitution = extract_tag(raw, "constitution_doc") or (pbd_constitution or "").strip()
     specs = extract_tag(raw, "specs_doc") or (pbd_specs or "").strip()
     test_suite = extract_tag(raw, "test_suite_doc") or (pbd_test_suite or "").strip()
     prompt = extract_tag(raw, "master_prompt_doc")
 
-    # Si por alguna razon el modelo no uso las etiquetas, devolver raw como prompt fallback
+    # Si por alguna razón el modelo no usó las etiquetas, devolver raw como prompt fallback
     if not prompt and not constitution and not specs:
         prompt = clean_prompt_text(raw)
 
     if not prompt:
-        raise PromptAssistantError("El modelo no devolvio un prompt util.")
+        raise PromptAssistantError("El modelo no devolvió un prompt ejecutable.")
+
     return {
         "ok": True,
+        "blocked": False,
         "prompt": prompt,
         "pbd_constitution": constitution,
         "pbd_specs": specs,
@@ -467,3 +518,4 @@ async def assist_prompt(
         "provider_label": settings.provider_label,
         "model": settings.model,
     }
+
