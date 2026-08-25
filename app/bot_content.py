@@ -52,7 +52,7 @@ async def system_prompt_for_bot(bot_id: int | None = None, query: str | None = N
         if query and total_chars > 15000:
             from app import rag
             async with db._pool.acquire() as conn:
-                rag_chunks = await rag.search_knowledge(conn, bot_id, query, limit=3)
+                rag_chunks = await rag.search_knowledge(conn, bot_id, query, limit=6)
         
         if query and rag_chunks:
             knowledge_docs = [{"title": f"Fragmento de conocimiento {i+1}", "content": chunk, "status": "active"} for i, chunk in enumerate(rag_chunks)]

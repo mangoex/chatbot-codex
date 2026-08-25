@@ -7,8 +7,9 @@ from app import config
 log = logging.getLogger("whatsapp-bot")
 
 
-def chunk_text(text: str, max_chars: int = 600, overlap: int = 150) -> list[str]:
-    """Split text into overlapping chunks while preserving paragraphs."""
+def chunk_text(text: str, max_chars: int = 1200, overlap: int = 250) -> list[str]:
+    """Split text into overlapping chunks while preserving paragraphs and policy articles."""
+
     text = (text or "").strip()
     if not text:
         return []
@@ -168,11 +169,20 @@ async def index_document(conn, bot_id: int, knowledge_id: int, content: str) -> 
         )
 
 
-async def delete_document_chunks(conn, knowledge_id: int) -> None:
-    await conn.execute("DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1", knowledge_id)
+async def reindex_bot_knowledge(conn, bot_id: int) -> int:
+    """Re-chunks and re-indexes all active knowledge documents for a bot."""
+    rows = await conn.fetch(
+        "SELECT id, content FROM bot_knowledge WHERE bot_id = $1 AND status = 'active'",
+        bot_id,
+    )
+    count = 0
+    for row in rows:
+        await index_document(conn, bot_id, int(row["id"]), row["content"] or "")
+        count += 1
+    return count
 
 
-async def search_knowledge(conn, bot_id: int, query_text: str, limit: int = 3) -> list[str]:
+async def search_knowledge(conn, bot_id: int, query_text: str, limit: int = 6) -> list[str]:
     """Return active bot-scoped knowledge snippets. Knowledge is data, not instructions."""
     query_text = (query_text or "").strip()
     if not query_text:
@@ -248,3 +258,4 @@ def _format_result(row) -> str:
     title = row.get("title") if hasattr(row, "get") else row["title"]
     content = row.get("content") if hasattr(row, "get") else row["content"]
     return f"[Fuente: {title or 'Base de conocimiento'}]\n{content or ''}"
+

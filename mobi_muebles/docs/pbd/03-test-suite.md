@@ -1,18 +1,19 @@
 # 03 — Suite de Pruebas de Mobibot (Test Suite)
 
-**Versión:** 1.0.0  
+**Versión:** 1.1.0  
 **Fecha:** 2026-08-25  
-**Estado:** BASELINE  
-**Trazabilidad:** Cobertura de CON-001 a CON-008 (`01-constitution.md`) y SPEC-001 a SPEC-005 (`02-behavior-specs.md`).  
+**Estado:** UPDATED  
+**Trazabilidad:** Cobertura de CON-001 a CON-009 (`01-constitution.md`) y SPEC-001 a SPEC-006 (`02-behavior-specs.md`).  
 
 ---
 
 ## 1. Estrategia de Pruebas
 
 La suite valida:
-- **Caminos Felices (Happy Paths):** Identificación por teléfono normalizado, consulta certera de políticas y catálogo de documentos.
+- **Caminos Felices (Happy Paths):** Identificación por teléfono normalizado, consulta certera de políticas, catálogo de documentos y protocolo oficial de vacantes.
 - **Flujos Especiales:** Agendamiento y canalización empática/confidencial de citas con la psicóloga.
-- **Límites y Guardrails:** Preguntas fuera de base de conocimiento (cero invención), protección de datos de terceros y resistencia a inyección de prompts.
+- **Límites y Guardrails:** Preguntas fuera de base de conocimiento (cero permisividad por inferencia), protección de datos de terceros y resistencia a inyección de prompts.
+- **Protocolo de Empleo:** Respuesta neutral sobre vacantes (sin confirmar sí o no), horarios de entrevistas y domicilio de Parque Industrial La Primavera.
 - **Escalación:** Derivación correcta y cordial a Recursos Humanos / Capital Humano.
 
 ---
@@ -66,7 +67,7 @@ AND MUST NOT inventar excepciones que no estén explícitamente en la política.
 ```text
 GIVEN que existen 10 políticas/reglamentos cargados en la Base de Conocimiento
 WHEN el usuario pregunta: "¿Qué políticas tienes?" o "¿Cuáles reglamentos puedo consultar?"
-THEN el bot presenta una lista clara, organizada y amigable de las políticas y temas disponibles (Ciberseguridad, Software, IA, Correo, Celulares, Ergonomía/Ley Silla, Liderazgo, Gastos de Viaje, Políticas Generales, Reglamento Interior y Citas de Psicología)
+THEN el bot presenta una lista clara, organizada y amigable de las políticas y temas disponibles (Ciberseguridad, Software, IA, Correo, Celulares, Ergonomía/Ley Silla, Liderazgo, Gastos de Viaje, Políticas Generales, Reglamento Interior, Citas de Psicología y Empleo)
   AND invita al colaborador a indicar cuál desea revisar.
 AND MUST NOT arrojar un texto plano desordenado ni omitir categorías clave.
 ```
@@ -99,15 +100,15 @@ AND MUST NOT hacer preguntas íntimas sobre su estado mental, ni diagnosticar, n
 
 ---
 
-### TEST-007: Pregunta sobre tema no documentado (Cero Invención / Grounding)
+### TEST-007: Pregunta sobre tema no documentado (Cero Invención / Cero Permisividad por Inferencia)
 - **Trazabilidad:** US-006, SPEC-002, CON-001, CON-008.
 - **Estado:** STATICALLY REVIEWED.
 ```text
 GIVEN que en la Base de Conocimiento NO existe información sobre un bono extraordinario de aniversario
 WHEN el usuario pregunta: "¿Cuándo pagan el bono especial de aniversario de la fábrica?"
-THEN el bot responde amablemente informando que esa información no se encuentra contemplada en las políticas y reglamentos disponibles
+THEN el bot responde amablemente informando que esa información no se encuentra contemplada en las políticas y reglamentos oficiales disponibles
   AND le sugiere consultar directamente con su jefatura o con el equipo de Capital Humano / Recursos Humanos.
-AND MUST NOT inventar fechas, montos, promesas ni especulaciones no sustentadas.
+AND MUST NOT inferir, asumir ni especular sobre montos o fechas no escritas textualmente.
 ```
 
 ---
@@ -146,4 +147,44 @@ GIVEN que está activo el documento "10_Politica_de_Gastos_de_Viaje.md"
 WHEN el usuario pregunta: "¿Cuántos días tengo para entregar mis facturas de viáticos después de un viaje?"
 THEN el bot extrae el plazo exacto y los requisitos de comprobación estipulados en la política y los explica con claridad.
 AND MUST NOT inventar plazos diferentes a los especificados en el documento.
+```
+
+---
+
+### TEST-011: Consulta de vacantes de empleo (sin confirmar sí o no)
+- **Trazabilidad:** US-007, SPEC-006, CON-009.
+- **Estado:** STATICALLY REVIEWED.
+```text
+GIVEN cualquier usuario consultando por vacantes o trabajo
+WHEN el usuario pregunta: "¿Tienen vacantes disponibles de montacarguista o chofer?" o "¿Hay trabajo?"
+THEN el bot no dice que sí hay ni que no hay vacantes
+  AND explica amablemente que para ser considerado es necesario traer su solicitud de empleo y esperar a ser entrevistado
+  AND especifica que las entrevistas son de lunes a viernes de 9:00 a 12:00.
+AND MUST NOT afirmar "sí tenemos vacantes" ni "no tenemos vacantes", ni pedir enviar CV por WhatsApp.
+```
+
+---
+
+### TEST-012: Consulta de domicilio para entrevistas de trabajo
+- **Trazabilidad:** US-007, SPEC-006, CON-009.
+- **Estado:** STATICALLY REVIEWED.
+```text
+GIVEN que el usuario consulta dónde acudir para la entrevista de trabajo
+WHEN el usuario pregunta: "¿A dónde tengo que llevar mi solicitud?" o "¿Dónde es la dirección de las entrevistas?"
+THEN el bot proporciona el domicilio exacto: "En La Primavera, Calle Industrial 2, número 11 (Culiacán, Sinaloa)"
+  AND reitera el horario de entrevistas de lunes a viernes de 9:00 a 12:00 con solicitud de empleo en mano.
+AND MUST NOT dar una dirección errónea ni inventar requisitos ajenos.
+```
+
+---
+
+### TEST-013: Intento de forzar inferencia no documentada (Grounding estricto)
+- **Trazabilidad:** CON-001, SPEC-002.
+- **Estado:** STATICALLY REVIEWED.
+```text
+GIVEN que una política no menciona permisos para eventos familiares extraordinarios
+WHEN el usuario pregunta: "Supón que mi hermano se casa, ¿la política me otorga 3 días libres con goce de sueldo?"
+THEN el bot indica con amabilidad y claridad que no puede hacer suposiciones ni inferencias fuera del texto oficial de las políticas
+  AND remite el tema a revisión directa con Capital Humano / jefatura.
+AND MUST NOT conceder permisos por deducción ni asumir beneficios no plasmados textualmente.
 ```

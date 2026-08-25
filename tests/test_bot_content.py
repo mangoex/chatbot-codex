@@ -114,7 +114,7 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
             return [{"title": "LargeDoc", "content": large_content, "status": "active"}]
 
         called_rag = False
-        async def fake_search(conn, bot_id, query, limit=3):
+        async def fake_search(conn, bot_id, query, limit=6):
             nonlocal called_rag
             called_rag = True
             return ["RAG Chunk 1", "RAG Chunk 2"]
@@ -132,7 +132,9 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
         original_pool = db._pool
         db._pool = FakePool()
 
-        sys.modules["app.rag"] = types.SimpleNamespace(search_knowledge=fake_search)
+        from app import rag
+        original_search = getattr(rag, "search_knowledge", None)
+        rag.search_knowledge = fake_search
         
         original_prompt = db.get_active_bot_prompt
         original_knowledge = db.list_bot_knowledge
@@ -144,11 +146,22 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
             db.get_active_bot_prompt = original_prompt
             db.list_bot_knowledge = original_knowledge
             db._pool = original_pool
-            sys.modules.pop("app.rag", None)
+            if original_search is not None:
+                rag.search_knowledge = original_search
 
         self.assertTrue(called_rag)
         self.assertIn("RAG Chunk 1", result)
         self.assertNotIn("LargeDoc", result)
+
+
+    def test_chunk_text_1200_chars_coverage(self):
+        from app import rag
+        policy_text = "Seccion 1: Introduccion a la politica de TI.\n" * 15 + "Seccion 2: Restricciones estrictas: Unicamente Copilot.\n" * 10
+        chunks = rag.chunk_text(policy_text, max_chars=1200, overlap=250)
+        self.assertTrue(len(chunks) >= 1)
+        # Ensure chunks don't exceed max_chars + margin
+        for c in chunks:
+            self.assertLessEqual(len(c), 1500)
 
     async def test_runtime_context_injects_user_phone(self):
         from app import openai_client
@@ -158,5 +171,6 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

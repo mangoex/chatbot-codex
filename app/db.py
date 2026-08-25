@@ -1694,6 +1694,14 @@ async def archive_bot_knowledge(bot_id: int, knowledge_id: int) -> bool:
     return success
 
 
+async def reindex_bot_knowledge(bot_id: int) -> int:
+    """Reindexa todos los documentos de conocimiento activos de un bot."""
+    async with _pool.acquire() as conn:
+        from app import rag
+        return await rag.reindex_bot_knowledge(conn, bot_id)
+
+
+
 def _normalize_config(value) -> dict:
     if value is None:
         return {}
