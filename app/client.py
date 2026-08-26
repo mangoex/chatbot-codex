@@ -1407,6 +1407,7 @@ async def client_app(
     total_contacts = 0
     unique_tags = []
     broadcasts = []
+    triggers = []
     
     try:
         contacts = await db.list_contacts(
@@ -1419,8 +1420,9 @@ async def client_app(
         total_contacts = await db.count_contacts(bot_id, search=search_contacts, tag=tag_filter)
         unique_tags = await db.list_contact_tags(bot_id)
         broadcasts = await db.list_broadcasts(bot_id, limit=50)
+        triggers = await db.list_template_triggers(bot_id, limit=50)
     except Exception as exc:
-        log.error(f"Error fetching contacts/broadcasts state: {exc}")
+        log.error(f"Error fetching contacts/broadcasts/triggers state: {exc}")
 
     # Fetch Conversations and CRM info for client tabs
     await db.qualify_leads_with_action_link(
@@ -2012,6 +2014,11 @@ async def client_app(
     if broadcast_selected:
         selected_ids_list = [w.strip() for w in broadcast_selected.split(",") if w.strip()]
         broadcast_selected_count = len(selected_ids_list)
+    broadcast_selected_count = 0
+    selected_wa_ids_str = ""
+    if broadcast_selected:
+        selected_ids_list = [w.strip() for w in broadcast_selected.split(",") if w.strip()]
+        broadcast_selected_count = len(selected_ids_list)
         selected_wa_ids_str = broadcast_selected
 
     broadcast_rows = ""
@@ -2025,6 +2032,10 @@ async def client_app(
         failed = b["failed_count"] or 0
         progress_pct = int(min(100, (sent + failed) * 100 / total)) if total > 0 else 0
         
+        scheduled_label = ""
+        if b.get("scheduled_at") and b_status == "PENDING":
+            scheduled_label = f'<br><small style="color:var(--primary); font-weight:600;">📅 Programada: {_fmt_dt(b.get("scheduled_at"))}</small>'
+        
         broadcast_rows += f"""
         <tr>
           <td style="font-weight:600; font-size:13px; color:var(--ink);">{html.escape(b["name"])}</td>
@@ -2035,13 +2046,63 @@ async def client_app(
             </div>
             <small style="color:var(--green); font-weight:600;">{sent} exitosos</small> | <small style="color:var(--red); font-weight:600;">{failed} fallidos</small>
           </td>
-          <td><span class="badge {badge_class}" style="font-size:11px;">{html.escape(b_status_label)}</span></td>
+          <td><span class="badge {badge_class}" style="font-size:11px;">{html.escape(b_status_label)}</span>{scheduled_label}</td>
           <td style="font-size:11.5px; color:var(--muted);">{_fmt_dt(b.get("created_at"))}</td>
         </tr>
         """
         
     if not broadcast_rows:
-        broadcast_rows = '<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--muted); font-size:13.5px;">No se han realizado campañas de envío masivo.</td></tr>'
+        broadcast_rows = '<tr><td colspan="5" style="text-align:center; padding:30px; color:var(--muted); font-size:13.5px;">No se han realizado campañas de difusión.</td></tr>'
+
+    trigger_rows = ""
+    for tr in triggers:
+        tr_active = tr.get("is_active", True)
+        badge_class = "success" if tr_active else "info"
+        badge_label = "Activo" if tr_active else "Pausado"
+        tr_type = tr.get("trigger_type", "")
+        cfg = tr.get("trigger_config") or {}
+        if isinstance(cfg, str):
+            try:
+                cfg = json.loads(cfg)
+            except Exception:
+                cfg = {}
+        if tr_type == "inactivity_hours":
+            type_label = f"⏳ Inactividad ({cfg.get('inactivity_hours', 24)}h)"
+        elif tr_type == "crm_status_changed":
+            type_label = f"🎯 CRM: {cfg.get('crm_status', 'calificado')}"
+        else:
+            type_label = tr_type
+        
+        total_exec = tr.get("total_executions") or 0
+        succ_exec = tr.get("successful_executions") or 0
+        last_exec = _fmt_dt(tr.get("last_executed_at")) if tr.get("last_executed_at") else "Nunca"
+        
+        toggle_btn_text = "Pausar" if tr_active else "Activar"
+        toggle_val = "false" if tr_active else "true"
+        
+        trigger_rows += f"""
+        <tr>
+          <td style="font-weight:600; font-size:13px; color:var(--ink);">{html.escape(tr["name"])}</td>
+          <td><span class="badge" style="background:#f1f5f9; color:#334155; font-size:11.5px;">{html.escape(type_label)}</span></td>
+          <td><code>{html.escape(tr["template_name"])}</code></td>
+          <td style="font-size:12px;"><strong>{succ_exec}</strong> / {total_exec} envíos<br><small class="muted-text">Último: {last_exec}</small></td>
+          <td><span class="badge {badge_class}" style="font-size:11px;">{badge_label}</span></td>
+          <td>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <form method="post" action="/client/bots/{bot_id}/triggers/{tr['id']}/toggle" style="margin:0; padding:0;">
+                <input type="hidden" name="is_active" value="{toggle_val}">
+                <button class="btn secondary" type="submit" style="padding:4px 8px; font-size:11px;" {"disabled" if session["role"] == "client_viewer" else ""}>{toggle_btn_text}</button>
+              </form>
+              <form method="post" action="/client/bots/{bot_id}/triggers/{tr['id']}/delete" style="margin:0; padding:0;" onsubmit="return confirm('¿Eliminar disparador?');">
+                <button class="btn danger" type="submit" style="padding:4px 8px; font-size:11px;" {"disabled" if session["role"] == "client_viewer" else ""}>Eliminar</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        """
+        
+    if not trigger_rows:
+        trigger_rows = '<tr><td colspan="6" style="text-align:center; padding:30px; color:var(--muted); font-size:13.5px;">No hay disparadores automáticos configurados. ¡Crea el primero para automatizar tus plantillas!</td></tr>'
 
     template_options = '<option value="" disabled selected>-- Seleccionar plantilla --</option>'
     for t in templates:
@@ -2056,115 +2117,296 @@ async def client_app(
     campaigns_panel_html = f"""
     <div id="panel-campaigns" class="tab-panel">
       
-      <!-- List Campaigns View -->
-      <div id="campaignsListView" style="display:{list_view_display};">
-        <div class="card">
-          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-            <div>
-              <h2>Campañas de Envío Masivo</h2>
-              <p>Historial y estado de las campañas de difusión por WhatsApp usando plantillas aprobadas.</p>
-            </div>
-            {"<button class='btn primary-btn' onclick='showNewCampaignForm()'>Nueva Campaña</button>" if session["role"] != "client_viewer" else ""}
-          </div>
-          
-          <div style="overflow-x:auto;">
-            <table style="width:100%;">
-              <thead>
-                <tr>
-                  <th>Nombre de Campaña</th>
-                  <th>Plantilla Utilizada</th>
-                  <th>Progreso de Envío</th>
-                  <th>Estado</th>
-                  <th>Fecha de Creación</th>
-                </tr>
-              </thead>
-              <tbody>
-                {broadcast_rows}
-              </tbody>
-            </table>
-          </div>
-        </div>
+      <!-- Sub-tabs navigation -->
+      <div style="display:flex; gap:10px; margin-bottom:20px; border-bottom:1px solid var(--line); padding-bottom:12px;">
+        <button id="subtabBtnCampaigns" class="btn primary-btn" onclick="showSubTab('campaigns')" style="display:inline-flex; align-items:center; gap:6px;">
+          📣 Campañas Masivas
+        </button>
+        <button id="subtabBtnTriggers" class="btn secondary" onclick="showSubTab('triggers')" style="display:inline-flex; align-items:center; gap:6px;">
+          ⚡ Disparadores Automáticos (Triggers)
+        </button>
       </div>
-      
-      <!-- Create Campaign View -->
-      <div id="campaignsCreateView" style="display:{create_view_display};">
-        <div class="grid-2">
-          
-          <!-- Left side: Configuration -->
+
+      <!-- ================= SECTION 1: CAMPAIGNS ================= -->
+      <div id="subtabContentCampaigns">
+        
+        <!-- List Campaigns View -->
+        <div id="campaignsListView" style="display:{list_view_display};">
           <div class="card">
-            <div class="card-header">
-              <h2>Configurar Nueva Campaña</h2>
-              <p>Elige tu plantilla y configura el mapeo de variables dinámicas.</p>
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+              <div>
+                <h2>Campañas de Envío Masivo & Programadas</h2>
+                <p>Historial y estado de las campañas de difusión por WhatsApp usando plantillas aprobadas de Meta.</p>
+              </div>
+              {"<button class='btn primary-btn' onclick='showNewCampaignForm()'>Nueva Campaña</button>" if session["role"] != "client_viewer" else ""}
             </div>
             
-            <form method="post" action="/client/bots/{bot_id}/campaigns/create">
-              <input type="hidden" name="language_code" id="campaignLangCode" value="es_MX">
-              <input type="hidden" name="vars_count" id="campaignVarsCountInput" value="0">
-              
-              <label>Nombre de la Campaña</label>
-              <input name="campaign_name" placeholder="Ej. Promoción Junio 2026" required style="margin-bottom:12px;">
-              
-              <label>Destinatarios de la Campaña</label>
-              <div style="margin-bottom:12px; display:flex; flex-direction:column; gap:8px;">
-                <div style="display:flex; gap:16px;">
-                  <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0; cursor:pointer;">
-                    <input type="radio" name="recipients_option" value="selected" {"checked" if broadcast_selected else "disabled"} onchange="toggleRecipientsType(this.value)"> 
-                    Contactos Seleccionados ({broadcast_selected_count})
-                  </label>
-                  <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0; cursor:pointer;">
-                    <input type="radio" name="recipients_option" value="all" {"" if broadcast_selected else "checked"} onchange="toggleRecipientsType(this.value)"> 
-                    Todos los Contactos ({total_contacts})
-                  </label>
-                </div>
-                <input type="hidden" name="selected_wa_ids" value="{html.escape(selected_wa_ids_str)}">
-              </div>
-              
-              <label>Seleccionar Plantilla Meta</label>
-              <select name="template_name" required style="margin-bottom:16px;" onchange="onTemplateSelected(this)">
-                {template_options}
-              </select>
-              
-              <!-- Dynamic Variables Container -->
-              <div id="campaignVarsContainer" style="display:none; margin-bottom:20px;">
-                <label style="font-weight:700; margin-bottom:8px; display:block;">Mapear Variables Dinámicas</label>
-                <p class="muted-text" style="font-size:11.5px; margin-top:0; margin-bottom:10px;">Asocia cada marcador <code>{{{{1}}}}</code>, <code>{{{{2}}}}</code> con campos del contacto.</p>
-                <div id="campaignVarsInputs"></div>
-              </div>
-              <label>Confirmacion de envio</label>
-              <input name="confirm_send" placeholder="Escribe CONFIRMAR para iniciar" required style="margin-bottom:16px;">
-              
-              <div style="display:flex; gap:10px;">
-                <button class="btn primary-btn" type="submit">Iniciar Campaña Masiva</button>
-                <button class="btn secondary" type="button" onclick="cancelNewCampaign()">Cancelar</button>
-              </div>
-            </form>
-          </div>
-          
-          <!-- Right side: Template details / Preview -->
-          <div class="card" style="border:1px solid #bae6fd; background:#f0f9ff;">
-            <div class="card-header" style="border-bottom:1px solid #bae6fd; padding-bottom:8px; margin-bottom:12px;">
-              <h3 style="margin:0; font-size:14px; font-weight:700; color:#0369a1; display:flex; align-items:center; gap:6px;">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px; height:16px;"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                Vista de Plantilla Seleccionada
-              </h3>
-            </div>
-            <div style="background:#e5ddd5; padding:16px; border-radius:6px; min-height:100px; position:relative; font-family:\'Inter\', sans-serif;">
-              <div style="background:#ffffff; padding:10px 12px; border-radius:6px; max-width:90%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 0.5px rgba(0,0,0,0.13); position:relative;">
-                <span id="campaignTemplateText" style="word-break: break-word; color:#333;">Selecciona una plantilla para previsualizar el cuerpo...</span>
-                <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
-              </div>
-            </div>
-            <div style="margin-top:14px; font-size:12px; color:#0369a1;">
-              <strong>Nota:</strong> Los destinatarios recibirán el mensaje reemplazando cada variable con sus datos correspondientes. Si la variable está mapeada al Nombre, se reemplazará por su nombre real guardado en el directorio.
+            <div style="overflow-x:auto;">
+              <table style="width:100%;">
+                <thead>
+                  <tr>
+                    <th>Nombre de Campaña</th>
+                    <th>Plantilla Utilizada</th>
+                    <th>Progreso de Envío</th>
+                    <th>Estado</th>
+                    <th>Fecha de Creación</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {broadcast_rows}
+                </tbody>
+              </table>
             </div>
           </div>
-          
         </div>
+        
+        <!-- Create Campaign View -->
+        <div id="campaignsCreateView" style="display:{create_view_display};">
+          <div class="grid-2">
+            
+            <!-- Left side: Configuration -->
+            <div class="card">
+              <div class="card-header">
+                <h2>Configurar Nueva Campaña</h2>
+                <p>Elige tu plantilla, destinatarios y programa el momento del envío.</p>
+              </div>
+              
+              <form method="post" action="/client/bots/{bot_id}/campaigns/create">
+                <input type="hidden" name="language_code" id="campaignLangCode" value="es_MX">
+                <input type="hidden" name="vars_count" id="campaignVarsCountInput" value="0">
+                
+                <label>Nombre de la Campaña</label>
+                <input name="campaign_name" placeholder="Ej. Promoción Junio 2026" required style="margin-bottom:12px;">
+                
+                <label>Destinatarios de la Campaña</label>
+                <div style="margin-bottom:14px; display:flex; flex-direction:column; gap:8px;">
+                  <div style="display:flex; gap:16px;">
+                    <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0; cursor:pointer;">
+                      <input type="radio" name="recipients_option" value="selected" {"checked" if broadcast_selected else "disabled"} onchange="toggleRecipientsType(this.value)"> 
+                      Contactos Seleccionados ({broadcast_selected_count})
+                    </label>
+                    <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0; cursor:pointer;">
+                      <input type="radio" name="recipients_option" value="all" {"" if broadcast_selected else "checked"} onchange="toggleRecipientsType(this.value)"> 
+                      Todos los Contactos ({total_contacts})
+                    </label>
+                  </div>
+                  <input type="hidden" name="selected_wa_ids" value="{html.escape(selected_wa_ids_str)}">
+                </div>
+                
+                <label>Momento del Envío</label>
+                <div style="margin-bottom:14px; display:flex; flex-direction:column; gap:8px;">
+                  <div style="display:flex; gap:16px;">
+                    <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0; cursor:pointer;">
+                      <input type="radio" name="send_time_option" value="immediate" checked onchange="toggleScheduleInput(this.value)"> 
+                      Enviar de inmediato
+                    </label>
+                    <label style="display:inline-flex; align-items:center; gap:6px; font-weight:normal; margin:0; cursor:pointer;">
+                      <input type="radio" name="send_time_option" value="scheduled" onchange="toggleScheduleInput(this.value)"> 
+                      Programar fecha y hora
+                    </label>
+                  </div>
+                  <div id="campaignScheduleInputWrapper" style="display:none; margin-top:4px;">
+                    <input type="datetime-local" name="scheduled_at" id="campaignScheduledAt" style="margin:0;">
+                  </div>
+                </div>
+
+                <label>Seleccionar Plantilla Meta</label>
+                <select name="template_name" required style="margin-bottom:16px;" onchange="onTemplateSelected(this, 'campaign')">
+                  {template_options}
+                </select>
+                
+                <!-- Dynamic Variables Container -->
+                <div id="campaignVarsContainer" style="display:none; margin-bottom:20px;">
+                  <label style="font-weight:700; margin-bottom:8px; display:block;">Mapear Variables Dinámicas</label>
+                  <p class="muted-text" style="font-size:11.5px; margin-top:0; margin-bottom:10px;">Asocia cada marcador <code>{{{{1}}}}</code>, <code>{{{{2}}}}</code> con campos del contacto.</p>
+                  <div id="campaignVarsInputs"></div>
+                </div>
+                <label>Confirmación de envío</label>
+                <input name="confirm_send" placeholder="Escribe CONFIRMAR para iniciar" required style="margin-bottom:16px;">
+                
+                <div style="display:flex; gap:10px;">
+                  <button class="btn primary-btn" type="submit">Lanzar Campaña</button>
+                  <button class="btn secondary" type="button" onclick="cancelNewCampaign()">Cancelar</button>
+                </div>
+              </form>
+            </div>
+            
+            <!-- Right side: Template details / Preview -->
+            <div class="card" style="border:1px solid #bae6fd; background:#f0f9ff;">
+              <div class="card-header" style="border-bottom:1px solid #bae6fd; padding-bottom:8px; margin-bottom:12px;">
+                <h3 style="margin:0; font-size:14px; font-weight:700; color:#0369a1; display:flex; align-items:center; gap:6px;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px; height:16px;"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  Vista de Plantilla Seleccionada
+                </h3>
+              </div>
+              <div style="background:#e5ddd5; padding:16px; border-radius:6px; min-height:100px; position:relative; font-family:\'Inter\', sans-serif;">
+                <div style="background:#ffffff; padding:10px 12px; border-radius:6px; max-width:90%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 0.5px rgba(0,0,0,0.13); position:relative;">
+                  <span id="campaignTemplateText" style="word-break: break-word; color:#333;">Selecciona una plantilla para previsualizar el cuerpo...</span>
+                  <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+                </div>
+              </div>
+              <div style="margin-top:14px; font-size:12px; color:#0369a1;">
+                <strong>Nota:</strong> Los destinatarios recibirán el mensaje reemplazando cada variable con sus datos correspondientes. Si la variable está mapeada al Nombre, se reemplazará por su nombre real guardado en el directorio.
+              </div>
+            </div>
+            
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ================= SECTION 2: AUTOMATION TRIGGERS ================= -->
+      <div id="subtabContentTriggers" style="display:none;">
+        
+        <!-- List Triggers View -->
+        <div id="triggersListView">
+          <div class="card">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+              <div>
+                <h2>Disparadores Automáticos de Plantillas</h2>
+                <p>Configura reglas automáticas que disparan plantillas cuando ocurre un evento (ej. inactividad o cambio en CRM).</p>
+              </div>
+              {"<button class='btn primary-btn' onclick='showNewTriggerForm()'>Nuevo Disparador</button>" if session["role"] != "client_viewer" else ""}
+            </div>
+            
+            <div style="overflow-x:auto;">
+              <table style="width:100%;">
+                <thead>
+                  <tr>
+                    <th>Nombre de la Regla</th>
+                    <th>Evento / Disparador</th>
+                    <th>Plantilla Meta</th>
+                    <th>Rendimiento</th>
+                    <th>Estado</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trigger_rows}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Create Trigger View -->
+        <div id="triggersCreateView" style="display:none;">
+          <div class="grid-2">
+            
+            <div class="card">
+              <div class="card-header">
+                <h2>Crear Nuevo Disparador Automático</h2>
+                <p>Define la condición que activará el envío automático de la plantilla.</p>
+              </div>
+              
+              <form method="post" action="/client/bots/{bot_id}/triggers/create">
+                <input type="hidden" name="language_code" id="triggerLangCode" value="es_MX">
+                <input type="hidden" name="vars_count" id="triggerVarsCountInput" value="0">
+                
+                <label>Nombre del Disparador</label>
+                <input name="trigger_name" placeholder="Ej. Reactivación 24h sin respuesta" required style="margin-bottom:12px;">
+                
+                <label>Tipo de Evento Disparador</label>
+                <select name="trigger_type" id="triggerTypeSelect" required style="margin-bottom:12px;" onchange="onTriggerTypeChange(this.value)">
+                  <option value="inactivity_hours">⏳ Inactividad del Usuario (Reactivación fuera de 24h)</option>
+                  <option value="crm_status_changed">🎯 Cambio de Estado en CRM de Leads</option>
+                </select>
+
+                <!-- Inactivity Config -->
+                <div id="triggerInactivityConfig" style="margin-bottom:14px;">
+                  <label>Horas de Inactividad requeridas</label>
+                  <select name="inactivity_hours" style="margin:0;">
+                    <option value="12">12 horas sin respuesta</option>
+                    <option value="24" selected>24 horas sin respuesta (Cierre de ventana 24h)</option>
+                    <option value="48">48 horas sin respuesta (2 días)</option>
+                    <option value="72">72 horas sin respuesta (3 días)</option>
+                  </select>
+                  <small class="muted-text" style="font-size:11px; display:block; margin-top:4px;">Se enviará una sola vez por contacto para evitar saturación.</small>
+                </div>
+
+                <!-- CRM Status Config -->
+                <div id="triggerCrmConfig" style="display:none; margin-bottom:14px;">
+                  <label>Cuando el Lead pase al Estado</label>
+                  <select name="crm_status" style="margin:0;">
+                    <option value="calificado" selected>Calificado (Interesado / Listo para cita)</option>
+                    <option value="descalificado">Descalificado</option>
+                    <option value="en_progreso">En Progreso</option>
+                  </select>
+                </div>
+
+                <label>Seleccionar Plantilla Meta</label>
+                <select name="template_name" required style="margin-bottom:16px;" onchange="onTemplateSelected(this, 'trigger')">
+                  {template_options}
+                </select>
+
+                <!-- Dynamic Variables Container for Trigger -->
+                <div id="triggerVarsContainer" style="display:none; margin-bottom:20px;">
+                  <label style="font-weight:700; margin-bottom:8px; display:block;">Mapear Variables Dinámicas</label>
+                  <p class="muted-text" style="font-size:11.5px; margin-top:0; margin-bottom:10px;">Asocia cada marcador <code>{{{{1}}}}</code>, <code>{{{{2}}}}</code> con campos del lead.</p>
+                  <div id="triggerVarsInputs"></div>
+                </div>
+
+                <div style="display:flex; gap:10px;">
+                  <button class="btn primary-btn" type="submit">Guardar y Activar Disparador</button>
+                  <button class="btn secondary" type="button" onclick="cancelNewTrigger()">Cancelar</button>
+                </div>
+              </form>
+            </div>
+
+            <!-- Right side: Template preview for trigger -->
+            <div class="card" style="border:1px solid #bae6fd; background:#f0f9ff;">
+              <div class="card-header" style="border-bottom:1px solid #bae6fd; padding-bottom:8px; margin-bottom:12px;">
+                <h3 style="margin:0; font-size:14px; font-weight:700; color:#0369a1; display:flex; align-items:center; gap:6px;">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px; height:16px;"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                  Vista Previa de Plantilla
+                </h3>
+              </div>
+              <div style="background:#e5ddd5; padding:16px; border-radius:6px; min-height:100px; position:relative; font-family:\'Inter\', sans-serif;">
+                <div style="background:#ffffff; padding:10px 12px; border-radius:6px; max-width:90%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 0.5px rgba(0,0,0,0.13); position:relative;">
+                  <span id="triggerTemplateText" style="word-break: break-word; color:#333;">Selecciona una plantilla para previsualizar el cuerpo...</span>
+                  <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+                </div>
+              </div>
+              <div style="margin-top:14px; font-size:12px; color:#0369a1;">
+                <strong>Funcionamiento:</strong> El sistema evaluará continuamente esta regla en segundo plano y despachará la plantilla oficial a través de WhatsApp Cloud API automáticamente.
+              </div>
+            </div>
+
+          </div>
+        </div>
+
       </div>
       
       <script>
         const metaTemplates = {templates_json};
         
+        function showSubTab(tab) {{
+          const btnCamp = document.getElementById('subtabBtnCampaigns');
+          const btnTrig = document.getElementById('subtabBtnTriggers');
+          const contentCamp = document.getElementById('subtabContentCampaigns');
+          const contentTrig = document.getElementById('subtabContentTriggers');
+          
+          if (tab === 'triggers') {{
+            btnCamp.className = 'btn secondary';
+            btnTrig.className = 'btn primary-btn';
+            contentCamp.style.display = 'none';
+            contentTrig.style.display = 'block';
+          }} else {{
+            btnCamp.className = 'btn primary-btn';
+            btnTrig.className = 'btn secondary';
+            contentCamp.style.display = 'block';
+            contentTrig.style.display = 'none';
+          }}
+        }}
+
+        // Check URL params for subtab
+        (function() {{
+          const urlParams = new URLSearchParams(window.location.search);
+          if (urlParams.get('subtab') === 'triggers') {{
+            showSubTab('triggers');
+          }}
+        }})();
+
         function showNewCampaignForm() {{
           document.getElementById('campaignsListView').style.display = 'none';
           document.getElementById('campaignsCreateView').style.display = 'block';
@@ -2179,25 +2421,67 @@ async def client_app(
             window.location.href = url.toString();
           }}
         }}
+
+        function showNewTriggerForm() {{
+          document.getElementById('triggersListView').style.display = 'none';
+          document.getElementById('triggersCreateView').style.display = 'block';
+        }}
+
+        function cancelNewTrigger() {{
+          document.getElementById('triggersListView').style.display = 'block';
+          document.getElementById('triggersCreateView').style.display = 'none';
+        }}
+
+        function toggleScheduleInput(val) {{
+          const wrapper = document.getElementById('campaignScheduleInputWrapper');
+          const input = document.getElementById('campaignScheduledAt');
+          if (val === 'scheduled') {{
+            wrapper.style.display = 'block';
+            input.required = true;
+          }} else {{
+            wrapper.style.display = 'none';
+            input.required = false;
+          }}
+        }}
+
+        function onTriggerTypeChange(type) {{
+          const inact = document.getElementById('triggerInactivityConfig');
+          const crm = document.getElementById('triggerCrmConfig');
+          if (type === 'inactivity_hours') {{
+            inact.style.display = 'block';
+            crm.style.display = 'none';
+          }} else if (type === 'crm_status_changed') {{
+            inact.style.display = 'none';
+            crm.style.display = 'block';
+          }}
+        }}
         
         function toggleRecipientsType(val) {{
           // logic placeholder
         }}
         
-        function onTemplateSelected(select) {{
+        function onTemplateSelected(select, targetPrefix) {{
           const templateName = select.value;
           const selectedTpl = metaTemplates.find(t => t.name === templateName);
-          const variablesContainer = document.getElementById('campaignVarsContainer');
-          const variablesInputs = document.getElementById('campaignVarsInputs');
-          const previewText = document.getElementById('campaignTemplateText');
+          const prefix = targetPrefix === 'trigger' ? 'trigger' : 'campaign';
+          
+          const variablesContainer = document.getElementById(`${{prefix}}VarsContainer`);
+          const variablesInputs = document.getElementById(`${{prefix}}VarsInputs`);
+          const previewText = document.getElementById(`${{prefix}}TemplateText`);
+          const langCodeInput = document.getElementById(`${{prefix}}LangCode`);
+          const varsCountInput = document.getElementById(`${{prefix}}VarsCountInput`);
           
           if (!selectedTpl) return;
           
-          document.getElementById('campaignLangCode').value = selectedTpl.language || "es_MX";
+          if (langCodeInput) {{
+            langCodeInput.value = selectedTpl.language || "es_MX";
+          }}
           
           const bodyComp = selectedTpl.components.find(c => c.type === 'BODY');
           const bodyText = bodyComp ? bodyComp.text : "";
-          previewText.innerHTML = bodyText.replace(/\\n/g, '<br>');
+          if (previewText) {{
+            previewText.innerHTML = bodyText.replace(/\\n/g, '<br>');
+          }}
           
           const regex = /\\{{\\s*(\\d+)\\s*\\}}/g;
           let match;
@@ -2207,7 +2491,9 @@ async def client_app(
           }}
           
           const sortedVars = Array.from(vars).sort((a, b) => a - b);
-          document.getElementById('campaignVarsCountInput').value = sortedVars.length;
+          if (varsCountInput) {{
+            varsCountInput.value = sortedVars.length;
+          }}
           
           variablesInputs.innerHTML = "";
           if (sortedVars.length > 0) {{
@@ -2218,13 +2504,13 @@ async def client_app(
               div.innerHTML = `
                 <label style="font-weight:600; margin-bottom:4px; display:block; font-size:12.5px;">Variable {{{{${{varNum}}}}}}</label>
                 <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
-                  <select name="var_map_type_${{varNum}}" style="margin:0; flex:1; max-width:200px;" onchange="toggleVarValueInput(${{varNum}}, this.value)">
+                  <select name="var_map_type_${{varNum}}" style="margin:0; flex:1; max-width:200px;" onchange="toggleVarValueInput('${{prefix}}', ${{varNum}}, this.value)">
                     <option value="name">Nombre del Contacto</option>
                     <option value="business">Negocio del Contacto</option>
                     <option value="wa_id">Teléfono del Contacto</option>
                     <option value="fixed">Valor Fijo (Texto estático)</option>
                   </select>
-                  <input type="text" name="var_map_value_${{varNum}}" id="var_map_value_input_${{varNum}}" placeholder="Ej. Clinica Dental" style="display:none; margin:0; flex:2;" required disabled>
+                  <input type="text" name="var_map_value_${{varNum}}" id="${{prefix}}_var_map_value_input_${{varNum}}" placeholder="Ej. Clinica Dental" style="display:none; margin:0; flex:2;" required disabled>
                 </div>
               `;
               variablesInputs.appendChild(div);
@@ -2234,8 +2520,9 @@ async def client_app(
           }}
         }}
         
-        function toggleVarValueInput(varNum, val) {{
-          const input = document.getElementById(`var_map_value_input_${{varNum}}`);
+        function toggleVarValueInput(prefix, varNum, val) {{
+          const input = document.getElementById(`${{prefix}}_var_map_value_input_${{varNum}}`);
+          if (!input) return;
           if (val === 'fixed') {{
             input.style.display = 'block';
             input.required = true;
@@ -4866,6 +5153,8 @@ async def client_campaigns_create(
     language_code: str = Form("es_MX"),
     recipients_option: str = Form("selected"), # "selected" o "all"
     selected_wa_ids: str = Form(""),
+    send_time_option: str = Form("immediate"), # "immediate" o "scheduled"
+    scheduled_at: str = Form(None),
     vars_count: int = Form(0),
     confirm_send: str = Form(""),
 ):
@@ -4921,25 +5210,130 @@ async def client_campaigns_create(
             "value": map_value if map_type == "fixed" else "",
         })
         
+    # Check if scheduled for future
+    parsed_scheduled_at = None
+    is_future_scheduled = False
+    if send_time_option == "scheduled" and scheduled_at:
+        try:
+            # Parses datetime-local format: YYYY-MM-DDTHH:MM
+            dt = datetime.fromisoformat(scheduled_at.strip())
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            parsed_scheduled_at = dt
+            if dt > datetime.now(timezone.utc):
+                is_future_scheduled = True
+        except Exception as exc:
+            log.warning(f"No se pudo parsear scheduled_at '{scheduled_at}': {exc}")
+            
     try:
-        broadcast_id = await db.create_broadcast(
-            bot_id=bot_id,
-            name=campaign_name.strip(),
-            template_name=template_name,
-            language_code=language_code,
-            variable_mappings=variable_mappings,
-            recipients=recipients_list,
-        )
+        broadcast_kwargs = {
+            "bot_id": bot_id,
+            "name": campaign_name.strip(),
+            "template_name": template_name,
+            "language_code": language_code,
+            "variable_mappings": variable_mappings,
+            "recipients": recipients_list,
+        }
+        if parsed_scheduled_at is not None:
+            broadcast_kwargs["scheduled_at"] = parsed_scheduled_at
+        broadcast_id = await db.create_broadcast(**broadcast_kwargs)
     except Exception as exc:
         log.error(f"Error creating broadcast record: {exc}")
         return RedirectResponse(
             f"/client/app?bot_id={bot_id}&tab=campaigns&saved=err", status_code=302
         )
         
-    background_tasks.add_task(process_broadcast_queue, broadcast_id, bot_id)
+    if not is_future_scheduled:
+        background_tasks.add_task(process_broadcast_queue, broadcast_id, bot_id)
     
     return RedirectResponse(
         f"/client/app?bot_id={bot_id}&tab=campaigns&saved=1", status_code=302
+    )
+
+
+@router.post("/bots/{bot_id}/triggers/create")
+async def client_trigger_create(
+    request: Request,
+    bot_id: int,
+    trigger_name: str = Form(...),
+    trigger_type: str = Form(...),
+    template_name: str = Form(...),
+    language_code: str = Form("es_MX"),
+    inactivity_hours: int = Form(24),
+    crm_status: str = Form(""),
+    vars_count: int = Form(0),
+):
+    """Crea una nueva regla de automatización y disparador de plantilla."""
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    
+    trigger_config = {}
+    if trigger_type == "inactivity_hours":
+        trigger_config["inactivity_hours"] = int(inactivity_hours or 24)
+    elif trigger_type == "crm_status_changed":
+        trigger_config["crm_status"] = (crm_status or "calificado").strip().lower()
+        
+    variable_mappings = []
+    form_data = await request.form()
+    for i in range(1, vars_count + 1):
+        map_type = form_data.get(f"var_map_type_{i}") or "fixed"
+        map_value = form_data.get(f"var_map_value_{i}") or ""
+        variable_mappings.append({
+            "var_idx": i,
+            "type": map_type,
+            "value": map_value if map_type == "fixed" else "",
+        })
+        
+    try:
+        await db.create_template_trigger(
+            bot_id=bot_id,
+            name=trigger_name.strip(),
+            trigger_type=trigger_type.strip(),
+            trigger_config=trigger_config,
+            template_name=template_name.strip(),
+            language_code=language_code.strip() or "es_MX",
+            variable_mappings=variable_mappings,
+            is_active=True,
+        )
+    except Exception as exc:
+        log.error(f"Error creating template trigger: {exc}")
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=campaigns&saved=err", status_code=302
+        )
+        
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=campaigns&subtab=triggers&saved=trigger_created", status_code=302
+    )
+
+
+@router.post("/bots/{bot_id}/triggers/{trigger_id}/toggle")
+async def client_trigger_toggle(
+    request: Request,
+    bot_id: int,
+    trigger_id: int,
+    is_active: bool = Form(...),
+):
+    """Activa o pausa un disparador de plantilla."""
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    await db.update_template_trigger_status(trigger_id, bot_id, is_active)
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=campaigns&subtab=triggers&saved=1", status_code=302
+    )
+
+
+@router.post("/bots/{bot_id}/triggers/{trigger_id}/delete")
+async def client_trigger_delete(
+    request: Request,
+    bot_id: int,
+    trigger_id: int,
+):
+    """Elimina una regla de automatización."""
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    await db.delete_template_trigger(trigger_id, bot_id)
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=campaigns&subtab=triggers&saved=1", status_code=302
     )
 
 def _render_skill_templates(bot_id: int, session: dict) -> str:

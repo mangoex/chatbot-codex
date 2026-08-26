@@ -317,6 +317,32 @@ CREATE TABLE IF NOT EXISTS broadcast_recipients (
     sent_at TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_recipients_exec ON broadcast_recipients(broadcast_id, status);
+
+CREATE TABLE IF NOT EXISTS template_triggers (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    trigger_type TEXT NOT NULL,
+    trigger_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    template_name TEXT NOT NULL,
+    language_code TEXT NOT NULL DEFAULT 'es_MX',
+    variable_mappings JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_triggers_bot_type ON template_triggers(bot_id, trigger_type, is_active);
+
+CREATE TABLE IF NOT EXISTS trigger_executions (
+    id BIGSERIAL PRIMARY KEY,
+    trigger_id BIGINT REFERENCES template_triggers(id) ON DELETE CASCADE,
+    bot_id BIGINT REFERENCES bots(id) ON DELETE CASCADE,
+    wa_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('sent', 'failed', 'skipped')),
+    error_message TEXT,
+    executed_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_trigger_exec_lookup ON trigger_executions(trigger_id, wa_id, executed_at);
 """
 
 
@@ -346,6 +372,7 @@ async def run_migrations() -> None:
         await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_constitution TEXT")
         await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_specs TEXT")
         await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_test_suite TEXT")
+        await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ DEFAULT now()")
 
         # Existing deployments may already have these tables without bot_id.
         # Add the nullable column before SCHEMA_SQL creates bot_id indexes.
@@ -2547,6 +2574,7 @@ async def create_broadcast(
     language_code: str,
     variable_mappings: list[dict],
     recipients: list[dict],
+    scheduled_at: datetime | str | None = None,
 ) -> int:
     """Crea una campaña de envío masivo y sus destinatarios pendientes."""
     if not recipients:
@@ -2555,19 +2583,35 @@ async def create_broadcast(
     async with _pool.acquire() as conn:
         async with conn.transaction():
             # Crear la campaña
-            broadcast_id = await conn.fetchval(
-                """
-                INSERT INTO broadcasts (bot_id, name, template_name, language_code, variable_mappings, total_recipients)
-                VALUES ($1, $2, $3, $4, $5, $6)
-                RETURNING id
-                """,
-                bot_id,
-                name,
-                template_name,
-                language_code,
-                json.dumps(variable_mappings),
-                len(recipients),
-            )
+            if scheduled_at:
+                broadcast_id = await conn.fetchval(
+                    """
+                    INSERT INTO broadcasts (bot_id, name, template_name, language_code, variable_mappings, total_recipients, scheduled_at)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    RETURNING id
+                    """,
+                    bot_id,
+                    name,
+                    template_name,
+                    language_code,
+                    json.dumps(variable_mappings),
+                    len(recipients),
+                    scheduled_at,
+                )
+            else:
+                broadcast_id = await conn.fetchval(
+                    """
+                    INSERT INTO broadcasts (bot_id, name, template_name, language_code, variable_mappings, total_recipients)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                    RETURNING id
+                    """,
+                    bot_id,
+                    name,
+                    template_name,
+                    language_code,
+                    json.dumps(variable_mappings),
+                    len(recipients),
+                )
             
             # Insertar los destinatarios por lotes
             values = []
@@ -2620,6 +2664,23 @@ async def update_broadcast_status(broadcast_id: int, status: str) -> None:
         )
 
 
+async def get_due_scheduled_broadcasts(limit: int = 10) -> list[dict]:
+    """Obtiene campañas programadas pendientes cuya fecha/hora programada ya llegó."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT * FROM broadcasts 
+            WHERE status = 'pending' 
+              AND scheduled_at IS NOT NULL 
+              AND scheduled_at <= now()
+            ORDER BY scheduled_at ASC
+            LIMIT $1
+            """,
+            limit,
+        )
+        return [dict(r) for r in rows]
+
+
 async def get_pending_broadcast_recipients(broadcast_id: int, limit: int = 100) -> list[dict]:
     """Obtiene destinatarios pendientes de envío de una campaña específica."""
     async with _pool.acquire() as conn:
@@ -2665,3 +2726,222 @@ async def update_broadcast_recipient_status(
                         "UPDATE broadcasts SET failed_count = failed_count + 1, updated_at = now() WHERE id = $1",
                         broadcast_id,
                     )
+
+
+# --- TEMPLATE TRIGGERS & AUTOMATIONS ---
+
+async def create_template_trigger(
+    bot_id: int,
+    name: str,
+    trigger_type: str,
+    trigger_config: dict,
+    template_name: str,
+    language_code: str = "es_MX",
+    variable_mappings: list[dict] = None,
+    is_active: bool = True,
+) -> int:
+    """Crea una regla de disparador automático para plantillas de WhatsApp."""
+    async with _pool.acquire() as conn:
+        trigger_id = await conn.fetchval(
+            """
+            INSERT INTO template_triggers (
+                bot_id, name, trigger_type, trigger_config, 
+                template_name, language_code, variable_mappings, is_active
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id
+            """,
+            bot_id,
+            name.strip(),
+            trigger_type.strip(),
+            json.dumps(trigger_config or {}),
+            template_name.strip(),
+            language_code.strip() or "es_MX",
+            json.dumps(variable_mappings or []),
+            is_active,
+        )
+        return trigger_id
+
+
+async def list_template_triggers(bot_id: int, limit: int = 50) -> list[dict]:
+    """Lista todos los disparadores de un bot con métricas de ejecución."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT t.*,
+                   COUNT(e.id) AS total_executions,
+                   COUNT(CASE WHEN e.status = 'sent' THEN 1 END) AS successful_executions,
+                   MAX(e.executed_at) AS last_executed_at
+            FROM template_triggers t
+            LEFT JOIN trigger_executions e ON e.trigger_id = t.id
+            WHERE t.bot_id = $1
+            GROUP BY t.id
+            ORDER BY t.created_at DESC
+            LIMIT $2
+            """,
+            bot_id,
+            limit,
+        )
+        return [dict(r) for r in rows]
+
+
+async def list_active_template_triggers_by_type(
+    trigger_type: str,
+    bot_id: int | None = None,
+) -> list[dict]:
+    """Obtiene los disparadores activos de un tipo dado para uno o todos los bots."""
+    async with _pool.acquire() as conn:
+        if bot_id:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM template_triggers
+                WHERE trigger_type = $1 AND bot_id = $2 AND is_active = true
+                ORDER BY id ASC
+                """,
+                trigger_type,
+                bot_id,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT * FROM template_triggers
+                WHERE trigger_type = $1 AND is_active = true
+                ORDER BY id ASC
+                """,
+                trigger_type,
+            )
+        out = []
+        for r in rows:
+            d = dict(r)
+            if isinstance(d.get("trigger_config"), str):
+                d["trigger_config"] = json.loads(d["trigger_config"])
+            if isinstance(d.get("variable_mappings"), str):
+                d["variable_mappings"] = json.loads(d["variable_mappings"])
+            out.append(d)
+        return out
+
+
+async def get_template_trigger(trigger_id: int, bot_id: int | None = None) -> dict | None:
+    """Obtiene el detalle de un disparador por ID."""
+    async with _pool.acquire() as conn:
+        if bot_id:
+            row = await conn.fetchrow(
+                "SELECT * FROM template_triggers WHERE id = $1 AND bot_id = $2",
+                trigger_id,
+                bot_id,
+            )
+        else:
+            row = await conn.fetchrow(
+                "SELECT * FROM template_triggers WHERE id = $1",
+                trigger_id,
+            )
+        if not row:
+            return None
+        d = dict(row)
+        if isinstance(d.get("trigger_config"), str):
+            d["trigger_config"] = json.loads(d["trigger_config"])
+        if isinstance(d.get("variable_mappings"), str):
+            d["variable_mappings"] = json.loads(d["variable_mappings"])
+        return d
+
+
+async def update_template_trigger_status(trigger_id: int, bot_id: int, is_active: bool) -> bool:
+    """Activa o pausa un disparador."""
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE template_triggers
+            SET is_active = $1, updated_at = now()
+            WHERE id = $2 AND bot_id = $3
+            """,
+            is_active,
+            trigger_id,
+            bot_id,
+        )
+        return result != "UPDATE 0"
+
+
+async def delete_template_trigger(trigger_id: int, bot_id: int) -> bool:
+    """Elimina un disparador y sus registros en cascada."""
+    async with _pool.acquire() as conn:
+        result = await conn.execute(
+            "DELETE FROM template_triggers WHERE id = $1 AND bot_id = $2",
+            trigger_id,
+            bot_id,
+        )
+        return result != "DELETE 0"
+
+
+async def record_trigger_execution(
+    trigger_id: int,
+    bot_id: int,
+    wa_id: str,
+    status: str,
+    error_message: str | None = None,
+) -> int:
+    """Registra la ejecución de un disparador para auditoría e histórico."""
+    async with _pool.acquire() as conn:
+        exec_id = await conn.fetchval(
+            """
+            INSERT INTO trigger_executions (trigger_id, bot_id, wa_id, status, error_message, executed_at)
+            VALUES ($1, $2, $3, $4, $5, now())
+            RETURNING id
+            """,
+            trigger_id,
+            bot_id,
+            wa_id,
+            status,
+            error_message,
+        )
+        return exec_id
+
+
+async def has_recent_trigger_execution(
+    trigger_id: int,
+    wa_id: str,
+    within_hours: int = 24,
+) -> bool:
+    """Comprueba si un contacto ya recibió este disparador dentro de las últimas N horas (evita spam)."""
+    async with _pool.acquire() as conn:
+        count = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM trigger_executions
+            WHERE trigger_id = $1 
+              AND wa_id = $2 
+              AND executed_at >= (now() - ($3 || ' hours')::interval)
+            """,
+            trigger_id,
+            wa_id,
+            str(within_hours),
+        )
+        return (count or 0) > 0
+
+
+async def get_inactive_conversations_for_trigger(
+    bot_id: int,
+    inactivity_hours: int = 24,
+    limit: int = 50,
+) -> list[dict]:
+    """Obtiene contactos con conversaciones cuya última interacción fue hace más de N horas."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ON (c.wa_id) 
+                   c.wa_id,
+                   ct.name AS contact_name,
+                   ct.business AS contact_business,
+                   MAX(c.created_at) AS last_message_at
+            FROM conversations c
+            LEFT JOIN contacts ct ON ct.wa_id = c.wa_id AND ct.bot_id = c.bot_id
+            WHERE c.bot_id = $1
+            GROUP BY c.wa_id, ct.name, ct.business
+            HAVING MAX(c.created_at) <= (now() - ($2 || ' hours')::interval)
+            ORDER BY c.wa_id, MAX(c.created_at) DESC
+            LIMIT $3
+            """,
+            bot_id,
+            str(inactivity_hours),
+            limit,
+        )
+        return [dict(r) for r in rows]
+

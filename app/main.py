@@ -19,6 +19,7 @@ from app import (
     admin_tools,
     agenda_guard,
     audio_transcriber,
+    automations,
     bot_control,
     bots,
     calendar_client,
@@ -68,11 +69,14 @@ async def lifespan(_app: FastAPI):
             log.info("Follow-ups pendientes desactivados al arrancar: %d", cleared)
     
     eb_task = asyncio.create_task(easybroker_client.run_sync_loop())
+    auto_task = asyncio.create_task(automations.run_automation_loop())
     yield
     if task:
         task.cancel()
     if eb_task:
         eb_task.cancel()
+    if auto_task:
+        auto_task.cancel()
     await db.close_pool()
 
 

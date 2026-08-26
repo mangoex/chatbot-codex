@@ -121,6 +121,12 @@ async def process_reply(
             **lead_fields
         )
         log.info("Lead CALIFICADO: wa_id=%s negocio=%s", wa_id, negocio)
+        try:
+            import asyncio
+            from app import automations
+            asyncio.create_task(automations.trigger_crm_status_change(bot_id, wa_id, "calificado"))
+        except Exception:
+            pass
         return clean_reply
 
     match = _DISQUALIFY_RE.search(reply)
@@ -135,6 +141,12 @@ async def process_reply(
             **lead_fields
         )
         log.info("Lead DESCALIFICADO: wa_id=%s motivo=%s", wa_id, reason)
+        try:
+            import asyncio
+            from app import automations
+            asyncio.create_task(automations.trigger_crm_status_change(bot_id, wa_id, "descalificado"))
+        except Exception:
+            pass
         return clean_reply
 
     await db.upsert_lead(
