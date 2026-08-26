@@ -78,6 +78,118 @@ async def test_client_trigger_create_endpoint(mock_create_trigger, mock_require_
 
 @pytest.mark.asyncio
 @patch("app.client._require_bot_editor")
+@patch("app.db.create_template_trigger")
+async def test_client_trigger_create_recurring_daily(mock_create_trigger, mock_require_editor):
+    from starlette.requests import Request
+    from starlette.datastructures import FormData
+
+    mock_create_trigger.return_value = 6
+    mock_require_editor.return_value = {"id": 43, "name": "Bot Test"}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/client/bots/43/triggers/create",
+        "headers": [(b"host", b"testserver")],
+        "session": {"user": "client@test.com", "role": "client_admin", "client_id": 1, "bot_id": 43},
+    }
+    request = Request(scope)
+
+    async def mock_form():
+        return FormData([
+            ("trigger_name", "Mensaje Diario Matutino"),
+            ("trigger_type", "recurring_daily"),
+            ("daily_time", "09:30"),
+            ("audience_type", "tag"),
+            ("audience_val", "VIP"),
+            ("template_name", "saludo_diario"),
+            ("language_code", "es_MX"),
+            ("vars_count", "1"),
+            ("var_map_type_1", "name"),
+            ("var_map_value_1", ""),
+        ])
+    request.form = mock_form
+
+    response = await client.client_trigger_create(
+        request=request,
+        bot_id=43,
+        trigger_name="Mensaje Diario Matutino",
+        trigger_type="recurring_daily",
+        template_name="saludo_diario",
+        language_code="es_MX",
+        daily_time="09:30",
+        audience_type="tag",
+        audience_val="VIP",
+        vars_count=1,
+    )
+
+    assert response.status_code == 302
+    mock_create_trigger.assert_called_once()
+    call_args = mock_create_trigger.call_args[1]
+    assert call_args["trigger_type"] == "recurring_daily"
+    assert call_args["trigger_config"] == {
+        "time_of_day": "09:30",
+        "audience_type": "tag",
+        "audience_val": "VIP",
+    }
+
+
+@pytest.mark.asyncio
+@patch("app.client._require_bot_editor")
+@patch("app.db.create_template_trigger")
+async def test_client_trigger_create_recurring_weekly(mock_create_trigger, mock_require_editor):
+    from starlette.requests import Request
+    from starlette.datastructures import FormData
+
+    mock_create_trigger.return_value = 7
+    mock_require_editor.return_value = {"id": 43, "name": "Bot Test"}
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/client/bots/43/triggers/create",
+        "headers": [(b"host", b"testserver")],
+        "session": {"user": "client@test.com", "role": "client_admin", "client_id": 1, "bot_id": 43},
+    }
+    request = Request(scope)
+
+    async def mock_form():
+        return FormData([
+            ("trigger_name", "Promo Fin de Semana"),
+            ("trigger_type", "recurring_weekly"),
+            ("weekly_days", "fri"),
+            ("weekly_days", "sat"),
+            ("weekly_time", "18:00"),
+            ("audience_type", "all"),
+            ("template_name", "promo_weekend"),
+            ("language_code", "es_MX"),
+            ("vars_count", "0"),
+        ])
+    request.form = mock_form
+
+    response = await client.client_trigger_create(
+        request=request,
+        bot_id=43,
+        trigger_name="Promo Fin de Semana",
+        trigger_type="recurring_weekly",
+        template_name="promo_weekend",
+        language_code="es_MX",
+        weekly_time="18:00",
+        audience_type="all",
+        vars_count=0,
+    )
+
+    assert response.status_code == 302
+    mock_create_trigger.assert_called_once()
+    call_args = mock_create_trigger.call_args[1]
+    assert call_args["trigger_type"] == "recurring_weekly"
+    assert "fri" in call_args["trigger_config"]["days_of_week"]
+    assert "sat" in call_args["trigger_config"]["days_of_week"]
+    assert call_args["trigger_config"]["time_of_day"] == "18:00"
+
+
+@pytest.mark.asyncio
+@patch("app.client._require_bot_editor")
 @patch("app.db.update_template_trigger_status")
 async def test_client_trigger_toggle_endpoint(mock_update_status, mock_require_editor):
     from starlette.requests import Request
@@ -257,6 +369,61 @@ async def test_trigger_crm_status_change(
         template_name="bienvenida_calificado",
         language_code="es_MX",
         parameters=["Lucia Mendez", "Asistto Plus"],
+    )
+    mock_record_exec.assert_called_once()
+    assert mock_record_exec.call_args[1]["status"] == "sent"
+
+
+@pytest.mark.asyncio
+@patch("app.automations.resolve_trigger_recipients")
+@patch("app.db.has_recent_trigger_execution")
+@patch("app.meta_provider.send_template_message")
+@patch("app.db.record_trigger_execution")
+@patch("app.db.list_active_template_triggers_by_type")
+async def test_evaluate_time_based_triggers_daily(
+    mock_list_triggers,
+    mock_record_exec,
+    mock_send_template,
+    mock_has_recent,
+    mock_resolve_recipients,
+):
+    from app import automations
+
+    now_utc = datetime.now(timezone.utc)
+    current_time_str = now_utc.strftime("%H:%M")
+
+    mock_list_triggers.return_value = [
+        {
+            "id": 10,
+            "bot_id": 43,
+            "name": "Recordatorio Diario",
+            "trigger_type": "recurring_daily",
+            "trigger_config": {
+                "time_of_day": current_time_str,
+                "audience_type": "all",
+            },
+            "template_name": "recordatorio_diario",
+            "language_code": "es_MX",
+            "variable_mappings": [
+                {"var_idx": 1, "type": "name", "value": ""},
+            ],
+            "is_active": True,
+        }
+    ]
+
+    mock_resolve_recipients.return_value = [
+        {"wa_id": "5215599998888", "name": "Pedro Pascal", "business": "Cine Corp"},
+    ]
+    mock_has_recent.return_value = False
+
+    await automations.evaluate_time_based_triggers()
+
+    mock_send_template.assert_called_once_with(
+        bot_id=43,
+        to_wa_id="5215599998888",
+        template_name="recordatorio_diario",
+        language_code="es_MX",
+        parameters=["Pedro Pascal"],
     )
     mock_record_exec.assert_called_once()
     assert mock_record_exec.call_args[1]["status"] == "sent"

@@ -2070,6 +2070,13 @@ async def client_app(
             type_label = f"⏳ Inactividad ({cfg.get('inactivity_hours', 24)}h)"
         elif tr_type == "crm_status_changed":
             type_label = f"🎯 CRM: {cfg.get('crm_status', 'calificado')}"
+        elif tr_type == "scheduled_date":
+            type_label = f"📅 Fecha ({cfg.get('scheduled_datetime', '')})"
+        elif tr_type == "recurring_daily":
+            type_label = f"⏰ Diario ({cfg.get('time_of_day', '09:00')})"
+        elif tr_type == "recurring_weekly":
+            days_str = ", ".join([d.upper() for d in cfg.get("days_of_week", [])])
+            type_label = f"🗓️ Semanal ({days_str} - {cfg.get('time_of_day', '09:00')})"
         else:
             type_label = tr_type
         
@@ -2310,6 +2317,9 @@ async def client_app(
                 <select name="trigger_type" id="triggerTypeSelect" required style="margin-bottom:12px;" onchange="onTriggerTypeChange(this.value)">
                   <option value="inactivity_hours">⏳ Inactividad del Usuario (Reactivación fuera de 24h)</option>
                   <option value="crm_status_changed">🎯 Cambio de Estado en CRM de Leads</option>
+                  <option value="scheduled_date">📅 Fecha y Hora Específica (Envío Único)</option>
+                  <option value="recurring_daily">⏰ Todos los Días (Recurrente Diario)</option>
+                  <option value="recurring_weekly">🗓️ Días de la Semana (Recurrente Semanal)</option>
                 </select>
 
                 <!-- Inactivity Config -->
@@ -2332,6 +2342,45 @@ async def client_app(
                     <option value="descalificado">Descalificado</option>
                     <option value="en_progreso">En Progreso</option>
                   </select>
+                </div>
+
+                <!-- Scheduled Date Config -->
+                <div id="triggerScheduledDateConfig" style="display:none; margin-bottom:14px;">
+                  <label>Fecha y Hora del Envío</label>
+                  <input type="datetime-local" name="scheduled_datetime" id="triggerScheduledDatetime" style="margin:0;">
+                </div>
+
+                <!-- Recurring Daily Config -->
+                <div id="triggerDailyConfig" style="display:none; margin-bottom:14px;">
+                  <label>Hora del Envío Diario</label>
+                  <input type="time" name="daily_time" value="09:00" style="margin:0;">
+                </div>
+
+                <!-- Recurring Weekly Config -->
+                <div id="triggerWeeklyConfig" style="display:none; margin-bottom:14px;">
+                  <label style="margin-bottom:6px; display:block;">Días de la Semana</label>
+                  <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:10px;">
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;"><input type="checkbox" name="weekly_days" value="mon" checked> Lun</label>
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;"><input type="checkbox" name="weekly_days" value="tue"> Mar</label>
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;"><input type="checkbox" name="weekly_days" value="wed"> Mié</label>
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;"><input type="checkbox" name="weekly_days" value="thu"> Jue</label>
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;"><input type="checkbox" name="weekly_days" value="fri"> Vie</label>
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;"><input type="checkbox" name="weekly_days" value="sat"> Sáb</label>
+                    <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;"><input type="checkbox" name="weekly_days" value="sun"> Dom</label>
+                  </div>
+                  <label>Hora del Envío</label>
+                  <input type="time" name="weekly_time" value="09:00" style="margin:0;">
+                </div>
+
+                <!-- Audience Filter Config -->
+                <div id="triggerAudienceConfig" style="display:none; margin-bottom:14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:12px;">
+                  <label style="font-weight:700; margin-bottom:6px; display:block; font-size:12.5px;">🎯 Audiencia Destinataria</label>
+                  <select name="audience_type" id="triggerAudienceType" style="margin-bottom:8px;" onchange="onAudienceTypeChange(this.value)">
+                    <option value="all" selected>Todos los contactos del bot</option>
+                    <option value="tag">Por Etiqueta (Tag)</option>
+                    <option value="crm_status">Por Estado de Lead (CRM)</option>
+                  </select>
+                  <input type="text" name="audience_val" id="triggerAudienceVal" placeholder="Ej: VIP, Promoción, calificado..." style="display:none; margin:0;">
                 </div>
 
                 <label>Seleccionar Plantilla Meta</label>
@@ -2447,12 +2496,36 @@ async def client_app(
         function onTriggerTypeChange(type) {{
           const inact = document.getElementById('triggerInactivityConfig');
           const crm = document.getElementById('triggerCrmConfig');
-          if (type === 'inactivity_hours') {{
-            inact.style.display = 'block';
-            crm.style.display = 'none';
-          }} else if (type === 'crm_status_changed') {{
-            inact.style.display = 'none';
-            crm.style.display = 'block';
+          const schDate = document.getElementById('triggerScheduledDateConfig');
+          const daily = document.getElementById('triggerDailyConfig');
+          const weekly = document.getElementById('triggerWeeklyConfig');
+          const aud = document.getElementById('triggerAudienceConfig');
+          
+          if (inact) inact.style.display = type === 'inactivity_hours' ? 'block' : 'none';
+          if (crm) crm.style.display = type === 'crm_status_changed' ? 'block' : 'none';
+          if (schDate) schDate.style.display = type === 'scheduled_date' ? 'block' : 'none';
+          if (daily) daily.style.display = type === 'recurring_daily' ? 'block' : 'none';
+          if (weekly) weekly.style.display = type === 'recurring_weekly' ? 'block' : 'none';
+          
+          if (aud) {{
+            aud.style.display = (type === 'scheduled_date' || type === 'recurring_daily' || type === 'recurring_weekly') ? 'block' : 'none';
+          }}
+        }}
+
+        function onAudienceTypeChange(val) {{
+          const audInput = document.getElementById('triggerAudienceVal');
+          if (!audInput) return;
+          if (val === 'tag') {{
+            audInput.style.display = 'block';
+            audInput.placeholder = 'Nombre de la etiqueta (Ej: VIP, Promo)';
+            audInput.required = true;
+          }} else if (val === 'crm_status') {{
+            audInput.style.display = 'block';
+            audInput.placeholder = 'Estado en CRM (calificado, descalificado, en_progreso)';
+            audInput.required = true;
+          }} else {{
+            audInput.style.display = 'none';
+            audInput.required = false;
           }}
         }}
         
@@ -5261,20 +5334,58 @@ async def client_trigger_create(
     language_code: str = Form("es_MX"),
     inactivity_hours: int = Form(24),
     crm_status: str = Form(""),
+    scheduled_datetime: str = Form(None),
+    daily_time: str = Form("09:00"),
+    weekly_time: str = Form("09:00"),
+    weekly_days: list[str] = Form(None),
+    audience_type: str = Form("all"),
+    audience_val: str = Form(""),
     vars_count: int = Form(0),
 ):
     """Crea una nueva regla de automatización y disparador de plantilla."""
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
     
+    form_data = await request.form()
+    
+    def _clean_val(v, default=""):
+        if v is None or hasattr(v, "default"):
+            return default
+        return str(v).strip()
+        
+    inactivity_hours_val = int(_clean_val(inactivity_hours, "24") or 24)
+    crm_status_str = _clean_val(crm_status, "calificado").lower()
+    scheduled_datetime_str = _clean_val(scheduled_datetime, "")
+    daily_time_str = _clean_val(daily_time, "09:00")
+    weekly_time_str = _clean_val(weekly_time, "09:00")
+    audience_type_str = _clean_val(audience_type, "all")
+    audience_val_str = _clean_val(audience_val, "")
+
     trigger_config = {}
     if trigger_type == "inactivity_hours":
-        trigger_config["inactivity_hours"] = int(inactivity_hours or 24)
+        trigger_config["inactivity_hours"] = inactivity_hours_val
     elif trigger_type == "crm_status_changed":
-        trigger_config["crm_status"] = (crm_status or "calificado").strip().lower()
+        trigger_config["crm_status"] = crm_status_str
+    elif trigger_type == "scheduled_date":
+        trigger_config["scheduled_datetime"] = scheduled_datetime_str
+        trigger_config["audience_type"] = audience_type_str
+        trigger_config["audience_val"] = audience_val_str
+    elif trigger_type == "recurring_daily":
+        trigger_config["time_of_day"] = daily_time_str
+        trigger_config["audience_type"] = audience_type_str
+        trigger_config["audience_val"] = audience_val_str
+    elif trigger_type == "recurring_weekly":
+        all_weekly_days = form_data.getlist("weekly_days") if hasattr(form_data, "getlist") else []
+        if not all_weekly_days and weekly_days and not hasattr(weekly_days, "default"):
+            all_weekly_days = weekly_days if isinstance(weekly_days, list) else [weekly_days]
+        if not all_weekly_days:
+            all_weekly_days = ["mon"]
+        trigger_config["days_of_week"] = [str(d).strip().lower() for d in all_weekly_days]
+        trigger_config["time_of_day"] = weekly_time_str
+        trigger_config["audience_type"] = audience_type_str
+        trigger_config["audience_val"] = audience_val_str
         
     variable_mappings = []
-    form_data = await request.form()
     for i in range(1, vars_count + 1):
         map_type = form_data.get(f"var_map_type_{i}") or "fixed"
         map_value = form_data.get(f"var_map_value_{i}") or ""
