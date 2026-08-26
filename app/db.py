@@ -1610,6 +1610,36 @@ async def list_bot_knowledge(
     return [dict(r) for r in rows]
 
 
+async def get_bot_knowledge_index_stats(bot_id: int) -> dict[int, dict]:
+    """Return chunk/embedding counts for active documents in one bot."""
+    from app import rag
+
+    async with _pool.acquire() as conn:
+        has_vector = await rag.has_vector_column(conn)
+        embedded_expr = "COUNT(c.embedding)" if has_vector else "0"
+        rows = await conn.fetch(
+            f"""
+            SELECT k.id AS knowledge_id,
+                   COUNT(c.id) AS chunk_count,
+                   {embedded_expr} AS embedded_chunk_count
+            FROM bot_knowledge k
+            LEFT JOIN bot_knowledge_chunks c
+              ON c.knowledge_id = k.id AND c.bot_id = k.bot_id
+            WHERE k.bot_id = $1 AND k.status = 'active'
+            GROUP BY k.id
+            """,
+            bot_id,
+        )
+    return {
+        int(row["knowledge_id"]): {
+            "chunk_count": int(row["chunk_count"] or 0),
+            "embedded_chunk_count": int(row["embedded_chunk_count"] or 0),
+            "vector_enabled": has_vector,
+        }
+        for row in rows
+    }
+
+
 async def get_bot_knowledge(bot_id: int, knowledge_id: int) -> dict | None:
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
@@ -1695,10 +1725,11 @@ async def archive_bot_knowledge(bot_id: int, knowledge_id: int) -> bool:
 
 
 async def reindex_bot_knowledge(bot_id: int) -> int:
-    """Reindexa todos los documentos de conocimiento activos de un bot."""
+    """Reindexa atómicamente el conocimiento activo de un solo bot."""
     async with _pool.acquire() as conn:
         from app import rag
-        return await rag.reindex_bot_knowledge(conn, bot_id)
+        async with conn.transaction():
+            return await rag.reindex_bot_knowledge(conn, bot_id)
 
 
 

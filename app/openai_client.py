@@ -104,6 +104,20 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
             parts.append(f"- Negocio/Giro del cliente: {lead_info['negocio']}")
         if parts:
             lead_context = "\n".join(parts) + "\n"
+
+    directory_context = ""
+    if bot_id and wa_id:
+        try:
+            identity = await bot_content.directory_identity_for_bot(bot_id, wa_id)
+            if identity:
+                area_suffix = f"; área: {identity['area']}" if identity.get("area") else ""
+                directory_context = (
+                    f"- Identidad verificada en el directorio privado de este bot: {identity['nombre']}"
+                    f"{area_suffix}\n"
+                    "- Usa esta identidad solo para atender al remitente actual; nunca reveles otras filas del directorio.\n"
+                )
+        except Exception:
+            pass
             
     calendar_details = ""
     if calendar_state == "activo":
@@ -116,6 +130,7 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
         "Contexto operativo actual:\n"
         f"{user_phone_line}"
         f"{lead_context}"
+        f"{directory_context}"
         f"- Fecha y hora actual: {time_human}\n"
         f"- Zona horaria: {tz_name}\n"
         f"{calendar_details}"
@@ -132,8 +147,13 @@ async def _system_prompt(
     query: str | None = None,
     lead_info: dict | None = None,
     wa_id: str | None = None,
+    lexical_query: str | None = None,
 ) -> str:
-    prompt = await bot_content.system_prompt_for_bot(bot_id, query)
+    prompt = await bot_content.system_prompt_for_bot(
+        bot_id,
+        query,
+        lexical_query=lexical_query,
+    )
     extra = await external_actions.system_instructions(bot_id)
     # The order-payment opt-in is contained in the prompt we just loaded.  Do
     # not introduce a second tenant-wide DB lookup for ordinary messages.
@@ -213,7 +233,14 @@ async def complete(
         except Exception:
             pass
 
-    system = await _system_prompt(bot_id, query=user_message, lead_info=lead_info, wa_id=wa_id)
+    retrieval_query = bot_content.build_retrieval_query(user_message, history)
+    system = await _system_prompt(
+        bot_id,
+        query=retrieval_query,
+        lexical_query=user_message,
+        lead_info=lead_info,
+        wa_id=wa_id,
+    )
     fitted = fit_history(system, history, user_message, config.MAX_PROMPT_TOKENS)
     messages = (
         [{"role": "system", "content": system}]
@@ -223,12 +250,11 @@ async def complete(
     import logging
     logger = logging.getLogger("whatsapp-bot")
     logger.info(
-        "Llamada completada a OpenAI. bot_id=%s, model=%s, largo_system_prompt=%d, mensajes_historial=%d, preview_system_prompt=%r",
+        "Llamada completada a OpenAI. bot_id=%s, model=%s, largo_system_prompt=%d, mensajes_historial=%d",
         bot_id,
         openai_model or config.OPENAI_MODEL,
         len(system),
         len(fitted),
-        system[:300]
     )
     return await _chat(messages, model=openai_model)
 

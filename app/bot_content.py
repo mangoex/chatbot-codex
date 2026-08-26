@@ -1,8 +1,13 @@
 from __future__ import annotations
 """Prompt and knowledge composition for bot-specific runtime behavior."""
+import csv
+import io
 import logging
+import re
+import unicodedata
 
 from app import config, db
+from app.knowledge_privacy import is_private_directory_title
 
 log = logging.getLogger("whatsapp-bot")
 
@@ -13,6 +18,7 @@ def combine_prompt(base_prompt: str, knowledge_docs: list[dict]) -> str:
         doc for doc in knowledge_docs
         if (doc.get("content") or "").strip()
            and doc.get("status", "active") == "active"
+           and not is_private_directory_title(doc.get("title"))
     ]
     if not active_docs:
         return prompt
@@ -25,7 +31,84 @@ def combine_prompt(base_prompt: str, knowledge_docs: list[dict]) -> str:
     return "\n\n".join(section for section in sections if section)
 
 
-async def system_prompt_for_bot(bot_id: int | None = None, query: str | None = None) -> str:
+def build_retrieval_query(user_message: str, history: list[dict]) -> str:
+    """Build a bounded, conversation-aware semantic retrieval query."""
+    recent = [
+        item for item in history[-config.RETRIEVAL_HISTORY_MESSAGES:]
+        if item.get("role") in ("user", "assistant") and (item.get("content") or "").strip()
+    ]
+    lines = []
+    for item in recent:
+        label = "Usuario" if item.get("role") == "user" else "Asistente"
+        content = re.sub(r"\s+", " ", str(item.get("content") or "")).strip()[:600]
+        lines.append(f"{label}: {content}")
+    current = re.sub(r"\s+", " ", user_message or "").strip()
+    lines.append(f"Pregunta actual: {current}")
+    rendered = "\n".join(lines)
+    if len(rendered) <= config.RETRIEVAL_QUERY_MAX_CHARS:
+        return rendered
+    # Keep the newest context and the complete current question.
+    return rendered[-config.RETRIEVAL_QUERY_MAX_CHARS:]
+
+
+def _normalized_header(value: str | None) -> str:
+    normalized = unicodedata.normalize("NFKD", value or "")
+    ascii_text = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]", "", ascii_text.lower())
+
+
+def _phone10(value: str | None) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _identity_from_directory(content: str, wa_id: str) -> dict | None:
+    target = _phone10(wa_id)
+    if len(target) != 10:
+        return None
+    sample = (content or "")[:2048]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+    reader = csv.DictReader(io.StringIO(content or ""), dialect=dialect)
+    fields = {
+        _normalized_header(field): field
+        for field in (reader.fieldnames or [])
+        if field
+    }
+    name_field = fields.get("nombre") or fields.get("name")
+    area_field = fields.get("area") or fields.get("departamento") or fields.get("department")
+    phone_field = fields.get("telefono") or fields.get("phone") or fields.get("whatsapp")
+    if not name_field or not phone_field:
+        return None
+    for row in reader:
+        if _phone10(row.get(phone_field)) != target:
+            continue
+        identity = {"nombre": (row.get(name_field) or "").strip()}
+        if area_field and (row.get(area_field) or "").strip():
+            identity["area"] = (row.get(area_field) or "").strip()
+        return identity if identity["nombre"] else None
+    return None
+
+
+async def directory_identity_for_bot(bot_id: int, wa_id: str) -> dict | None:
+    """Return only the sender's exact directory row, strictly scoped to one bot."""
+    docs = await db.list_bot_knowledge(bot_id, active_only=True)
+    for doc in docs:
+        if not is_private_directory_title(doc.get("title")):
+            continue
+        identity = _identity_from_directory(doc.get("content") or "", wa_id)
+        if identity:
+            return identity
+    return None
+
+
+async def system_prompt_for_bot(
+    bot_id: int | None = None,
+    query: str | None = None,
+    lexical_query: str | None = None,
+) -> str:
     bot_name = "Asistto"
     if bot_id and bot_id != 1:
         try:
@@ -44,7 +127,10 @@ async def system_prompt_for_bot(bot_id: int | None = None, query: str | None = N
     try:
         prompt_row = await db.get_active_bot_prompt(bot_id)
         # Cargar todos los documentos de conocimiento primero
-        all_docs = await db.list_bot_knowledge(bot_id, active_only=True)
+        all_docs = [
+            doc for doc in await db.list_bot_knowledge(bot_id, active_only=True)
+            if not is_private_directory_title(doc.get("title"))
+        ]
         total_chars = sum(len(doc.get("content") or "") for doc in all_docs)
         
         # RAG Semantic search solo si se provee consulta y la base de conocimiento es grande
@@ -52,7 +138,13 @@ async def system_prompt_for_bot(bot_id: int | None = None, query: str | None = N
         if query and total_chars > 15000:
             from app import rag
             async with db._pool.acquire() as conn:
-                rag_chunks = await rag.search_knowledge(conn, bot_id, query, limit=6)
+                rag_chunks = await rag.search_knowledge(
+                    conn,
+                    bot_id,
+                    query,
+                    lexical_query=lexical_query,
+                    limit=config.RAG_FINAL_CHUNKS,
+                )
         
         if query and rag_chunks:
             knowledge_docs = [{"title": f"Fragmento de conocimiento {i+1}", "content": chunk, "status": "active"} for i, chunk in enumerate(rag_chunks)]
@@ -71,4 +163,3 @@ async def system_prompt_for_bot(bot_id: int | None = None, query: str | None = N
     )
     base_prompt = (prompt_row or {}).get("content") or fallback
     return combine_prompt(base_prompt, knowledge_docs)
-

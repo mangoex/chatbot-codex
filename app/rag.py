@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from app import config
+from app.knowledge_privacy import is_private_directory_title
 
 log = logging.getLogger("whatsapp-bot")
+
+_PRIVATE_DIRECTORY_TITLE_RE = (
+    r"(^|[ /])(?:colaboradores|empleados|directorio_colaboradores)\.csv$"
+)
 
 
 def chunk_text(text: str, max_chars: int = 1200, overlap: int = 250) -> list[str]:
@@ -117,16 +123,24 @@ async def index_document(conn, bot_id: int, knowledge_id: int, content: str) -> 
     """Index one active knowledge document for a bot."""
     await conn.execute("DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1", knowledge_id)
 
-    chunks = chunk_text(content)
-    if not chunks:
-        return
-
     title_row = await conn.fetchrow(
         "SELECT title FROM bot_knowledge WHERE id = $1 AND bot_id = $2",
         knowledge_id,
         bot_id,
     )
     title = title_row["title"] if title_row else None
+    if is_private_directory_title(title):
+        log.info(
+            "Directorio privado excluido de RAG. bot_id=%s knowledge_id=%s",
+            bot_id,
+            knowledge_id,
+        )
+        return
+
+    chunks = chunk_text(content)
+    if not chunks:
+        return
+
     has_vector = await has_vector_column(conn)
 
     from app import openai_client
@@ -187,12 +201,44 @@ async def reindex_bot_knowledge(conn, bot_id: int) -> int:
     return count
 
 
-async def search_knowledge(conn, bot_id: int, query_text: str, limit: int = 6) -> list[str]:
-    """Return active bot-scoped knowledge snippets. Knowledge is data, not instructions."""
+def _row_value(row, key: str, default=None):
+    if hasattr(row, "get"):
+        return row.get(key, default)
+    try:
+        return row[key]
+    except (KeyError, TypeError):
+        return default
+
+
+def _keyword_patterns(query_text: str) -> list[str]:
+    stopwords = {
+        "para", "como", "esta", "este", "esto", "sobre", "donde", "cuando",
+        "actual", "pregunta", "contexto", "usuario", "asistente", "tambien",
+    }
+    words = []
+    for word in re.findall(r"[\wáéíóúüñ]+", (query_text or "").lower()):
+        if len(word) < 4 or word in stopwords or word in words:
+            continue
+        words.append(word)
+        if len(words) == 8:
+            break
+    return [f"%{word}%" for word in words] or [f"%{query_text.strip()}%"]
+
+
+async def search_knowledge(
+    conn,
+    bot_id: int,
+    query_text: str,
+    limit: int = 8,
+    lexical_query: str | None = None,
+) -> list[str]:
+    """Hybrid vector/text retrieval with bot scope and per-document diversity."""
     query_text = (query_text or "").strip()
     if not query_text:
         return []
 
+    candidate_limit = max(config.RAG_CANDIDATE_CHUNKS, limit * 2)
+    vector_rows = []
     has_vector = await has_vector_column(conn)
     if has_vector:
         from app import openai_client
@@ -201,66 +247,101 @@ async def search_knowledge(conn, bot_id: int, query_text: str, limit: int = 6) -
             embedding = await openai_client.get_embedding(query_text)
             if len(embedding) == config.EMBEDDING_DIMENSIONS:
                 emb_str = "[" + ",".join(map(str, embedding)) + "]"
-                rows = await conn.fetch(
+                vector_rows = await conn.fetch(
                     """
-                    SELECT c.title, c.content
+                    SELECT c.knowledge_id, c.chunk_index, c.title, c.content,
+                           c.embedding <=> $2::vector AS distance
                     FROM bot_knowledge_chunks c
                     JOIN bot_knowledge k ON k.id = c.knowledge_id
                     WHERE c.bot_id = $1
                       AND k.status = 'active'
                       AND c.embedding IS NOT NULL
+                      AND lower(COALESCE(c.title, '')) !~ $3
                     ORDER BY c.embedding <=> $2::vector
-                    LIMIT $3
+                    LIMIT $4
                     """,
                     bot_id,
                     emb_str,
-                    limit,
+                    _PRIVATE_DIRECTORY_TITLE_RE,
+                    candidate_limit,
                 )
-                if rows:
-                    return [_format_result(row) for row in rows]
         except Exception as exc:
             log.warning("Vector search failed; using text fallback: %s", exc)
 
-    rows = await conn.fetch(
+    lexical = (lexical_query or query_text).strip()
+    text_rows = await conn.fetch(
         """
-        SELECT c.title, c.content,
-               ts_rank_cd(to_tsvector('spanish', c.content), plainto_tsquery('spanish', $2)) AS rank
+        SELECT c.knowledge_id, c.chunk_index, c.title, c.content,
+               ts_rank_cd(
+                   to_tsvector('spanish', COALESCE(c.title, '') || ' ' || c.content),
+                   plainto_tsquery('spanish', $2)
+               ) AS rank
         FROM bot_knowledge_chunks c
         JOIN bot_knowledge k ON k.id = c.knowledge_id
         WHERE c.bot_id = $1
           AND k.status = 'active'
-          AND to_tsvector('spanish', c.content) @@ plainto_tsquery('spanish', $2)
+          AND lower(COALESCE(c.title, '')) !~ $4
+          AND (
+              to_tsvector('spanish', COALESCE(c.title, '') || ' ' || c.content)
+                  @@ plainto_tsquery('spanish', $2)
+              OR c.content ILIKE ANY($3::text[])
+              OR COALESCE(c.title, '') ILIKE ANY($3::text[])
+          )
         ORDER BY rank DESC, c.chunk_index ASC
-        LIMIT $3
+        LIMIT $5
         """,
         bot_id,
-        query_text,
-        limit,
+        lexical,
+        _keyword_patterns(lexical),
+        _PRIVATE_DIRECTORY_TITLE_RE,
+        candidate_limit,
     )
-    if not rows:
-        words = [f"%{word}%" for word in query_text.split() if len(word) > 2]
-        if not words:
-            words = [f"%{query_text}%"]
-        rows = await conn.fetch(
-            """
-            SELECT c.title, c.content
-            FROM bot_knowledge_chunks c
-            JOIN bot_knowledge k ON k.id = c.knowledge_id
-            WHERE c.bot_id = $1
-              AND k.status = 'active'
-              AND c.content ILIKE $2
-            ORDER BY c.chunk_index ASC
-            LIMIT $3
-            """,
-            bot_id,
-            words[0],
-            limit,
-        )
-    return [_format_result(row) for row in rows]
+
+    candidates: dict[tuple, dict] = {}
+    for source, rows, weight in (
+        ("vector", vector_rows, 1.0),
+        ("text", text_rows, 1.25),
+    ):
+        for rank_index, row in enumerate(rows, start=1):
+            title = _row_value(row, "title") or "Base de conocimiento"
+            if is_private_directory_title(title):
+                continue
+            distance = _row_value(row, "distance")
+            if (
+                source == "vector"
+                and distance is not None
+                and float(distance) > config.RAG_MAX_COSINE_DISTANCE
+            ):
+                continue
+            knowledge_id = _row_value(row, "knowledge_id", title)
+            chunk_index = int(_row_value(row, "chunk_index", 0) or 0)
+            key = (knowledge_id, chunk_index)
+            item = candidates.setdefault(
+                key,
+                {
+                    "knowledge_id": knowledge_id,
+                    "chunk_index": chunk_index,
+                    "title": title,
+                    "content": _row_value(row, "content") or "",
+                    "score": 0.0,
+                },
+            )
+            item["score"] += weight / (60 + rank_index)
+
+    selected = []
+    per_document: dict[object, int] = {}
+    for item in sorted(candidates.values(), key=lambda value: value["score"], reverse=True):
+        knowledge_id = item["knowledge_id"]
+        if per_document.get(knowledge_id, 0) >= 2:
+            continue
+        selected.append(item)
+        per_document[knowledge_id] = per_document.get(knowledge_id, 0) + 1
+        if len(selected) == limit:
+            break
+    return [_format_result(row) for row in selected]
 
 
 def _format_result(row) -> str:
     title = row.get("title") if hasattr(row, "get") else row["title"]
     content = row.get("content") if hasattr(row, "get") else row["content"]
     return f"[Fuente: {title or 'Base de conocimiento'}]\n{content or ''}"
-

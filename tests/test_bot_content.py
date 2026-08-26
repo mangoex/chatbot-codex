@@ -1,6 +1,7 @@
 import sys
 import types
 import unittest
+from unittest.mock import AsyncMock, patch
 
 sys.modules.setdefault("asyncpg", types.SimpleNamespace(Pool=object))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
@@ -114,7 +115,7 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
             return [{"title": "LargeDoc", "content": large_content, "status": "active"}]
 
         called_rag = False
-        async def fake_search(conn, bot_id, query, limit=6):
+        async def fake_search(conn, bot_id, query, limit=8, lexical_query=None):
             nonlocal called_rag
             called_rag = True
             return ["RAG Chunk 1", "RAG Chunk 2"]
@@ -153,6 +154,71 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("RAG Chunk 1", result)
         self.assertNotIn("LargeDoc", result)
 
+    def test_retrieval_query_keeps_recent_topic_for_followups(self):
+        history = [
+            {"role": "user", "content": "Hola"},
+            {"role": "assistant", "content": "Hola, ¿en qué te apoyo?"},
+            {"role": "user", "content": "¿Qué dice la política de gastos de viaje sobre hospedaje?"},
+            {"role": "assistant", "content": "La política establece límites para hospedaje."},
+        ]
+
+        query = bot_content.build_retrieval_query("¿Y para alimentos?", history)
+
+        self.assertIn("política de gastos de viaje", query.lower())
+        self.assertIn("¿Y para alimentos?", query)
+
+    def test_private_directory_is_excluded_from_general_knowledge(self):
+        docs = [
+            {
+                "title": "Colaboradores.csv",
+                "content": "Nombre, Area, Telefono\nAna, RH, 6671234567",
+                "status": "active",
+            },
+            {
+                "title": "03_Politica_de_Ciberseguridad.md",
+                "content": "Usa contraseñas seguras.",
+                "status": "active",
+            },
+        ]
+
+        result = bot_content.combine_prompt("Prompt", docs)
+
+        self.assertNotIn("6671234567", result)
+        self.assertIn("Usa contraseñas seguras.", result)
+
+    async def test_directory_identity_is_exact_and_scoped_to_bot(self):
+        calls = []
+
+        async def fake_knowledge(bot_id, active_only=True):
+            calls.append((bot_id, active_only))
+            return [
+                {
+                    "title": "Colaboradores.csv",
+                    "content": (
+                        "Nombre, Area, Telefono\n"
+                        "Francisco Orrantia, Dirección General, 6677919875\n"
+                        "Otra Persona, Ventas, 6670000000"
+                    ),
+                    "status": "active",
+                }
+            ]
+
+        original_knowledge = db.list_bot_knowledge
+        db.list_bot_knowledge = fake_knowledge
+        try:
+            identity = await bot_content.directory_identity_for_bot(
+                170,
+                "5216677919875",
+            )
+        finally:
+            db.list_bot_knowledge = original_knowledge
+
+        self.assertEqual(calls, [(170, True)])
+        self.assertEqual(
+            identity,
+            {"nombre": "Francisco Orrantia", "area": "Dirección General"},
+        )
+
 
     def test_chunk_text_1200_chars_coverage(self):
         from app import rag
@@ -168,9 +234,26 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
         runtime = await openai_client._runtime_context(bot_id=170, wa_id="5216671020672")
         self.assertIn("Teléfono/WhatsApp del usuario: 6671020672 (ID: 5216671020672)", runtime)
 
+    async def test_runtime_context_injects_only_exact_private_identity(self):
+        from app import openai_client
+
+        identity_lookup = AsyncMock(
+            return_value={"nombre": "Francisco Orrantia", "area": "Dirección General"}
+        )
+        with patch.object(
+            openai_client.bot_content,
+            "directory_identity_for_bot",
+            identity_lookup,
+        ):
+            runtime = await openai_client._runtime_context(
+                bot_id=170,
+                wa_id="5216677919875",
+            )
+
+        identity_lookup.assert_awaited_once_with(170, "5216677919875")
+        self.assertIn("Francisco Orrantia; área: Dirección General", runtime)
+        self.assertIn("nunca reveles otras filas", runtime)
+
 
 if __name__ == "__main__":
     unittest.main()
-
-
-

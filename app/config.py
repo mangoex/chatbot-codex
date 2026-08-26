@@ -25,6 +25,13 @@ def _int(name: str, default: str) -> int:
         return int(default)
 
 
+def _float(name: str, default: str) -> float:
+    try:
+        return float(os.getenv(name, default))
+    except ValueError:
+        return float(default)
+
+
 PORT = int(_env("PORT", default="8000"))
 APP_ENV = _env("APP_ENV", "ENVIRONMENT", default="development").lower()
 DEFAULT_BOT_SLUG = _env("DEFAULT_BOT_SLUG", default="asistto")
@@ -77,9 +84,14 @@ ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-3-5-sonnet-latest")
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
 HISTORY_WINDOW = _int("HISTORY_WINDOW", "30")
-MAX_PROMPT_TOKENS = _int("MAX_PROMPT_TOKENS", "6000")
+MAX_PROMPT_TOKENS = _int("MAX_PROMPT_TOKENS", "12000")
 MAX_USER_MESSAGE_CHARS = _int("MAX_USER_MESSAGE_CHARS", "4000")
 HISTORY_TTL_DAYS = _int("HISTORY_TTL_DAYS", "30")
+RAG_FINAL_CHUNKS = _int("RAG_FINAL_CHUNKS", "8")
+RAG_CANDIDATE_CHUNKS = _int("RAG_CANDIDATE_CHUNKS", "24")
+RAG_MAX_COSINE_DISTANCE = _float("RAG_MAX_COSINE_DISTANCE", "0.75")
+RETRIEVAL_HISTORY_MESSAGES = _int("RETRIEVAL_HISTORY_MESSAGES", "6")
+RETRIEVAL_QUERY_MAX_CHARS = _int("RETRIEVAL_QUERY_MAX_CHARS", "2400")
 
 RELOAD_TOKEN = os.getenv("RELOAD_TOKEN", "")
 ENABLE_FOLLOW_UPS = _bool("ENABLE_FOLLOW_UPS")

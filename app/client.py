@@ -17,6 +17,7 @@ from fastapi import APIRouter, Request, Form, HTTPException, UploadFile, File, B
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from app import db, config, auth, secure_store, meta_provider, prompt_assistant, pbd_validation, skill_runtime, calendar_client, file_parser
+from app.knowledge_privacy import is_private_directory_title
 
 log = logging.getLogger("client-panel")
 router = APIRouter(prefix="/client", tags=["client-portal"])
@@ -1170,6 +1171,10 @@ async def client_app(
     notice_html = ""
     if saved == "1":
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Configuración guardada correctamente.</div>'
+    elif saved == "reindexed":
+        notice_html = f'<div class="notice-banner success">{ICONS["success"]} Base de conocimiento reindexada correctamente.</div>'
+    elif saved == "err_reindex":
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} No fue posible reindexar la base de conocimiento.</div>'
     elif saved == "chatwoot_api_only":
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Conexión API validada. Falta guardar el Webhook Signing Secret para completar la conexión bidireccional.</div>'
     elif saved == "err":
@@ -1237,6 +1242,13 @@ async def client_app(
     
     # Knowledge docs
     knowledge_docs = await db.list_bot_knowledge(bot_id, active_only=True)
+    try:
+        knowledge_stats = await db.get_bot_knowledge_index_stats(bot_id)
+    except Exception as exc:
+        log.warning("No se pudo leer diagnóstico RAG para bot %s: %s", bot_id, exc)
+        knowledge_stats = {}
+    for doc in knowledge_docs:
+        doc.update(knowledge_stats.get(int(doc["id"]), {}))
     
     # Integrations
     calendar_status = await calendar_client.runtime_status(bot_id)
@@ -2988,6 +3000,9 @@ async def client_app(
             <h2>Base de Conocimiento Activa</h2>
             <p>Información que el bot puede leer como contexto para contestar preguntas sobre precios, servicios, ubicaciones o preguntas frecuentes.</p>
           </div>
+          <form method="post" action="/client/bots/{bot_id}/knowledge/reindex?csrf_token={html.escape(csrf_token)}" style="margin:0 0 14px;">
+            <button class="btn secondary" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Reindexar base de conocimiento</button>
+          </form>
           {_render_knowledge_table(knowledge_docs, bot_id, session["role"])}
         </div>
         
@@ -3466,6 +3481,21 @@ def _render_knowledge_table(docs: list, bot_id: int, role: str) -> str:
         content = doc["content"]
         created_at = doc.get("created_at")
         dt_str = created_at.strftime("%d/%m/%Y") if created_at else "-"
+        is_directory = is_private_directory_title(title)
+        chunk_count = int(doc.get("chunk_count") or 0)
+        embedded_count = int(doc.get("embedded_chunk_count") or 0)
+        vector_enabled = bool(doc.get("vector_enabled"))
+        if is_directory:
+            index_status = '<span class="badge success">Directorio privado</span><br><span class="muted-text" style="font-size:11px;">Coincidencia exacta; fuera del RAG</span>'
+        elif chunk_count:
+            vector_label = (
+                f" · {embedded_count} embeddings"
+                if vector_enabled
+                else " · búsqueda textual"
+            )
+            index_status = f'<span class="badge success">Indexado</span><br><span class="muted-text" style="font-size:11px;">{chunk_count} fragmentos{vector_label}</span>'
+        else:
+            index_status = '<span class="badge warning">Sin fragmentos</span>'
         
         archive_form = ""
         if role in ("agency_admin", "client_admin"):
@@ -3479,6 +3509,7 @@ def _render_knowledge_table(docs: list, bot_id: int, role: str) -> str:
         <tr>
           <td style="font-weight:600; font-size:13.5px; width:220px;">{html.escape(title)}<br><span class="muted-text" style="font-size:11px;">Creado: {dt_str}</span></td>
           <td style="font-size:12.5px; color:var(--muted); max-width:380px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{html.escape(content[:160])}</td>
+          <td style="width:170px;">{index_status}</td>
           <td style="width:100px; text-align:right;">{archive_form}</td>
         </tr>
         """
@@ -3490,6 +3521,7 @@ def _render_knowledge_table(docs: list, bot_id: int, role: str) -> str:
           <tr>
             <th>Documento</th>
             <th>Previsualización</th>
+            <th>Recuperación</th>
             <th></th>
           </tr>
         </thead>
@@ -3807,6 +3839,24 @@ async def client_knowledge_archive(request: Request, bot_id: int, knowledge_id: 
          raise HTTPException(status_code=404, detail="Documento no encontrado o no pertenece a tu bot.")
          
     return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=knowledge&saved=1", status_code=302)
+
+
+@router.post("/bots/{bot_id}/knowledge/reindex")
+async def client_knowledge_reindex(request: Request, bot_id: int):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    try:
+        count = await db.reindex_bot_knowledge(bot_id)
+    except Exception:
+        log.exception("Error reindexando conocimiento del bot %s", bot_id)
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=knowledge&saved=err_reindex",
+            status_code=302,
+        )
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=knowledge&saved=reindexed&count={count}",
+        status_code=302,
+    )
 
 @router.post("/bots/{bot_id}/toggle-status")
 async def client_bot_toggle_status(request: Request, bot_id: int):

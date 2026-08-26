@@ -27,6 +27,34 @@ sys.modules.pop("cryptography.fernet", None)
 
 
 class TestClientPanelFeatures:
+    def test_knowledge_table_marks_private_directory_and_index_status(self):
+        from app import client
+
+        rendered = client._render_knowledge_table(
+            [
+                {
+                    "id": 55,
+                    "title": "Colaboradores.csv",
+                    "content": "Nombre, Area, Telefono",
+                    "chunk_count": 0,
+                    "embedded_chunk_count": 0,
+                },
+                {
+                    "id": 56,
+                    "title": "03_Politica_de_Ciberseguridad.md",
+                    "content": "No compartas contraseñas.",
+                    "chunk_count": 4,
+                    "embedded_chunk_count": 4,
+                },
+            ],
+            bot_id=170,
+            role="client_admin",
+        )
+
+        assert "Directorio privado" in rendered
+        assert "4 fragmentos" in rendered
+        assert "Indexado" in rendered
+
     def test_client_layout_logout_includes_csrf_token(self):
         from app import client
 
