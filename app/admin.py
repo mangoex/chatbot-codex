@@ -10,7 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from app import auth, config, db, meta_provider, secure_store
+from app import auth, config, db, meta_provider, pbd_validation, secure_store
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 _current_session: ContextVar[dict | None] = ContextVar("admin_session", default=None)
@@ -2389,6 +2389,10 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
           <input name="model" placeholder="Modelo" value="{html.escape(default_model)}">
           <label>Que quieres cambiar</label>
           <textarea name="instruction" required placeholder="Ej. Hazlo para una clinica dental, agenda citas y califica urgencias."></textarea>
+          <label style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+            <input type="checkbox" name="allow_constitution_change" value="true" style="width:auto;">
+            Autorizar cambio constitucional
+          </label>
           <div class="actions" style="margin-top:14px">
             <button class="btn" id="runPromptAssistant" type="submit">Generar con IA</button>
             <button class="btn secondary" id="applyAssistantResult" type="button" disabled>Usar sugerencia</button>
@@ -2529,7 +2533,26 @@ async def save_bot_prompt_page(
     clean = content.strip()
     if not clean:
         raise HTTPException(status_code=400, detail="El prompt no puede estar vacio")
-    await db.publish_bot_prompt(bot_id, clean, pbd_constitution, pbd_specs, pbd_test_suite)
+    report = pbd_validation.validate_pbd_bundle(
+        pbd_constitution,
+        pbd_specs,
+        pbd_test_suite,
+        clean,
+        allow_constitution_change=True,
+        for_publish=True,
+    )
+    if not report.valid:
+        raise HTTPException(
+            status_code=422,
+            detail=pbd_validation.validation_error_message(report),
+        )
+    await db.publish_bot_prompt(
+        bot_id,
+        report.master_xml,
+        pbd_constitution,
+        pbd_specs,
+        pbd_test_suite,
+    )
     return RedirectResponse(f"/admin/bots/{bot_id}/prompt?saved=1", status_code=302)
 
 
@@ -2546,6 +2569,7 @@ async def assist_bot_prompt_page(
     api_key: str = Form(""),
     base_url: str = Form(""),
     model: str = Form(""),
+    allow_constitution_change: str | None = Form(None),
 ):
     from app import prompt_assistant
 
@@ -2565,6 +2589,9 @@ async def assist_bot_prompt_page(
             api_key=api_key,
             base_url=base_url,
             model=model,
+            allow_constitution_change=(
+                allow_constitution_change in ("true", "1", "on")
+            ),
         )
         return JSONResponse(result)
     except prompt_assistant.PromptAssistantError as exc:
@@ -4212,4 +4239,3 @@ async def escalation_update(
         elif status == "resuelto":
             await db.clear_conversation_handoff(bot_id, wa_id)
     return RedirectResponse(f"/admin/escalations/{eid}", status_code=302)
-

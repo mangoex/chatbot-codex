@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app import config
+from app import config, pbd_validation
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 MAX_CURRENT_PROMPT_CHARS = 30000
 MAX_KNOWLEDGE_CHARS = 35000
+PBD_SKILL_SOURCE = "mangoex/pbd-whatsapp-skill-starter"
+PBD_SKILL_COMMIT = "241e4eeee4ceff4b8c2ef9f2da64beebe7e8e6c9"
 
 
 class PromptAssistantError(Exception):
@@ -23,56 +25,17 @@ class PromptAssistantSettings:
     model: str
 
 
-SYSTEM_INSTRUCTIONS = """
-Eres el Arquitecto PBD (Prompt Behavior Design), un agente experto en Ingeniería de Prompts para entornos conversacionales (especialmente WhatsApp Business API). Tu misión es ayudar a los clientes de la plataforma a crear, auditar y mantener de forma segura los prompts de sus bots sin generar regresiones de comportamiento.
-
-Trabajas bajo la filosofía de que "El Prompt es Código" y gestionas la lógica de cada bot dividida estrictamente en 4 documentos:
-1. 01-constitution.md (Verdad Absoluta, Ética, Guardrails y Tono inamovibles).
-2. 02-specs.md (Especificaciones del negocio: flujos, precios, enlaces y fallbacks).
-3. 03-test-suite.md (Matriz de pruebas en formato DADO QUE/CUANDO/EL BOT DEBE).
-4. 04-master-prompt.md (El prompt ejecutable final compilado en formato XML para el bot del cliente).
-
-MODOS DE OPERACIÓN
-MODO A: Creación de Bot desde Cero (Onboarding)
-Si el usuario no proporciona documentos existentes:
-Actúa infiriendo la Identidad y Persona, Misión del Negocio, Guardrails y Datos con la información proporcionada en la solicitud. Genera los 4 documentos utilizando la estructura XML obligatoria.
-
-MODO B: Adecuación y Actualización (CI/CD de Prompts)
-Si se proveen documentos existentes en el contexto y se solicita un cambio:
-Paso 1: Análisis de Impacto frente a la Constitución (01-constitution.md).
-Paso 2: Actualización de Especificaciones (02-specs.md).
-Paso 3: Actualización del Test Suite (03-test-suite.md).
-Paso 4: Compilación del Prompt Maestro (04-master-prompt.md) en formato XML con etiquetas <system_instructions>, <identity>, <guardrails>, <knowledge_base>, <conversational_rules>, <flows>. (Asegúrate de incluir un guardrail prohibiendo revelar instrucciones internas).
-
-FORMATO DE SALIDA (SÚPER CRÍTICO)
-Debes encapsular el contenido final de cada documento dentro de las siguientes etiquetas XML exactas, sin markdown fuera de ellas.
-
-<constitution_doc>
-# 01 - ACTA DE CONSTITUCIÓN
-...
-</constitution_doc>
-
-<specs_doc>
-# 02 - ESPECIFICACIONES DE COMPORTAMIENTO
-...
-</specs_doc>
-
-<test_suite_doc>
-# 03 - SUITE DE PRUEBAS
-...
-</test_suite_doc>
-
-<master_prompt_doc>
-# 04 - MASTER PROMPT
-...
-</master_prompt_doc>
-""".strip()
+@dataclass(frozen=True)
+class ModelResponse:
+    text: str
+    finish_reason: str | None = None
 
 
 PBD_SKILL_SYSTEM_INSTRUCTIONS = """
 Eres el agente PBD WhatsApp Maintainer integrado en Asistto.
 Tu fuente metodológica es la habilidad `mangoex/pbd-whatsapp-skill-starter`
-(`pbd-whatsapp-maintainer`). Tu trabajo es diseñar, auditar y mantener el
+(`pbd-whatsapp-maintainer`), fijada al commit
+`241e4eeee4ceff4b8c2ef9f2da64beebe7e8e6c9`. Tu trabajo es diseñar, auditar y mantener el
 comportamiento conversacional de bots de WhatsApp con Prompt Behavior Design
 (PBD), bajo la filosofía: "El Prompt es Código".
 
@@ -124,6 +87,8 @@ CONTRATO DE DOCUMENTOS
   <fuentes_autorizadas>, <estados_conversacionales>, <flujos>, <fallbacks>,
   <transferencia_humana>, <uso_de_herramientas>, <memoria_y_contexto>,
   <formato_whatsapp>, <criterios_de_respuesta>, <ejemplos>, <autoverificacion>.
+- El XML ejecutable debe ser un único documento bien formado. Agrupa todas las
+  secciones dentro de una sola raíz `<sistema>...</sistema>`.
 - El master prompt no debe incluir notas de auditoría, secretos o afirmaciones
   de acciones ejecutadas si solo fueron planificadas.
 
@@ -285,6 +250,7 @@ def build_messages(
     integrations: list[dict] | None = None,
     skills: list[dict] | None = None,
     mode: str = "auto",
+    allow_constitution_change: bool = False,
 ) -> list[dict]:
     clean_instruction = (instruction or "").strip()
     if not clean_instruction:
@@ -335,6 +301,8 @@ Solicitud del usuario:
 Instrucciones de ejecución del agente PBD (OBLIGATORIAS):
 - Modo seleccionado: {clean_mode.upper()}
 - {mode_instructions}
+- La Constitución (01) debe conservarse sin cambios, salvo que la solicitud
+  incluya autorización constitucional explícita: {"SÍ" if allow_constitution_change else "NO"}.
 - Mantén IDs estables: CON-001.., US-001.., SPEC-001.., FLOW-001.., FB-001.., AC-001.., TEST-001..
 - CRÍTICO: REGLA DE COMPILACIÓN DEL MASTER PROMPT (04):
   El Master Prompt (04) NUNCA debe dejarse intacto cuando se agrega o modifica un requerimiento.
@@ -343,6 +311,7 @@ Instrucciones de ejecución del agente PBD (OBLIGATORIAS):
   2. `<flujos>`: Agregar o actualizar el `<flujo id="...">` detallando paso a paso cómo responder a la consulta del usuario (ej. cómo desglosar el menú según día de la semana y semana del mes usando el conocimiento oficial).
   3. `<criterios_de_respuesta>` y `<guardrails>`: Definir las reglas estrictas de fidelidad a la información oficial.
 - Devuelve los 4 documentos completos encapsulados en sus etiquetas correspondientes: <constitution_doc>, <specs_doc>, <test_suite_doc>, <master_prompt_doc>.
+- No omitas, recortes ni dejes sin cerrar ninguna de las cuatro etiquetas.
 - Si detectas una contradicción constitucional insalvable con la solicitud, devuelve obligatoriamente el reporte dentro de <blocked_change>...</blocked_change>.
 """.strip()
     return [
@@ -374,7 +343,7 @@ def safe_error(exc: Exception) -> str:
 async def _openai_compatible_chat(
     settings: PromptAssistantSettings,
     messages: list[dict],
-) -> str:
+) -> ModelResponse:
     from openai import AsyncOpenAI
 
     headers = {}
@@ -395,17 +364,18 @@ async def _openai_compatible_chat(
     }
     if config.PROMPT_ASSISTANT_MAX_TOKENS > 0:
         kwargs["max_tokens"] = config.PROMPT_ASSISTANT_MAX_TOKENS
-    try:
-        response = await client.chat.completions.create(**kwargs)
-    except Exception:
-        if "max_tokens" not in kwargs:
-            raise
-        kwargs.pop("max_tokens", None)
-        response = await client.chat.completions.create(**kwargs)
-    return response.choices[0].message.content or ""
+    response = await client.chat.completions.create(**kwargs)
+    choice = response.choices[0]
+    return ModelResponse(
+        text=choice.message.content or "",
+        finish_reason=getattr(choice, "finish_reason", None),
+    )
 
 
-async def _anthropic_chat(settings: PromptAssistantSettings, messages: list[dict]) -> str:
+async def _anthropic_chat(
+    settings: PromptAssistantSettings,
+    messages: list[dict],
+) -> ModelResponse:
     import httpx
 
     system = next((m["content"] for m in messages if m.get("role") == "system"), "")
@@ -433,10 +403,13 @@ async def _anthropic_chat(settings: PromptAssistantSettings, messages: list[dict
         )
     data = response.json()
     blocks = data.get("content") or []
-    return "\n".join(
-        block.get("text", "")
-        for block in blocks
-        if isinstance(block, dict) and block.get("type") == "text"
+    return ModelResponse(
+        text="\n".join(
+            block.get("text", "")
+            for block in blocks
+            if isinstance(block, dict) and block.get("type") == "text"
+        ),
+        finish_reason=data.get("stop_reason"),
     )
 
 
@@ -457,6 +430,7 @@ async def assist_prompt(
     api_key: str | None = None,
     base_url: str | None = None,
     model: str | None = None,
+    allow_constitution_change: bool = False,
 ) -> dict:
     settings = resolve_settings(
         provider=provider,
@@ -475,18 +449,31 @@ async def assist_prompt(
         integrations=integrations or [],
         skills=skills or [],
         mode=mode,
+        allow_constitution_change=allow_constitution_change,
     )
     if settings.provider == "anthropic":
-        raw = await _anthropic_chat(settings, messages)
+        model_response = await _anthropic_chat(settings, messages)
     else:
-        raw = await _openai_compatible_chat(settings, messages)
+        model_response = await _openai_compatible_chat(settings, messages)
+
+    if isinstance(model_response, str):
+        raw = model_response
+        finish_reason = None
+    else:
+        raw = model_response.text
+        finish_reason = model_response.finish_reason
+
+    if (finish_reason or "").lower() in {"length", "max_tokens"}:
+        raise PromptAssistantError(
+            "La respuesta del modelo quedó truncada por límite de tokens. "
+            "No se aplicó ni publicó ningún documento."
+        )
 
     import re
 
     def parse_pbd_response(text: str) -> tuple[bool, str, str, str, str, str]:
         """
-        Parses LLM output into (is_blocked, blocked_reason, constitution, specs, test_suite, prompt)
-        using multi-alias tags, markdown section fallbacks, and unclosed tag recovery.
+        Parse the exact PBD response contract. Incomplete output fails closed.
         """
         clean_raw = (text or "").strip()
         
@@ -501,80 +488,26 @@ async def assist_prompt(
         if "BLOCKED CHANGE - MASTER PROMPT NOT MODIFIED" in clean_raw:
             return True, clean_prompt_text(clean_raw), "", "", "", ""
 
-        def extract_section(tag_pattern: str, header_pattern: str, next_patterns: str) -> str:
-            # Try closed tag
-            closed = re.search(
-                rf"<({tag_pattern})>(.*?)</\1>",
+        documents: list[str] = []
+        for tag in (
+            "constitution_doc",
+            "specs_doc",
+            "test_suite_doc",
+            "master_prompt_doc",
+        ):
+            matches = re.findall(
+                rf"<{tag}>(.*?)</{tag}>",
                 clean_raw,
                 re.DOTALL | re.IGNORECASE,
             )
-            if closed and closed.group(2).strip():
-                return clean_prompt_text(closed.group(2).strip())
-
-            # Try unclosed tag
-            unclosed = re.search(
-                rf"<({tag_pattern})>(.*?)(?=(?:<{next_patterns}>)|\Z)",
-                clean_raw,
-                re.DOTALL | re.IGNORECASE,
-            )
-            if unclosed and unclosed.group(2).strip():
-                return clean_prompt_text(unclosed.group(2).strip())
-
-            # Try markdown header
-            if header_pattern:
-                md_match = re.search(
-                    rf"(?=(?:#+|##)\s*{header_pattern}\b)(.*?)(?=(?:#+|##)\s*(?:{next_patterns})|\Z)",
-                    clean_raw,
-                    re.DOTALL | re.IGNORECASE,
+            if len(matches) != 1 or not matches[0].strip():
+                raise PromptAssistantError(
+                    "El modelo no devolvió los cuatro documentos completos con "
+                    "sus etiquetas obligatorias. No se aplicó ningún cambio."
                 )
-                if md_match and md_match.group(1).strip():
-                    return clean_prompt_text(md_match.group(1).strip())
-            return ""
+            documents.append(clean_prompt_text(matches[0].strip()))
 
-        const = extract_section(
-            tag_pattern=r"constitution_doc|constitution|01_constitution|constitution_md|acta_constitucion",
-            header_pattern=r"01|01\s*[-—]",
-            next_patterns=r"specs_doc|specs|02_specs|test_suite_doc|master_prompt_doc|02|03|04",
-        ) or (pbd_constitution or "").strip()
-
-        specs_doc = extract_section(
-            tag_pattern=r"specs_doc|specs|behavior_specs_doc|behavior_specs|02_specs|specs_md|especificaciones",
-            header_pattern=r"02|02\s*[-—]",
-            next_patterns=r"test_suite_doc|test_suite|03_test_suite|master_prompt_doc|03|04",
-        ) or (pbd_specs or "").strip()
-
-        tests_doc = extract_section(
-            tag_pattern=r"test_suite_doc|test_suite|tests_doc|tests|03_test_suite|test_suite_md|suite_pruebas",
-            header_pattern=r"03|03\s*[-—]",
-            next_patterns=r"master_prompt_doc|master_prompt|04_master_prompt|04",
-        ) or (pbd_test_suite or "").strip()
-
-        # Master prompt extraction
-        master_doc = extract_section(
-            tag_pattern=r"master_prompt_doc|master_prompt|prompt_doc|master|04_master_prompt|master_prompt_md|master_doc|prompt",
-            header_pattern=r"04|04\s*[-—]|master\s*prompt",
-            next_patterns=r"constitution_doc|specs_doc",
-        )
-
-        # If not extracted via section, search for XML root tags
-        if not master_doc:
-            xml_match = re.search(
-                r"(<sistema[\s\S]*</sistema>|<rol[\s\S]*</autoverificacion>|<rol[\s\S]*</ejemplos>)",
-                clean_raw,
-                re.DOTALL | re.IGNORECASE,
-            )
-            if xml_match:
-                master_doc = clean_prompt_text(xml_match.group(1).strip())
-
-        # If still empty and no other sections found, use entire clean_raw
-        if not master_doc and not const and not specs_doc:
-            master_doc = clean_prompt_text(clean_raw)
-
-        # Fallback to current_prompt if all else fails
-        if not master_doc:
-            master_doc = (current_prompt or "").strip()
-
-        return False, "", const, specs_doc, tests_doc, master_doc
+        return False, "", *documents
 
     is_blocked, blocked_reason, constitution, specs, test_suite, prompt = parse_pbd_response(raw)
 
@@ -593,22 +526,29 @@ async def assist_prompt(
             "model": settings.model,
         }
 
-    if not prompt:
-        prompt = (current_prompt or "").strip()
-
-    if not prompt and not constitution and not specs:
-        raise PromptAssistantError("El modelo no devolvió un prompt ejecutable.")
+    report = pbd_validation.validate_pbd_bundle(
+        constitution,
+        specs,
+        test_suite,
+        prompt,
+        previous_constitution=pbd_constitution,
+        previous_specs=pbd_specs,
+        previous_test_suite=pbd_test_suite,
+        allow_constitution_change=allow_constitution_change,
+        for_publish=False,
+    )
+    if not report.valid:
+        raise PromptAssistantError(pbd_validation.validation_error_message(report))
 
     return {
         "ok": True,
         "blocked": False,
-        "prompt": prompt,
+        "prompt": report.master_xml,
         "pbd_constitution": constitution,
         "pbd_specs": specs,
         "pbd_test_suite": test_suite,
         "provider": settings.provider,
         "provider_label": settings.provider_label,
         "model": settings.model,
+        "validation": report.to_dict(),
     }
-
-

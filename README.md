@@ -86,7 +86,7 @@ PROMPT_ASSISTANT_PROVIDER=openrouter
 PROMPT_ASSISTANT_API_KEY=
 PROMPT_ASSISTANT_BASE_URL=https://openrouter.ai/api/v1
 PROMPT_ASSISTANT_MODEL=openrouter/free
-PROMPT_ASSISTANT_MAX_TOKENS=2500
+PROMPT_ASSISTANT_MAX_TOKENS=16000
 ```
 
 Tambien puedes usar Claude en ese cuadro:
@@ -99,6 +99,14 @@ ANTHROPIC_MODEL=claude-3-5-sonnet-latest
 
 Las claves pueden vivir en Easypanel o pegarse temporalmente en el formulario;
 no se guardan en GitHub.
+
+El asistente adapta la metodología `pbd-whatsapp-maintainer` fijada al commit
+`241e4eeee4ceff4b8c2ef9f2da64beebe7e8e6c9`. La generación crea únicamente un
+borrador: exige los cuatro documentos completos, IDs PBD estables, casos
+positivo/negativo/regresión y un Master Prompt XML bien formado. Publicar es una
+acción posterior y explícita; los paquetes incompletos, truncados o con datos
+`TBD` no se activan. El ZIP incluye `manifest.json` con la versión metodológica y
+el resultado de validación.
 
 ## 2. Personaliza el bot
 

@@ -1,4 +1,5 @@
 import pytest
+import json
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
@@ -12,6 +13,12 @@ sys.modules.setdefault("asyncpg", types.SimpleNamespace(Pool=object))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
 
 from app import calendar_client, escalations
+from tests.test_pbd_validation import (
+    VALID_CONSTITUTION,
+    VALID_MASTER,
+    VALID_SPECS,
+    VALID_TESTS,
+)
 
 # Clean sys.modules after module loading
 sys.modules.pop("httpx", None)
@@ -184,7 +191,9 @@ class TestClientPanelFeatures:
         assert "Bot 1" in html_body
         assert "Agente PBD con IA" in html_body
         assert "PBD" in html_body
-        assert "Publicar y Guardar Todos los Documentos PBD" in html_body
+        assert "Validar y publicar comportamiento" in html_body
+        assert "Publicar automáticamente en producción" not in html_body
+        assert "Autorizar cambio constitucional" in html_body
 
         assert "Constitucion actual" in html_body
         assert "Especificaciones actuales" in html_body
@@ -360,7 +369,7 @@ class TestClientPanelFeatures:
     @patch("app.db.list_bot_skills")
     @patch("app.prompt_assistant.assist_prompt")
     @patch("app.db.publish_bot_prompt")
-    async def test_client_prompt_assist_auto_publish(
+    async def test_client_prompt_assist_never_auto_publishes(
         self,
         mock_publish,
         mock_assist,
@@ -386,10 +395,11 @@ class TestClientPanelFeatures:
         mock_assist.return_value = {
             "ok": True,
             "blocked": False,
-            "prompt": "<rol>Bot Test</rol>",
-            "pbd_constitution": "CON-001",
-            "pbd_specs": "SPEC-001",
-            "pbd_test_suite": "TEST-001",
+            "prompt": VALID_MASTER,
+            "pbd_constitution": VALID_CONSTITUTION,
+            "pbd_specs": VALID_SPECS,
+            "pbd_test_suite": VALID_TESTS,
+            "validation": {"valid": True, "errors": [], "warnings": []},
         }
 
         response = await client.client_prompt_assist(
@@ -403,8 +413,70 @@ class TestClientPanelFeatures:
         import json
         data = json.loads(response.body.decode("utf-8"))
         assert data["ok"] is True
-        assert data["published"] is True
-        mock_publish.assert_called_once_with(1, "<rol>Bot Test</rol>", "CON-001", "SPEC-001", "TEST-001")
+        assert data["published"] is False
+        assert data["publication_requires_review"] is True
+        mock_publish.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.publish_bot_prompt")
+    async def test_client_prompt_save_validates_before_publish(
+        self, mock_publish, mock_get_bot
+    ):
+        from app import client
+
+        class MockRequest:
+            session = {
+                "user": "client@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+                "user_id": 5,
+            }
+
+        mock_get_bot.return_value = {"id": 1, "client_id": 44, "status": "active"}
+        response = await client.client_prompt_save(
+            MockRequest(),
+            bot_id=1,
+            prompt=VALID_MASTER,
+            pbd_constitution=VALID_CONSTITUTION,
+            pbd_specs=VALID_SPECS,
+            pbd_test_suite=VALID_TESTS,
+        )
+
+        assert response.status_code == 302
+        published_prompt = mock_publish.await_args.args[1]
+        assert published_prompt.startswith("<master_prompt>")
+        assert "```" not in published_prompt
+
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.publish_bot_prompt")
+    async def test_client_prompt_save_rejects_invalid_bundle(
+        self, mock_publish, mock_get_bot
+    ):
+        from app import client
+
+        class MockRequest:
+            session = {
+                "user": "client@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+                "user_id": 5,
+            }
+
+        mock_get_bot.return_value = {"id": 1, "client_id": 44, "status": "active"}
+        response = await client.client_prompt_save(
+            MockRequest(),
+            bot_id=1,
+            prompt=VALID_MASTER,
+            pbd_constitution=VALID_CONSTITUTION,
+            pbd_specs="",
+            pbd_test_suite=VALID_TESTS,
+        )
+
+        assert response.status_code == 302
+        assert "saved=err_" in response.headers["location"]
+        mock_publish.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("app.db.get_bot")
@@ -425,10 +497,13 @@ class TestClientPanelFeatures:
 
         mock_get_bot.return_value = {"id": 1, "name": "Dental Smile", "client_id": 44}
         mock_prompt.return_value = {
-            "content": "<rol>Master</rol>",
-            "pbd_constitution": "# 01 - Const",
-            "pbd_specs": "# 02 - Specs",
-            "pbd_test_suite": "# 03 - Tests",
+            "id": 9,
+            "version": 4,
+            "status": "active",
+            "content": VALID_MASTER,
+            "pbd_constitution": VALID_CONSTITUTION,
+            "pbd_specs": VALID_SPECS,
+            "pbd_test_suite": VALID_TESTS,
         }
 
         response = await client.client_prompt_pbd_export(MockRequest(), bot_id=1)
@@ -443,7 +518,38 @@ class TestClientPanelFeatures:
             assert "docs/pbd/03-test-suite.md" in names
             assert "docs/pbd/04-master-prompt.md" in names
             assert "prompts/master.xml" in names
-            assert z.read("docs/pbd/01-constitution.md").decode("utf-8") == "# 01 - Const"
+            assert "manifest.json" in names
+            assert z.read("docs/pbd/01-constitution.md").decode("utf-8") == VALID_CONSTITUTION.strip()
+            master_xml = z.read("prompts/master.xml").decode("utf-8")
+            assert master_xml.startswith("<master_prompt>")
+            assert "```" not in master_xml
+            manifest = json.loads(z.read("manifest.json").decode("utf-8"))
+            assert manifest["validation"]["valid"] is True
+            assert manifest["methodology"]["commit"] == "241e4eeee4ceff4b8c2ef9f2da64beebe7e8e6c9"
 
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.get_active_bot_prompt")
+    async def test_client_prompt_pbd_export_rejects_missing_documents(self, mock_prompt, mock_get_bot):
+        from app import client
 
+        class MockRequest:
+            session = {
+                "user": "client@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+                "user_id": 5,
+            }
 
+        mock_get_bot.return_value = {"id": 1, "name": "Dental Smile", "client_id": 44}
+        mock_prompt.return_value = {
+            "content": VALID_MASTER,
+            "pbd_constitution": VALID_CONSTITUTION,
+            "pbd_specs": "",
+            "pbd_test_suite": VALID_TESTS,
+        }
+
+        response = await client.client_prompt_pbd_export(MockRequest(), bot_id=1)
+
+        assert response.status_code == 409
+        assert "incompleto" in response.body.decode("utf-8").lower()

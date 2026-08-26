@@ -7,6 +7,12 @@ from unittest.mock import patch
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
 
 from app import prompt_assistant
+from tests.test_pbd_validation import (
+    VALID_CONSTITUTION,
+    VALID_MASTER,
+    VALID_SPECS,
+    VALID_TESTS,
+)
 
 
 class PromptAssistantTests(unittest.TestCase):
@@ -43,6 +49,8 @@ class PromptAssistantTests(unittest.TestCase):
 
         self.assertIn("Demo Bot", rendered)
         self.assertIn("pbd-whatsapp-maintainer", rendered)
+        self.assertIn(prompt_assistant.PBD_SKILL_COMMIT, rendered)
+        self.assertIn("<sistema>", rendered)
         self.assertIn("MODO AUTO", rendered)
         self.assertIn("Prompt actual", rendered)
         self.assertIn("Limpieza dental", rendered)
@@ -53,7 +61,7 @@ class PromptAssistantTests(unittest.TestCase):
 
         self.assertEqual(cleaned, "Prompt listo")
 
-    def test_assist_prompt_preserves_existing_pbd_docs_when_model_omits_them(self):
+    def test_assist_prompt_rejects_missing_documents(self):
         async def fake_chat(settings, messages):
             return """
 <master_prompt_doc>
@@ -72,21 +80,117 @@ class PromptAssistantTests(unittest.TestCase):
         with patch.object(prompt_assistant, "resolve_settings", return_value=settings), patch.object(
             prompt_assistant, "_openai_compatible_chat", side_effect=fake_chat
         ):
+            with self.assertRaises(prompt_assistant.PromptAssistantError) as ctx:
+                asyncio.run(
+                    prompt_assistant.assist_prompt(
+                        bot={"name": "Demo Bot"},
+                        current_prompt=VALID_MASTER,
+                        pbd_constitution=VALID_CONSTITUTION,
+                        pbd_specs=VALID_SPECS,
+                        pbd_test_suite=VALID_TESTS,
+                        instruction="Actualiza solo el prompt maestro",
+                    )
+                )
+
+        self.assertIn("cuatro documentos completos", str(ctx.exception))
+
+    def test_assist_prompt_rejects_unclosed_master_prompt(self):
+        async def fake_chat(settings, messages):
+            return "<master_prompt_doc><master_prompt><rol>Sin cierre"
+
+        settings = prompt_assistant.PromptAssistantSettings(
+            provider="openai_compatible",
+            provider_label="Test",
+            api_key="key",
+            base_url="",
+            model="test-model",
+        )
+
+        with patch.object(prompt_assistant, "resolve_settings", return_value=settings), patch.object(
+            prompt_assistant, "_openai_compatible_chat", side_effect=fake_chat
+        ):
+            with self.assertRaises(prompt_assistant.PromptAssistantError):
+                asyncio.run(
+                    prompt_assistant.assist_prompt(
+                        bot={"name": "Demo Bot"},
+                        current_prompt=VALID_MASTER,
+                        pbd_constitution=VALID_CONSTITUTION,
+                        pbd_specs=VALID_SPECS,
+                        pbd_test_suite=VALID_TESTS,
+                        instruction="Actualiza el flujo",
+                    )
+                )
+
+    def test_assist_prompt_rejects_truncated_model_response(self):
+        async def fake_chat(settings, messages):
+            return prompt_assistant.ModelResponse(
+                text="<constitution_doc>incompleto",
+                finish_reason="length",
+            )
+
+        settings = prompt_assistant.PromptAssistantSettings(
+            provider="openai_compatible",
+            provider_label="Test",
+            api_key="key",
+            base_url="",
+            model="test-model",
+        )
+
+        with patch.object(prompt_assistant, "resolve_settings", return_value=settings), patch.object(
+            prompt_assistant, "_openai_compatible_chat", side_effect=fake_chat
+        ):
+            with self.assertRaises(prompt_assistant.PromptAssistantError) as ctx:
+                asyncio.run(
+                    prompt_assistant.assist_prompt(
+                        bot={"name": "Demo Bot"},
+                        current_prompt=VALID_MASTER,
+                        pbd_constitution=VALID_CONSTITUTION,
+                        pbd_specs=VALID_SPECS,
+                        pbd_test_suite=VALID_TESTS,
+                        instruction="Actualiza el flujo",
+                    )
+                )
+
+        self.assertIn("truncada", str(ctx.exception))
+
+    def test_assist_prompt_accepts_complete_valid_bundle(self):
+        async def fake_chat(settings, messages):
+            return "\n".join(
+                [
+                    f"<constitution_doc>{VALID_CONSTITUTION}</constitution_doc>",
+                    f"<specs_doc>{VALID_SPECS}</specs_doc>",
+                    f"<test_suite_doc>{VALID_TESTS}</test_suite_doc>",
+                    f"<master_prompt_doc>{VALID_MASTER}</master_prompt_doc>",
+                ]
+            )
+
+        settings = prompt_assistant.PromptAssistantSettings(
+            provider="openai_compatible",
+            provider_label="Test",
+            api_key="key",
+            base_url="",
+            model="test-model",
+        )
+
+        with patch.object(prompt_assistant, "resolve_settings", return_value=settings), patch.object(
+            prompt_assistant, "_openai_compatible_chat", side_effect=fake_chat
+        ):
             result = asyncio.run(
                 prompt_assistant.assist_prompt(
                     bot={"name": "Demo Bot"},
-                    current_prompt="Prompt actual",
-                    pbd_constitution="Constitucion existente",
-                    pbd_specs="Specs existentes",
-                    pbd_test_suite="Tests existentes",
-                    instruction="Actualiza solo el prompt maestro",
+                    current_prompt="",
+                    pbd_constitution="",
+                    pbd_specs="",
+                    pbd_test_suite="",
+                    instruction="Crea el bot",
+                    mode="bootstrap",
+                    allow_constitution_change=True,
                 )
             )
 
-        self.assertEqual(result["pbd_constitution"], "Constitucion existente")
-        self.assertEqual(result["pbd_specs"], "Specs existentes")
-        self.assertEqual(result["pbd_test_suite"], "Tests existentes")
-        self.assertIn("Nuevo prompt maestro", result["prompt"])
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["validation"]["valid"])
+        self.assertTrue(result["prompt"].startswith("<master_prompt>"))
 
     def test_assist_prompt_blocks_constitutional_contradictions(self):
         async def fake_chat(settings, messages):
