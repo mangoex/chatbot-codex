@@ -341,3 +341,95 @@ async def test_meta_provider_send_template_and_test_saves_message():
             "Hola prueba",
             bot_id=1,
         )
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_web_human_outbound_status_triggers_handoff_and_silences_bot():
+    """
+    Verifica que cuando un asesor humano escribe en WhatsApp Web, Meta envía un evento de status ('sent').
+    El sistema debe detectar que el mensaje no fue emitido por Asistto, activar el relevo humano
+    y silenciar al bot para los mensajes entrantes posteriores del cliente.
+    """
+    bot = MagicMock()
+    bot.id = 170
+    bot.name = "Mobi Muebles"
+    bot.status = "active"
+    bot.whatsapp_phone_number_id = "phone-170"
+    bot.whatsapp_access_token = "token-170"
+
+    # 1. Payload de webhook de Meta con status 'sent' para un mensaje enviado desde WhatsApp Web
+    status_payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "metadata": {"phone_number_id": "phone-170"},
+                            "statuses": [
+                                {
+                                    "id": "wamid.HUMAN_WEB_MSG_123",
+                                    "status": "sent",
+                                    "recipient_id": "5215512345678",
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    with patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=bot)), \
+         patch.object(main.db, "is_bot_sent_message", AsyncMock(return_value=False)), \
+         patch.object(main.db, "record_bot_sent_message", AsyncMock()) as mock_record_bot_msg, \
+         patch.object(main.db, "set_conversation_handoff_active", AsyncMock()) as mock_set_handoff, \
+         patch.object(main.db, "save_message", AsyncMock()) as mock_save, \
+         patch.object(main.escalations, "record_agent_initiated_escalation", AsyncMock()) as mock_record_esc, \
+         patch.object(main.follow_ups, "cancel", AsyncMock()) as mock_cancel_fu:
+
+        await main._process_message(status_payload)
+
+        # Se activó el relevo humano por intervención desde WhatsApp Web
+        mock_set_handoff.assert_awaited_once_with(170, "5215512345678")
+        mock_save.assert_awaited_once_with(
+            "5215512345678", "assistant", "[Mensaje del asesor desde WhatsApp Web/App]", bot_id=170
+        )
+        mock_record_esc.assert_awaited_once()
+        mock_cancel_fu.assert_awaited_once_with("5215512345678", 170)
+
+
+@pytest.mark.asyncio
+async def test_phrase_and_quote_keyword_detection_in_escalations():
+    """Verifica que palabras o frases con comillas/puntuación configuradas por el usuario activen la escalación."""
+    with patch("app.db.get_bot_skill", new_callable=AsyncMock) as mock_get_skill:
+        mock_get_skill.return_value = {
+            "enabled": True,
+            "config": {
+                "keywords": [
+                    "hablar con una persona",
+                    "queja",
+                    "uniformes",
+                    "camisas o playeras",
+                ]
+            }
+        }
+
+        # Caso 1: El usuario menciona 'queja'
+        result = await escalations.detect_reason(
+            user_text="Tengo una queja con mi entrega",
+            bot_reply="",
+            message_type="text",
+            bot_id=170,
+        )
+        assert result is not None
+        assert result[0] == "cliente_solicito_humano"
+
+        # Caso 2: El usuario menciona una frase de varias palabras 'camisas o playeras'
+        result2 = await escalations.detect_reason(
+            user_text="Me pueden dar información sobre camisas o playeras por favor?",
+            bot_reply="",
+            message_type="text",
+            bot_id=170,
+        )
+        assert result2 is not None
+        assert result2[0] == "cliente_solicito_humano"

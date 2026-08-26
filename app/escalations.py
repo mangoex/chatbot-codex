@@ -86,12 +86,23 @@ async def detect_reason(
             if skill and skill.get("enabled", True):
                 keywords = skill.get("config", {}).get("keywords", [])
                 if keywords:
-                    escaped_keywords = [r"\b" + re.escape(w.strip()) + r"\b" for w in keywords if w.strip()]
-                    if escaped_keywords and _match(escaped_keywords, ut):
-                        return (
-                            "cliente_solicito_humano",
-                            "Cliente activó palabra clave personalizada de escalado.",
-                        )
+                    clean_ut = ut.lower()
+                    for raw_kw in keywords:
+                        kw = raw_kw.strip().strip('"\'“”‘’').strip().lower()
+                        if not kw:
+                            continue
+                        if " " in kw:
+                            if kw in clean_ut:
+                                return (
+                                    "cliente_solicito_humano",
+                                    f"Cliente activó palabra clave personalizada de escalado: '{kw[:60]}'.",
+                                )
+                        else:
+                            if re.search(r"\b" + re.escape(kw) + r"\b", clean_ut, re.IGNORECASE):
+                                return (
+                                    "cliente_solicito_humano",
+                                    f"Cliente activó palabra clave personalizada de escalado: '{kw}'.",
+                                )
         except Exception:
             log.exception("Error comprobando reglas de escalado personalizadas del bot %s", bot_id)
 

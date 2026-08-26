@@ -143,12 +143,51 @@ def extract_message(payload: dict) -> dict | None:
             interactive = msg.get("interactive", {}) or {}
             reply = interactive.get("button_reply") or interactive.get("list_reply") or {}
             out["text"] = reply.get("title", "")
-        elif mtype == "location":
+        if mtype == "location":
             loc = msg.get("location", {}) or {}
             out["text"] = f"[ubicación lat={loc.get('latitude')} lon={loc.get('longitude')}]"
+        
+        # Detectar eco saliente enviado desde WhatsApp Web/App
+        display_phone = (metadata.get("display_phone_number") or "").replace("+", "").replace(" ", "").replace("-", "")
+        msg_from = (msg.get("from") or "").replace("+", "")
+        if display_phone and (msg_from == display_phone or msg_from == metadata.get("phone_number_id")):
+            out["is_echo"] = True
+            out["recipient_id"] = msg.get("recipient_id") or msg.get("to") or ""
+
         return out
     except (KeyError, IndexError, TypeError):
         return None
+
+
+def extract_statuses(payload: dict) -> list[dict]:
+    """
+    Extrae eventos de estado (statuses) del webhook de Meta.
+    Devuelve lista de diccionarios con info de entrega/envío.
+    """
+    out = []
+    try:
+        entry = payload["entry"][0]
+        change = entry["changes"][0]
+        value = change["value"]
+        metadata = value.get("metadata", {}) or {}
+        phone_id = metadata.get("phone_number_id", "")
+        statuses = value.get("statuses") or []
+        for s in statuses:
+            conv = s.get("conversation", {}) or {}
+            origin = conv.get("origin", {}) or {}
+            rec_id = s.get("recipient_id") or ""
+            if rec_id:
+                out.append({
+                    "message_id": s.get("id", ""),
+                    "status": s.get("status", ""),
+                    "recipient_id": rec_id,
+                    "phone_number_id": phone_id,
+                    "timestamp": s.get("timestamp"),
+                    "conversation_origin": origin.get("type", ""),
+                })
+    except (KeyError, IndexError, TypeError):
+        pass
+    return out
 
 
 # Alias retrocompatible — solo devuelve mensajes de texto

@@ -335,12 +335,16 @@ async def _send_and_track(
     reply = reply_safety.polish(reply, history, user_text=user_text, bot_name=bot.name)
     log.info("Sending polished reply to %s (%d chars)", wa_id, len(reply))
     await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
-    await whatsapp_client.send_text(
+    res = await whatsapp_client.send_text(
         wa_id,
         reply,
         phone_number_id=bot.whatsapp_phone_number_id,
         access_token=bot.whatsapp_access_token,
     )
+    if isinstance(res, dict) and res.get("messages"):
+        for m in res["messages"]:
+            if m.get("id"):
+                await db.record_bot_sent_message(m["id"], bot.id)
     if scheduled:
         await db.upsert_lead(
             wa_id,
@@ -378,8 +382,55 @@ _processing_message_ids = set()
 
 
 async def _process_message(payload: dict) -> None:
+    # 1. Procesar eventos de estado (statuses) para detectar mensajes salientes de asesores en WhatsApp Web/App
+    try:
+        statuses = whatsapp_client.extract_statuses(payload)
+        if statuses:
+            for st in statuses:
+                if st.get("status") in ("sent", "delivered"):
+                    msg_id = st.get("message_id")
+                    wa_id = st.get("recipient_id")
+                    phone_id = st.get("phone_number_id")
+                    if not wa_id or not msg_id:
+                        continue
+                    # Si el mensaje no fue emitido por Asistto, proviene de un asesor en WhatsApp Web / Mobile
+                    if not await db.is_bot_sent_message(msg_id):
+                        bot = await bots.resolve_by_phone_number_id(phone_id)
+                        if bot:
+                            await db.record_bot_sent_message(msg_id, bot.id)
+                            await db.set_conversation_handoff_active(bot.id, wa_id)
+                            await db.save_message(wa_id, "assistant", "[Mensaje del asesor desde WhatsApp Web/App]", bot_id=bot.id)
+                            await escalations.record_agent_initiated_escalation(
+                                wa_id, "[Asesor escribió desde WhatsApp Web/App]", [], bot_id=bot.id
+                            )
+                            await follow_ups.cancel(wa_id, bot.id)
+                            log.info(
+                                "Intervención/inicio de asesor en WhatsApp Web/App detectado (wa_id=%s, bot_id=%s). Relevo activado e IA silenciada.",
+                                wa_id, bot.id
+                            )
+    except Exception as exc:
+        log.warning("Error comprobando eventos de estado para intervención de asesor: %s", exc)
+
     msg = whatsapp_client.extract_message(payload)
     if msg is None:
+        return
+
+    # Si es un eco de mensaje saliente enviado desde WhatsApp Web/App
+    if msg.get("is_echo"):
+        rec_id = msg.get("recipient_id")
+        if rec_id:
+            try:
+                bot = await bots.resolve_by_phone_number_id(msg.get("phone_number_id"))
+                if bot:
+                    await db.set_conversation_handoff_active(bot.id, rec_id)
+                    await db.save_message(rec_id, "assistant", msg.get("text") or "[Mensaje del asesor desde WhatsApp Web/App]", bot_id=bot.id)
+                    await escalations.record_agent_initiated_escalation(
+                        rec_id, msg.get("text") or "[Asesor escribió desde WhatsApp Web/App]", [], bot_id=bot.id
+                    )
+                    await follow_ups.cancel(rec_id, bot.id)
+                    log.info("Mensaje saliente de WhatsApp Web/App (echo) detectado para bot %s y %s. Relevo activado.", bot.id, rec_id)
+            except Exception as exc:
+                log.warning("Error procesando eco de mensaje de asesor: %s", exc)
         return
 
     msg_id = msg["message_id"]

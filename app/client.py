@@ -4127,10 +4127,10 @@ async def client_escalation_save(
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
     
-    # Process comma-separated or newline-separated keywords
+    # Process comma-separated, semicolon-separated or newline-separated keywords
     words_list = []
-    for chunk in re.split(r"[,\n]", keywords):
-        clean = chunk.strip().lower()
+    for chunk in re.split(r"[,\n;]", keywords):
+        clean = chunk.strip().strip('"\'“”‘’').strip().lower()
         if clean:
             words_list.append(clean)
             
