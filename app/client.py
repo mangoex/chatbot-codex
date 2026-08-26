@@ -3340,9 +3340,15 @@ async def client_app(
             <p class="muted-text" style="margin-top:4px;">Si el usuario escribe cualquiera de estas frases, el bot registrará la escalación y se marcará en color rojo como 'pendiente' en el panel.</p>
           </div>
           
-          <div class="checkbox-group">
+          <div class="checkbox-group" style="margin-bottom:14px;">
             <input type="checkbox" name="escalate_on_media" id="escalateOnMedia" {"checked" if escalate_config.get("escalate_on_media", True) else ""}>
             <label for="escalateOnMedia" style="margin:0; font-weight:500; cursor:pointer;">Escalar automáticamente si el cliente envía un archivo (imagen, audio, pdf, etc.)</label>
+          </div>
+
+          <div class="checkbox-group" style="margin-bottom:18px;">
+            <input type="checkbox" name="escalate_when_agent_initiates" id="escalateWhenAgentInitiates" {"checked" if escalate_config.get("escalate_when_agent_initiates", False) else ""}>
+            <label for="escalateWhenAgentInitiates" style="margin:0; font-weight:500; cursor:pointer;">Escalar cuando yo inicio la conversación</label>
+            <p class="muted-text" style="margin:4px 0 0 24px; font-size:12px;">Si tú o tu equipo inician la conversación con un cliente, prospecto o colaborador, el bot no participará cuando ellos respondan.</p>
           </div>
           
           <div style="margin-top:20px;">
@@ -4116,6 +4122,7 @@ async def client_escalation_save(
     enabled: str | None = Form(None),
     keywords: str = Form(""),
     escalate_on_media: str | None = Form(None),
+    escalate_when_agent_initiates: str | None = Form(None),
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
@@ -4129,7 +4136,8 @@ async def client_escalation_save(
             
     escalation_config = {
         "keywords": words_list,
-        "escalate_on_media": escalate_on_media == "on"
+        "escalate_on_media": escalate_on_media == "on",
+        "escalate_when_agent_initiates": escalate_when_agent_initiates == "on",
     }
     
     await db.upsert_bot_skill(

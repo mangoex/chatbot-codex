@@ -215,3 +215,54 @@ async def record_if_escalated(
     new_id = await db.create_escalation(data)
     log.info("Escalation %d CREADA (wa_id=%s, reason=%s)", new_id, wa_id, reason_code)
     return new_id
+
+
+async def record_agent_initiated_escalation(
+    wa_id: str,
+    user_text: str,
+    history: list[dict],
+    bot_id: int | None = None,
+    media_type: str | None = None,
+) -> int | None:
+    """Registra o actualiza la escalación cuando el asesor/negocio inició la conversación."""
+    if bot_id is None:
+        log.warning("Escalation ignored for %s because bot_id is missing", wa_id)
+        return None
+
+    reason_code = "conversacion_iniciada_por_agente"
+    reason_detail = "Conversación iniciada por el asesor/negocio. El bot no participa para mantener atención humana directa."
+    customer = _extract_customer_data(history + [{"role": "user", "content": user_text}])
+    excerpt = _build_excerpt(history, user_text, "[Atención Humana Directa]")
+    summary = (user_text[:300] + "...") if len(user_text) > 300 else user_text
+
+    data = {
+        "wa_id": wa_id,
+        "bot_id": bot_id,
+        **customer,
+        "issue_summary": summary,
+        "reason": reason_code,
+        "reason_detail": reason_detail,
+        "last_media_type": media_type,
+        "conversation_excerpt": excerpt,
+    }
+
+    existing = await db.find_pending_escalation(wa_id, bot_id)
+    if existing:
+        bump = {
+            **data,
+            "media_count_delta": 1 if media_type else 0,
+        }
+        for k in ("customer_name", "city", "product", "purchase_date"):
+            if not data.get(k) and existing.get(k):
+                bump[k] = None
+            elif data.get(k):
+                bump[k] = data[k]
+        await db.bump_escalation(existing["id"], bump)
+        log.info("Escalation %d actualizada por inicio de asesor (wa_id=%s)", existing["id"], wa_id)
+        return existing["id"]
+
+    data["media_count"] = 1 if media_type else 0
+    new_id = await db.create_escalation(data)
+    log.info("Escalation %d CREADA por inicio de asesor (wa_id=%s)", new_id, wa_id)
+    return new_id
+

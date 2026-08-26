@@ -559,6 +559,29 @@ async def get_history(wa_id: str, limit: int, bot_id: int | None = None) -> list
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
 
+async def is_conversation_initiated_by_agent(bot_id: int | None, wa_id: str) -> bool:
+    """Devuelve True si el primer mensaje registrado en la conversacion fue enviado por el asistente/asesor."""
+    if _pool is None:
+        return False
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT role FROM conversations
+            WHERE wa_id = $1
+              AND (
+                $2::bigint IS NULL
+                OR bot_id = $2
+                OR ($2 = 1 AND bot_id IS NULL)
+              )
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1
+            """,
+            wa_id,
+            bot_id,
+        )
+    return bool(row and row["role"] == "assistant")
+
+
 async def list_conversation_threads(limit: int = 100, bot_id: int | None = None) -> list[dict]:
     """Lista conversaciones agrupadas por wa_id con ultimo mensaje y metadata de lead."""
     async with _pool.acquire() as conn:
@@ -2115,6 +2138,8 @@ async def list_bot_skills(bot_id: int) -> list[dict]:
 
 
 async def get_bot_skill(bot_id: int, skill_type: str) -> dict | None:
+    if _pool is None:
+        return None
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """

@@ -469,12 +469,33 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
 
     history = await db.get_history(wa_id, config.HISTORY_WINDOW, bot_id=bot.id)
 
+    # Comprobar regla estricta: Escalar cuando yo inicio la conversación
+    escalate_when_agent_initiates = False
+    try:
+        escalate_skill = await db.get_bot_skill(bot.id, "escalation")
+        escalate_config = (escalate_skill.get("config") or {}) if escalate_skill else {}
+        escalate_enabled = escalate_skill.get("enabled", True) if escalate_skill else True
+        escalate_when_agent_initiates = (
+            escalate_enabled and bool(escalate_config.get("escalate_when_agent_initiates", False))
+        )
+    except Exception:
+        pass
+
+
     # Caso A: media entrante (audios se transcriben; imágenes/comprobantes u otros se delegan).
     if media_type:
         if media_type in ("audio", "voice"):
             if await db.is_chatwoot_handoff_active(bot.id, wa_id):
                 await db.save_message(wa_id, "user", "[Nota de voz/Audio]", bot_id=bot.id)
                 log.info("Relevo humano activo para bot %s y %s; IA en silencio ante audio.", bot.id, wa_id)
+                return
+            if escalate_when_agent_initiates and await db.is_conversation_initiated_by_agent(bot.id, wa_id):
+                await db.save_message(wa_id, "user", "[Nota de voz/Audio]", bot_id=bot.id)
+                await db.set_conversation_handoff_active(bot.id, wa_id)
+                await escalations.record_agent_initiated_escalation(
+                    wa_id, "[Nota de voz/Audio]", history, bot_id=bot.id, media_type=media_type
+                )
+                log.info("Escalado estricto por inicio de asesor (audio) para bot %s y %s; IA en silencio.", bot.id, wa_id)
                 return
             if bot.status == "paused":
                 await db.save_message(wa_id, "user", "[Nota de voz/Audio]", bot_id=bot.id)
@@ -519,6 +540,13 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
             if await db.is_chatwoot_handoff_active(bot.id, wa_id):
                 log.info("Relevo humano activo para bot %s y %s; IA en silencio.", bot.id, wa_id)
+                return
+            if escalate_when_agent_initiates and await db.is_conversation_initiated_by_agent(bot.id, wa_id):
+                await db.set_conversation_handoff_active(bot.id, wa_id)
+                await escalations.record_agent_initiated_escalation(
+                    wa_id, saved_user_msg, history, bot_id=bot.id, media_type=media_type
+                )
+                log.info("Escalado estricto por inicio de asesor (media) para bot %s y %s; IA en silencio.", bot.id, wa_id)
                 return
             if bot.status == "paused":
                 log.info("Bot %s esta pausado. Ignorando respuesta a media de %s.", bot.id, wa_id)
@@ -570,9 +598,18 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         log.info("Relevo humano activo para bot %s y %s; IA en silencio.", bot.id, wa_id)
         return
 
+    if escalate_when_agent_initiates and await db.is_conversation_initiated_by_agent(bot.id, wa_id):
+        await db.set_conversation_handoff_active(bot.id, wa_id)
+        await escalations.record_agent_initiated_escalation(
+            wa_id, user_text, history, bot_id=bot.id
+        )
+        log.info("Escalado estricto por inicio de asesor (texto) para bot %s y %s; IA en silencio.", bot.id, wa_id)
+        return
+
     if bot.status == "paused":
         log.info("Bot %s esta pausado. Mensaje de %s guardado, no se responde.", bot.id, wa_id)
         return
+
         
     current_history = history + [{"role": "user", "content": user_text}]
 

@@ -41,9 +41,14 @@ sys.modules.pop("fastapi.responses", None)
 
 
 class PublicPagesTests(unittest.TestCase):
+    def _get_content(self, response):
+        if hasattr(response, "body"):
+            return response.body.decode("utf-8") if isinstance(response.body, bytes) else str(response.body)
+        return getattr(response, "content", str(response))
+
     def test_privacy_page_identifies_app_and_business_owner(self):
         response = public_pages._page("/privacy")
-        content = response.content
+        content = self._get_content(response)
 
         self.assertIn("Asistto by Humanio", content)
         self.assertIn("Asistto-chatbot", content)
@@ -52,10 +57,14 @@ class PublicPagesTests(unittest.TestCase):
         self.assertIn("contacto@humanio.digital", content)
 
     def test_public_pages_accept_head_for_review_tools(self):
-        routes = {route["path"]: route["methods"] for route in public_pages.router.routes}
+        routes = {}
+        for route in public_pages.router.routes:
+            path = getattr(route, "path", None) or route.get("path")
+            methods = getattr(route, "methods", None) or route.get("methods")
+            routes[path] = set(methods)
         for path in ("/", "/privacy", "/terms", "/support", "/data-deletion", "/ai-data-policy"):
             with self.subTest(path=path):
-                self.assertEqual(routes[path], ("GET", "HEAD"))
+                self.assertEqual(routes[path], {"GET", "HEAD"})
 
     def test_landing_page_content(self):
         # We can call the landing_page endpoint directly by passing a dummy request
@@ -63,9 +72,10 @@ class PublicPagesTests(unittest.TestCase):
             pass
         import asyncio
         response = asyncio.run(public_pages.landing_page(DummyRequest()))
-        self.assertIn("Asistto", response.content)
-        self.assertIn("Meta Tech Provider", response.content)
-        self.assertIn("Google Calendar", response.content)
+        content = self._get_content(response)
+        self.assertIn("Asistto", content)
+        self.assertIn("Meta Tech Provider", content)
+        self.assertIn("Google Calendar", content)
 
 
 if __name__ == "__main__":

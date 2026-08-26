@@ -339,6 +339,11 @@ async def send_test_message(
         language_code=language_code,
     )
     result = await graph_post(f"{phone_number_id}/messages", token, payload)
+    try:
+        saved_text = body_text or f"[Plantilla enviada: {template_name}]"
+        await db.save_message(_clean(to_wa_id), "assistant", saved_text, bot_id=bot_id)
+    except Exception as exc:
+        log.warning("No se pudo registrar mensaje de prueba en conversaciones: %s", exc)
     return {
         "phone_number_id": phone_number_id,
         "to": _clean(to_wa_id),
@@ -557,6 +562,13 @@ async def send_template_message(
         payload["template"]["components"] = components
 
     result = await graph_post(f"{phone_number_id}/messages", token, payload)
+    try:
+        saved_text = f"[Plantilla enviada: {template_name}]"
+        if parameters:
+            saved_text += f" ({', '.join(str(p) for p in parameters)})"
+        await db.save_message(to, "assistant", saved_text, bot_id=bot_id)
+    except Exception as exc:
+        log.warning("No se pudo registrar mensaje de plantilla en conversaciones: %s", exc)
     return {
         "phone_number_id": phone_number_id,
         "to": to,
