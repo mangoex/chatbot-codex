@@ -147,10 +147,8 @@ async def receive_webhook(request: Request, bg: BackgroundTasks):
         log.warning("Firma invalida de webhook.")
         raise HTTPException(status_code=403, detail="Invalid signature")
     payload = await request.json()
-    # A native-human echo is a durable control boundary: persist it before ACK
-    # so a database failure receives Meta's normal retry instead of losing the
-    # handoff. Customer work remains asynchronous to keep webhook ACKs fast.
-    if whatsapp_client.extract_human_message_echoes(payload):
+    # Ecos e intervenciones de asesor: persistir antes de ACK para asegurar relevo humano durable
+    if whatsapp_client.extract_human_message_echoes(payload) or whatsapp_client.extract_statuses(payload):
         await _process_human_message_echoes(payload)
     bg.add_task(_process_inbound_messages_safe, payload)
     return {"status": "received"}
@@ -569,6 +567,24 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
     # El usuario escribió → cancelar cualquier follow-up pendiente
     await follow_ups.cancel(wa_id, bot.id)
 
+    # 1. Comprobar si el relevo humano está activo (por Chatwoot o WhatsApp Web)
+    if await db.is_chatwoot_handoff_active(bot.id, wa_id):
+        saved_user_msg = user_text or (f"[envió un archivo de tipo {media_type}]" if media_type else "[Mensaje del usuario]")
+        await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
+        log.info("Relevo humano activo para bot %s y %s; IA en silencio absoluto.", bot.id, wa_id)
+        return
+
+    # 2. Comprobar regla estricta: Escalar cuando yo inicio o intervengo en la conversación
+    if await _human_handoff_enabled(bot.id) and await db.is_conversation_initiated_by_agent(bot.id, wa_id):
+        saved_user_msg = user_text or (f"[envió un archivo de tipo {media_type}]" if media_type else "[Mensaje del usuario]")
+        await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
+        await db.set_conversation_handoff_active(bot.id, wa_id)
+        await escalations.record_agent_initiated_escalation(
+            wa_id, saved_user_msg, [], bot_id=bot.id, media_type=media_type
+        )
+        log.info("Escalado estricto por inicio de asesor para bot %s y %s; IA en silencio absoluto.", bot.id, wa_id)
+        return
+
     history = await db.get_history(wa_id, config.HISTORY_WINDOW, bot_id=bot.id)
 
     # Caso A: media entrante (audios se transcriben; imágenes/comprobantes u otros se delegan).
@@ -676,10 +692,6 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
     control_cmd = bot_control.detect_control_command(user_text)
     if control_cmd and bot_control.is_authorized_admin(wa_id, bot, extra_phone=msg.get("display_phone_number")):
         await bot_control.handle_control_command(bot, wa_id, control_cmd)
-        return
-
-    if await db.is_chatwoot_handoff_active(bot.id, wa_id):
-        log.info("Relevo humano activo para bot %s y %s; IA en silencio.", bot.id, wa_id)
         return
 
     if bot.status == "paused":

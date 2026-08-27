@@ -595,6 +595,36 @@ async def get_history(wa_id: str, limit: int, bot_id: int | None = None) -> list
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
 
+async def is_conversation_initiated_by_agent(bot_id: int | None, wa_id: str) -> bool:
+    """
+    Devuelve True si el primer mensaje registrado en el hilo de conversación
+    fue enviado por el asesor/asistente (role = 'assistant').
+    """
+    if not wa_id or _pool is None:
+        return False
+    try:
+        async with _pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT role FROM conversations
+                WHERE wa_id = $1
+                  AND (
+                    $2::bigint IS NULL
+                    OR bot_id = $2
+                    OR ($2 = 1 AND bot_id IS NULL)
+                  )
+                ORDER BY created_at ASC, id ASC
+                LIMIT 1
+                """,
+                wa_id, bot_id,
+            )
+            if row and row["role"] == "assistant":
+                return True
+        return False
+    except Exception:
+        return False
+
+
 async def list_conversation_threads(limit: int = 100, bot_id: int | None = None) -> list[dict]:
     """Lista conversaciones agrupadas por wa_id con ultimo mensaje y metadata de lead."""
     async with _pool.acquire() as conn:
@@ -2096,6 +2126,8 @@ async def release_chatwoot_webhook_event(integration_id: int, event_key: str) ->
 
 
 async def set_chatwoot_handoff_active(bot_id: int, wa_id: str) -> None:
+    if not wa_id or _pool is None:
+        return
     async with _pool.acquire() as conn:
         await conn.execute(
             """
@@ -2111,6 +2143,8 @@ async def set_chatwoot_handoff_active(bot_id: int, wa_id: str) -> None:
 
 
 async def clear_chatwoot_handoff(bot_id: int, wa_id: str) -> None:
+    if not wa_id or _pool is None:
+        return
     async with _pool.acquire() as conn:
         await conn.execute(
             "DELETE FROM chatwoot_handoffs WHERE bot_id=$1 AND wa_id=$2",
@@ -2120,6 +2154,8 @@ async def clear_chatwoot_handoff(bot_id: int, wa_id: str) -> None:
 
 
 async def is_chatwoot_handoff_active(bot_id: int, wa_id: str) -> bool:
+    if not wa_id or _pool is None:
+        return False
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT 1 FROM chatwoot_handoffs WHERE bot_id=$1 AND wa_id=$2",
