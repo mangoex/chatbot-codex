@@ -595,10 +595,11 @@ async def get_history(wa_id: str, limit: int, bot_id: int | None = None) -> list
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
 
-async def is_conversation_initiated_by_agent(bot_id: int | None, wa_id: str) -> bool:
+async def is_conversation_initiated_by_agent(bot_id: int | None, wa_id: str, timeout_hours: int | None = None) -> bool:
     """
     Devuelve True si el primer mensaje registrado en el hilo de conversación
-    fue enviado por el asesor/asistente (role = 'assistant').
+    fue enviado por el asesor/asistente (role = 'assistant') y, si se especifica timeout_hours,
+    el último mensaje no supera timeout_hours de antigüedad.
     """
     if not wa_id or _pool is None:
         return False
@@ -606,20 +607,27 @@ async def is_conversation_initiated_by_agent(bot_id: int | None, wa_id: str) -> 
         async with _pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT role FROM conversations
-                WHERE wa_id = $1
-                  AND (
-                    $2::bigint IS NULL
-                    OR bot_id = $2
-                    OR ($2 = 1 AND bot_id IS NULL)
-                  )
-                ORDER BY created_at ASC, id ASC
-                LIMIT 1
+                SELECT
+                    (SELECT role FROM conversations
+                     WHERE wa_id = $1 AND ($2::bigint IS NULL OR bot_id = $2 OR ($2 = 1 AND bot_id IS NULL))
+                     ORDER BY created_at ASC, id ASC LIMIT 1) AS first_role,
+                    (SELECT created_at FROM conversations
+                     WHERE wa_id = $1 AND ($2::bigint IS NULL OR bot_id = $2 OR ($2 = 1 AND bot_id IS NULL))
+                     ORDER BY created_at DESC, id DESC LIMIT 1) AS last_created_at
                 """,
                 wa_id, bot_id,
             )
-            if row and row["role"] == "assistant":
-                return True
+            if not row or row["first_role"] != "assistant":
+                return False
+            if timeout_hours and timeout_hours > 0 and row["last_created_at"]:
+                check_row = await conn.fetchrow(
+                    "SELECT 1 WHERE $1::timestamptz >= now() - ($2 || ' hours')::interval",
+                    row["last_created_at"],
+                    str(timeout_hours),
+                )
+                if not check_row:
+                    return False
+            return True
         return False
     except Exception:
         return False
@@ -2153,16 +2161,37 @@ async def clear_chatwoot_handoff(bot_id: int, wa_id: str) -> None:
         )
 
 
-async def is_chatwoot_handoff_active(bot_id: int, wa_id: str) -> bool:
+async def is_chatwoot_handoff_active(bot_id: int, wa_id: str, timeout_hours: int | None = None) -> bool:
     if not wa_id or _pool is None:
         return False
     async with _pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT 1 FROM chatwoot_handoffs WHERE bot_id=$1 AND wa_id=$2",
-            bot_id,
-            wa_id,
-        )
-    return row is not None
+        if timeout_hours and timeout_hours > 0:
+            row = await conn.fetchrow(
+                """
+                SELECT 1 FROM chatwoot_handoffs
+                WHERE bot_id = $1 AND wa_id = $2
+                  AND updated_at >= now() - ($3 || ' hours')::interval
+                """,
+                bot_id,
+                wa_id,
+                str(timeout_hours),
+            )
+            if row is None:
+                # Limpiar registro huérfano expirado
+                await conn.execute(
+                    "DELETE FROM chatwoot_handoffs WHERE bot_id = $1 AND wa_id = $2",
+                    bot_id,
+                    wa_id,
+                )
+                return False
+            return True
+        else:
+            row = await conn.fetchrow(
+                "SELECT 1 FROM chatwoot_handoffs WHERE bot_id=$1 AND wa_id=$2",
+                bot_id,
+                wa_id,
+            )
+            return row is not None
 
 
 # Unified aliases for conversation-level handoffs (Chatwoot, Admin Panel, Escalations)

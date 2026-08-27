@@ -327,10 +327,25 @@ AI_ERROR_REPLY = (
 )
 
 
+async def _get_handoff_expiration_hours(bot_id: int) -> int | None:
+    """Devuelve las horas de expiración del relevo humano (por defecto 24, None para infinito)."""
+    try:
+        skill = await db.get_bot_skill(bot_id, "escalation")
+        if not skill or not skill.get("enabled", True):
+            return 24
+        cfg = skill.get("config") or {}
+        val = cfg.get("handoff_expiration_hours", 24)
+        val_int = int(val)
+        return val_int if val_int > 0 else None
+    except Exception:
+        return 24
+
+
 async def _automatic_reply_allowed(bot_id: int, wa_id: str) -> bool:
     """Fail closed when human-handoff state cannot be checked at send time."""
     try:
-        if await db.is_chatwoot_handoff_active(bot_id, wa_id):
+        timeout_hours = await _get_handoff_expiration_hours(bot_id)
+        if await db.is_chatwoot_handoff_active(bot_id, wa_id, timeout_hours=timeout_hours):
             log.info("Respuesta automática cancelada: relevo humano activo (bot_id=%s).", bot_id)
             return False
     except Exception:
@@ -567,15 +582,17 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
     # El usuario escribió → cancelar cualquier follow-up pendiente
     await follow_ups.cancel(wa_id, bot.id)
 
+    timeout_hours = await _get_handoff_expiration_hours(bot.id)
+
     # 1. Comprobar si el relevo humano está activo (por Chatwoot o WhatsApp Web)
-    if await db.is_chatwoot_handoff_active(bot.id, wa_id):
+    if await db.is_chatwoot_handoff_active(bot.id, wa_id, timeout_hours=timeout_hours):
         saved_user_msg = user_text or (f"[envió un archivo de tipo {media_type}]" if media_type else "[Mensaje del usuario]")
         await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
         log.info("Relevo humano activo para bot %s y %s; IA en silencio absoluto.", bot.id, wa_id)
         return
 
     # 2. Comprobar regla estricta: Escalar cuando yo inicio o intervengo en la conversación
-    if await _human_handoff_enabled(bot.id) and await db.is_conversation_initiated_by_agent(bot.id, wa_id):
+    if await _human_handoff_enabled(bot.id) and await db.is_conversation_initiated_by_agent(bot.id, wa_id, timeout_hours=timeout_hours):
         saved_user_msg = user_text or (f"[envió un archivo de tipo {media_type}]" if media_type else "[Mensaje del usuario]")
         await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
         await db.set_conversation_handoff_active(bot.id, wa_id)

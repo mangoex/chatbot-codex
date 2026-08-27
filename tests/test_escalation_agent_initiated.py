@@ -22,6 +22,7 @@ async def test_client_escalation_save_persists_escalate_when_agent_initiates():
             keywords="queja, humano",
             escalate_on_media="on",
             escalate_when_agent_initiates="on",
+            handoff_expiration_hours=48,
         )
         
         assert resp.status_code == 302
@@ -34,13 +35,14 @@ async def test_client_escalation_save_persists_escalate_when_agent_initiates():
                 "keywords": ["queja", "humano"],
                 "escalate_on_media": True,
                 "escalate_when_agent_initiates": True,
+                "handoff_expiration_hours": 48,
             },
         )
 
 
 @pytest.mark.asyncio
 async def test_client_escalation_save_when_checkbox_is_off():
-    """Valida que si no se marca la casilla, escalate_when_agent_initiates se guarde en False."""
+    """Valida que si no se marca la casilla, escalate_when_agent_initiates se guarde en False y handoff_expiration_hours por defecto en 24."""
     req = MagicMock()
     session = {"user_id": 1, "client_id": 1, "role": "client_admin"}
     
@@ -55,6 +57,7 @@ async def test_client_escalation_save_when_checkbox_is_off():
             keywords="asesor",
             escalate_on_media=None,
             escalate_when_agent_initiates=None,
+            handoff_expiration_hours=24,
         )
         
         assert resp.status_code == 302
@@ -66,6 +69,7 @@ async def test_client_escalation_save_when_checkbox_is_off():
                 "keywords": ["asesor"],
                 "escalate_on_media": False,
                 "escalate_when_agent_initiates": False,
+                "handoff_expiration_hours": 24,
             },
         )
 
@@ -398,3 +402,90 @@ async def test_phrase_and_quote_keyword_detection_in_escalations():
         )
         assert result2 is not None
         assert result2[0] == "cliente_solicito_humano"
+
+
+@pytest.mark.asyncio
+async def test_get_handoff_expiration_hours_helper():
+    """Valida la lectura de horas de expiración configuradas en bot_skills."""
+    with patch("app.db.get_bot_skill", new_callable=AsyncMock) as mock_get:
+        # Caso 1: Configurado explícito 48h
+        mock_get.return_value = {"enabled": True, "config": {"handoff_expiration_hours": 48}}
+        assert await main._get_handoff_expiration_hours(10) == 48
+
+        # Caso 2: 0 (permanente -> None)
+        mock_get.return_value = {"enabled": True, "config": {"handoff_expiration_hours": 0}}
+        assert await main._get_handoff_expiration_hours(10) is None
+
+        # Caso 3: No configurado -> por defecto 24h
+        mock_get.return_value = {"enabled": True, "config": {}}
+        assert await main._get_handoff_expiration_hours(10) == 24
+
+
+@pytest.mark.asyncio
+async def test_handoff_reactivates_bot_after_expiration_window():
+    """
+    Valida que si transcurren más de 24h (handoff expirado), el bot se reactive y responda con OpenAI.
+    """
+    bot = MagicMock()
+    bot.id = 10
+    bot.name = "Bot Demo"
+    bot.status = "active"
+    bot.openai_model = "gpt-4o-mini"
+    bot.whatsapp_phone_number_id = "phone-10"
+    bot.whatsapp_access_token = "token-10"
+
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "metadata": {"phone_number_id": "phone-10"},
+                            "messages": [
+                                {
+                                    "from": "5215512345678",
+                                    "id": "wamid.reactivation123",
+                                    "type": "text",
+                                    "text": {"body": "Hola, ¿siguen abiertos hoy?"},
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    mock_escalation_skill = {
+        "enabled": True,
+        "config": {
+            "escalate_when_agent_initiates": True,
+            "handoff_expiration_hours": 24,
+        },
+    }
+
+    with patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=bot)), \
+         patch.object(main.db, "was_processed", AsyncMock(return_value=False)), \
+         patch.object(main.db, "mark_processed", AsyncMock(return_value=True)), \
+         patch.object(main.db, "get_active_bot_integration", AsyncMock(return_value=None)), \
+         patch.object(main.follow_ups, "cancel", AsyncMock()), \
+         patch.object(main.follow_ups, "schedule", AsyncMock()), \
+         patch.object(main.db, "get_history", AsyncMock(return_value=[])), \
+         patch.object(main.db, "get_bot_skill", AsyncMock(return_value=mock_escalation_skill)), \
+         patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)), \
+         patch.object(main.db, "is_conversation_initiated_by_agent", AsyncMock(return_value=False)), \
+         patch.object(main.db, "get_lead", AsyncMock(return_value=None)), \
+         patch.object(main.db, "record_bot_sent_message", AsyncMock()), \
+         patch.object(main.db, "save_message", AsyncMock()) as mock_save, \
+         patch.object(main.openai_client, "complete", AsyncMock(return_value="Hola, sí estamos abiertos.")) as mock_openai, \
+         patch.object(main.whatsapp_client, "send_text", AsyncMock(return_value={"messages": [{"id": "wamid.reply1"}]})) as mock_send_wa, \
+         patch.object(main.leads, "process_reply", AsyncMock(return_value="Hola, sí estamos abiertos.")), \
+         patch.object(main.order_payments, "process_reply", AsyncMock(return_value="Hola, sí estamos abiertos.")), \
+         patch.object(main.external_actions, "process_reply", AsyncMock(return_value="Hola, sí estamos abiertos.")), \
+         patch.object(main.calendar_client, "process_reply", AsyncMock(return_value=("Hola, sí estamos abiertos.", False))):
+
+        await main._process_message(payload)
+
+        # El bot se reactivó y respondió
+        mock_openai.assert_awaited_once()
+        mock_send_wa.assert_awaited_once()

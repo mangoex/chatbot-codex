@@ -3348,7 +3348,19 @@ async def client_app(
           <div class="checkbox-group" style="margin-bottom:18px;">
             <input type="checkbox" name="escalate_when_agent_initiates" id="escalateWhenAgentInitiates" {"checked" if escalate_config.get("escalate_when_agent_initiates", False) else ""}>
             <label for="escalateWhenAgentInitiates" style="margin:0; font-weight:500; cursor:pointer;">Escalar cuando yo inicio o intervengo en la conversación</label>
-            <p class="muted-text" style="margin:4px 0 0 24px; font-size:12px;">Si tú o tu equipo inician o intervienen desde WhatsApp Business o un dispositivo vinculado, el bot queda en silencio hasta una reanudación explícita.</p>
+            <p class="muted-text" style="margin:4px 0 0 24px; font-size:12px;">Si tú o tu equipo inician o intervienen desde WhatsApp Business o un dispositivo vinculado, el bot queda en silencio.</p>
+          </div>
+
+          <div class="form-group" style="margin-bottom:18px;">
+            <label for="handoffExpirationHours" style="font-weight:600; display:block; margin-bottom:6px;">Ventana de silencio tras intervención o inicio del asesor</label>
+            <select name="handoff_expiration_hours" id="handoffExpirationHours" class="form-control" style="width:100%; max-width:360px; padding:8px 10px; border-radius:6px; border:1px solid #cbd5e1;">
+              <option value="24" {"selected" if int(escalate_config.get("handoff_expiration_hours", 24)) == 24 else ""}>24 horas (Recomendado - Ventana de WhatsApp)</option>
+              <option value="12" {"selected" if int(escalate_config.get("handoff_expiration_hours", 24)) == 12 else ""}>12 horas</option>
+              <option value="48" {"selected" if int(escalate_config.get("handoff_expiration_hours", 24)) == 48 else ""}>48 horas</option>
+              <option value="72" {"selected" if int(escalate_config.get("handoff_expiration_hours", 24)) == 72 else ""}>72 horas (3 días)</option>
+              <option value="0" {"selected" if int(escalate_config.get("handoff_expiration_hours", 24)) == 0 else ""}>Permanente (Hasta resolución o reanudación manual)</option>
+            </select>
+            <p class="muted-text" style="margin-top:4px; font-size:12px;">Si el asesor no envía nuevos mensajes durante este tiempo y el cliente vuelve a escribir, el bot se reactivará automáticamente.</p>
           </div>
           
           <div style="margin-top:20px;">
@@ -4128,6 +4140,7 @@ async def client_escalation_save(
     keywords: str = Form(""),
     escalate_on_media: str | None = Form(None),
     escalate_when_agent_initiates: str | None = Form(None),
+    handoff_expiration_hours: int = Form(24),
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
@@ -4139,10 +4152,16 @@ async def client_escalation_save(
         if clean:
             words_list.append(clean)
             
+    try:
+        exp_hours = max(0, int(handoff_expiration_hours))
+    except (ValueError, TypeError):
+        exp_hours = 24
+
     escalation_config = {
         "keywords": words_list,
         "escalate_on_media": escalate_on_media == "on",
         "escalate_when_agent_initiates": escalate_when_agent_initiates == "on",
+        "handoff_expiration_hours": exp_hours,
     }
     
     await db.upsert_bot_skill(
