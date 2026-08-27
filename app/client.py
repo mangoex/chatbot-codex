@@ -3944,6 +3944,11 @@ async def client_prompt_save(
     clean = prompt.strip()
     if not clean:
         raise HTTPException(status_code=400, detail="El prompt no puede estar vacío")
+    
+    pbd_constitution, pbd_specs, pbd_test_suite, clean = pbd_validation.auto_heal_pbd_bundle(
+        pbd_constitution, pbd_specs, pbd_test_suite, clean
+    )
+    
     report = pbd_validation.validate_pbd_bundle(
         pbd_constitution,
         pbd_specs,

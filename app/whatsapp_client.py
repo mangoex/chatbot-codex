@@ -160,22 +160,37 @@ def extract_messages(payload: dict) -> list[dict]:
 def extract_human_message_echoes(payload: dict) -> list[dict]:
     """Extract canonical coexistence echoes emitted by a human WhatsApp client.
 
-    Only ``smb_message_echoes`` is evidence of a native WhatsApp Business
-    device message. Delivery statuses are deliberately excluded: they identify
-    lifecycle, not authorship.
+    Supports:
+    1. 'smb_message_echoes' (SMB Coexistence)
+    2. 'message_echoes' or value containing 'message_echoes'
+    3. Outgoing message echoes in 'messages' where author is the business/agent
     """
     out = []
     for change in _changes(payload):
-        if change.get("field") != "smb_message_echoes":
-            continue
+        field_name = change.get("field", "")
         value = change.get("value") or {}
         metadata = value.get("metadata", {}) or {}
-        for echo in value.get("message_echoes") or []:
-            recipient_id = (echo.get("to") or echo.get("recipient_id") or "").strip()
-            details = _message_details(echo, metadata, recipient_id=recipient_id)
-            if details and recipient_id:
-                details["human_source"] = "smb_message_echoes"
-                out.append(details)
+        
+        # 1. smb_message_echoes o message_echoes
+        if field_name in ("smb_message_echoes", "message_echoes") or "message_echoes" in value:
+            for echo in value.get("message_echoes") or []:
+                recipient_id = (echo.get("to") or echo.get("recipient_id") or "").strip()
+                details = _message_details(echo, metadata, recipient_id=recipient_id)
+                if details and recipient_id:
+                    details["human_source"] = field_name or "message_echoes"
+                    out.append(details)
+
+        # 2. Mensajes marcados como echo o salientes desde WhatsApp Web/Mobile
+        for msg in value.get("messages") or []:
+            display_phone = (metadata.get("display_phone_number") or "").replace("+", "").replace(" ", "").replace("-", "")
+            msg_from = (msg.get("from") or "").replace("+", "").replace(" ", "")
+            is_outgoing = bool(msg.get("is_echo")) or (bool(display_phone) and (msg_from == display_phone or msg_from == metadata.get("phone_number_id")))
+            if is_outgoing:
+                recipient_id = (msg.get("to") or msg.get("recipient_id") or "").strip()
+                details = _message_details(msg, metadata, recipient_id=recipient_id)
+                if details and recipient_id:
+                    details["human_source"] = "messages_outgoing_echo"
+                    out.append(details)
     return out
 
 

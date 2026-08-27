@@ -360,6 +360,10 @@ async def _send_and_track(
         phone_number_id=bot.whatsapp_phone_number_id,
         access_token=bot.whatsapp_access_token,
     )
+    if isinstance(res, dict) and res.get("messages"):
+        for m in res["messages"]:
+            if m.get("id"):
+                await db.record_bot_sent_message(m["id"], bot.id)
     if scheduled:
         await db.upsert_lead(
             wa_id,
@@ -424,6 +428,7 @@ async def _process_human_message_echo(echo: dict) -> None:
     await db.save_message(wa_id, "assistant", content, bot_id=bot.id)
     await escalations.record_agent_initiated_escalation(wa_id, content, [], bot_id=bot.id)
     await follow_ups.cancel(wa_id, bot.id)
+    await db.record_bot_sent_message(message_id, bot.id)
     # Mark only after the durable human-control effects succeed. A failure
     # before this point must be retried by Meta rather than hidden as duplicate.
     if not await db.mark_processed(message_id, bot_id=bot.id):
@@ -435,10 +440,32 @@ async def _process_human_message_echo(echo: dict) -> None:
 
 
 async def _process_human_message_echoes(payload: dict) -> None:
-    # Native business-device echoes are the only authorship signal for this rule.
-    # ``statuses`` are lifecycle notifications and must never activate a handoff.
+    # 1. Ecos de mensajes salientes (SMB, Cloud API, coexistencia)
     for echo in whatsapp_client.extract_human_message_echoes(payload):
         await _process_human_message_echo(echo)
+
+    # 2. Eventos de status ('sent') enviados cuando el asesor escribe en WhatsApp Web
+    try:
+        statuses = whatsapp_client.extract_statuses(payload)
+        for st in statuses:
+            if st.get("status") in ("sent", "delivered"):
+                msg_id = st.get("message_id")
+                wa_id = st.get("recipient_id")
+                phone_id = st.get("phone_number_id")
+                if not wa_id or not msg_id:
+                    continue
+                if not await db.is_bot_sent_message(msg_id):
+                    echo = {
+                        "recipient_id": wa_id,
+                        "message_id": msg_id,
+                        "phone_number_id": phone_id,
+                        "text": "[Mensaje del asesor desde WhatsApp Web/App]",
+                        "type": "text",
+                        "human_source": "meta_status_outbound",
+                    }
+                    await _process_human_message_echo(echo)
+    except Exception as exc:
+        log.warning("Error procesando status de asesor: %s", exc)
 
 
 async def _process_inbound_messages(payload: dict) -> None:
