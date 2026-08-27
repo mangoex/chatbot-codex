@@ -307,7 +307,8 @@ async def test_evaluate_inactivity_triggers(
     ]
     mock_has_recent.return_value = False
 
-    await automations.evaluate_inactivity_triggers()
+    with patch("app.db.is_conversation_handoff_active", AsyncMock(return_value=False)):
+        await automations.evaluate_inactivity_triggers()
 
     mock_send_template.assert_called_once_with(
         bot_id=43,
@@ -356,12 +357,13 @@ async def test_trigger_crm_status_change(
         "business": "Inmobiliaria Real",
     }
 
-    await automations.trigger_crm_status_change(
-        bot_id=43,
-        wa_id="5215587654321",
-        new_status="calificado",
-        old_status="pendiente",
-    )
+    with patch("app.db.is_conversation_handoff_active", AsyncMock(return_value=False)):
+        await automations.trigger_crm_status_change(
+            bot_id=43,
+            wa_id="5215587654321",
+            new_status="calificado",
+            old_status="pendiente",
+        )
 
     mock_send_template.assert_called_once_with(
         bot_id=43,
@@ -416,7 +418,8 @@ async def test_evaluate_time_based_triggers_daily(
     ]
     mock_has_recent.return_value = False
 
-    await automations.evaluate_time_based_triggers()
+    with patch("app.db.is_conversation_handoff_active", AsyncMock(return_value=False)):
+        await automations.evaluate_time_based_triggers()
 
     mock_send_template.assert_called_once_with(
         bot_id=43,

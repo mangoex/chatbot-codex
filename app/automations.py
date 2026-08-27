@@ -13,6 +13,14 @@ log = logging.getLogger("automations")
 _WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
+async def _handoff_allows_automation(bot_id: int, wa_id: str) -> bool:
+    """Prevent automated delivery while a human owns this bot/contact pair."""
+    if await db.is_conversation_handoff_active(bot_id, wa_id):
+        log.info("Automatización omitida: relevo humano activo (bot_id=%s).", bot_id)
+        return False
+    return True
+
+
 def _resolve_parameters(
     mappings: list[dict],
     contact_name: str | None,
@@ -109,6 +117,8 @@ async def evaluate_inactivity_triggers() -> None:
 
             for conv in inactive_convs:
                 wa_id = conv["wa_id"]
+                if not await _handoff_allows_automation(bot_id, wa_id):
+                    continue
                 # Evitar envíos repetidos dentro de la misma ventana de horas
                 already_sent = await db.has_recent_trigger_execution(
                     trigger_id=trigger_id,
@@ -126,6 +136,8 @@ async def evaluate_inactivity_triggers() -> None:
                 )
 
                 try:
+                    if not await _handoff_allows_automation(bot_id, wa_id):
+                        continue
                     await meta_provider.send_template_message(
                         bot_id=bot_id,
                         to_wa_id=wa_id,
@@ -222,6 +234,8 @@ async def evaluate_time_based_triggers() -> None:
                 dispatched_any = False
                 for r in recipients:
                     wa_id = r["wa_id"]
+                    if not await _handoff_allows_automation(bot_id, wa_id):
+                        continue
                     # Evitar duplicar en la misma jornada (últimas 20 horas) o si ya se ejecutó para scheduled_date
                     check_hours = 999999 if t_type == "scheduled_date" else 20
                     already_sent = await db.has_recent_trigger_execution(
@@ -240,6 +254,8 @@ async def evaluate_time_based_triggers() -> None:
                     )
 
                     try:
+                        if not await _handoff_allows_automation(bot_id, wa_id):
+                            continue
                         await meta_provider.send_template_message(
                             bot_id=bot_id,
                             to_wa_id=wa_id,
@@ -310,6 +326,8 @@ async def trigger_crm_status_change(
             rule_status = (cfg.get("crm_status") or "").strip().lower()
             if rule_status == target_status:
                 trigger_id = int(t["id"])
+                if not await _handoff_allows_automation(bot_id, wa_id):
+                    continue
                 template_name = t["template_name"]
                 language_code = t.get("language_code") or "es_MX"
                 mappings = t.get("variable_mappings") or []
@@ -322,6 +340,8 @@ async def trigger_crm_status_change(
                 )
 
                 try:
+                    if not await _handoff_allows_automation(bot_id, wa_id):
+                        continue
                     await meta_provider.send_template_message(
                         bot_id=bot_id,
                         to_wa_id=wa_id,

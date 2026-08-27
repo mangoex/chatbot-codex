@@ -211,12 +211,6 @@ CREATE TABLE IF NOT EXISTS processed_messages (
     processed_at TIMESTAMPTZ DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS bot_sent_messages (
-    message_id TEXT PRIMARY KEY,
-    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-
 CREATE TABLE IF NOT EXISTS calendar_appointments (
     id BIGSERIAL PRIMARY KEY,
     bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
@@ -546,36 +540,6 @@ async def mark_processed(message_id: str, bot_id: int | None = None) -> bool:
         return inserted > 0
 
 
-async def record_bot_sent_message(message_id: str, bot_id: int | None = None) -> None:
-    """Registra que un message_id fue emitido automaticamente por el motor del bot."""
-    if not message_id or _pool is None:
-        return
-    try:
-        async with _pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO bot_sent_messages(message_id, bot_id) VALUES($1, $2) ON CONFLICT DO NOTHING",
-                message_id,
-                bot_id,
-            )
-    except Exception:
-        pass
-
-
-async def is_bot_sent_message(message_id: str) -> bool:
-    """Devuelve True si el mensaje fue enviado por el bot (y no por un asesor humano en WhatsApp Web)."""
-    if not message_id or _pool is None:
-        return False
-    try:
-        async with _pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT 1 FROM bot_sent_messages WHERE message_id = $1",
-                message_id,
-            )
-        return row is not None
-    except Exception:
-        return False
-
-
 async def get_history(wa_id: str, limit: int, bot_id: int | None = None) -> list[dict]:
     """Devuelve los últimos `limit` mensajes en orden cronológico ascendente."""
     async with _pool.acquire() as conn:
@@ -593,29 +557,6 @@ async def get_history(wa_id: str, limit: int, bot_id: int | None = None) -> list
             wa_id, limit, bot_id,
         )
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
-
-
-async def is_conversation_initiated_by_agent(bot_id: int | None, wa_id: str) -> bool:
-    """Devuelve True si el primer mensaje registrado en la conversacion fue enviado por el asistente/asesor."""
-    if _pool is None:
-        return False
-    async with _pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT role FROM conversations
-            WHERE wa_id = $1
-              AND (
-                $2::bigint IS NULL
-                OR bot_id = $2
-                OR ($2 = 1 AND bot_id IS NULL)
-              )
-            ORDER BY created_at ASC, id ASC
-            LIMIT 1
-            """,
-            wa_id,
-            bot_id,
-        )
-    return bool(row and row["role"] == "assistant")
 
 
 async def list_conversation_threads(limit: int = 100, bot_id: int | None = None) -> list[dict]:
@@ -3005,4 +2946,3 @@ async def get_inactive_conversations_for_trigger(
             limit,
         )
         return [dict(r) for r in rows]
-

@@ -315,7 +315,8 @@ class BotControlWebhookIntegrationTests(unittest.TestCase):
             ]
         }
 
-        with patch.object(bot_control.config, "ADMIN_PHONE_NUMBERS", ["5216861234567"]):
+        with patch.object(bot_control.config, "ADMIN_PHONE_NUMBERS", ["5216861234567"]), \
+             patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)):
             msg = main.whatsapp_client.extract_message(payload)
             asyncio.run(main._process_message_impl(msg, payload))
 
@@ -378,7 +379,8 @@ class BotControlWebhookIntegrationTests(unittest.TestCase):
             ]
         }
 
-        with patch.object(bot_control.config, "ADMIN_PHONE_NUMBERS", ["5216861234567"]):
+        with patch.object(bot_control.config, "ADMIN_PHONE_NUMBERS", ["5216861234567"]), \
+             patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)):
             msg = main.whatsapp_client.extract_message(payload)
             asyncio.run(main._process_message_impl(msg, payload))
 

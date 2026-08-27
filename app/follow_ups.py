@@ -44,6 +44,10 @@ async def _process_due() -> None:
                 log.info("Follow-up omitido para %s: el bot %s está pausado.", wa_id, bot.id)
                 await db.mark_follow_up_sent(row["id"])
                 continue
+            if await db.is_conversation_handoff_active(bot.id, wa_id):
+                log.info("Follow-up omitido para %s: relevo humano activo (bot %s).", wa_id, bot.id)
+                await db.mark_follow_up_sent(row["id"])
+                continue
 
             # Fetch conversation history to see context
             history = await db.get_history(wa_id, limit=20, bot_id=bot.id)
@@ -75,6 +79,12 @@ async def _process_due() -> None:
                 log.warning("No se pudo generar follow-up personalizado por IA, usando por defecto: %s", e)
 
             # Send using bot credentials
+            # Recheck immediately before delivery: cancellation can race with a
+            # concurrently received native-human echo.
+            if await db.is_conversation_handoff_active(bot.id, wa_id):
+                log.info("Follow-up cancelado antes de enviar para %s: relevo humano activo.", wa_id)
+                await db.mark_follow_up_sent(row["id"])
+                continue
             await whatsapp_client.send_text(
                 wa_id,
                 follow_up_message,

@@ -71,33 +71,9 @@ async def test_client_escalation_save_when_checkbox_is_off():
 
 
 @pytest.mark.asyncio
-async def test_db_is_conversation_initiated_by_agent():
-    """Valida la detección en base de datos si el primer mensaje fue enviado por el asesor."""
-    with patch("app.db._pool") as mock_pool:
-        mock_conn = AsyncMock()
-        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
-
-        # Caso 1: Primer mensaje fue del asistente (asesor / outbound)
-        mock_conn.fetchrow.return_value = {"role": "assistant"}
-        is_agent = await db.is_conversation_initiated_by_agent(bot_id=5, wa_id="5215512345678")
-        assert is_agent is True
-
-        # Caso 2: Primer mensaje fue del usuario (cliente)
-        mock_conn.fetchrow.return_value = {"role": "user"}
-        is_agent = await db.is_conversation_initiated_by_agent(bot_id=5, wa_id="5215512345678")
-        assert is_agent is False
-
-        # Caso 3: No hay mensajes previos en la conversación
-        mock_conn.fetchrow.return_value = None
-        is_agent = await db.is_conversation_initiated_by_agent(bot_id=5, wa_id="5215512345678")
-        assert is_agent is False
-
-
-@pytest.mark.asyncio
 async def test_strict_escalation_silences_bot_when_agent_initiated_text():
     """
-    Verifica que el bot no responda bajo ninguna circunstancia si la regla está activa
-    y la conversación fue iniciada por el asesor (texto entrante).
+    Un historial assistant no activa la regla estricta: requiere un echo canónico.
     """
     bot = MagicMock()
     bot.id = 10
@@ -142,8 +118,7 @@ async def test_strict_escalation_silences_bot_when_agent_initiated_text():
          patch.object(main.follow_ups, "cancel", AsyncMock()), \
          patch.object(main.db, "get_history", AsyncMock(return_value=[{"role": "assistant", "content": "Hola Sr. Cliente"}])), \
          patch.object(main.db, "get_bot_skill", AsyncMock(return_value=mock_escalation_skill)), \
-         patch.object(main.db, "is_conversation_initiated_by_agent", AsyncMock(return_value=True)), \
-         patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)), \
+         patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=True)), \
          patch.object(main.db, "save_message", AsyncMock()) as mock_save, \
          patch.object(main.db, "set_conversation_handoff_active", AsyncMock()) as mock_set_handoff, \
          patch.object(main.escalations, "record_agent_initiated_escalation", AsyncMock()) as mock_record_esc, \
@@ -155,9 +130,9 @@ async def test_strict_escalation_silences_bot_when_agent_initiated_text():
         # El mensaje del usuario se guardó
         mock_save.assert_awaited_once_with("5215512345678", "user", "Hola, gracias por escribirme ayer.", bot_id=10)
         
-        # Se activó el handoff y se registró la escalación
-        mock_set_handoff.assert_awaited_once_with(10, "5215512345678")
-        mock_record_esc.assert_awaited_once()
+        # El historial no puede fabricar una escalación humana.
+        mock_set_handoff.assert_not_awaited()
+        mock_record_esc.assert_not_awaited()
 
         # El bot NO debe generar respuesta ni llamar a OpenAI ni enviar WhatsApp
         mock_openai.assert_not_called()
@@ -167,8 +142,7 @@ async def test_strict_escalation_silences_bot_when_agent_initiated_text():
 @pytest.mark.asyncio
 async def test_strict_escalation_silences_bot_when_agent_initiated_media():
     """
-    Verifica que el bot no responda con audios o imágenes entrantes si la regla está activa
-    y la conversación fue iniciada por el asesor.
+    Un historial assistant tampoco activa la regla estricta para media.
     """
     bot = MagicMock()
     bot.id = 10
@@ -213,8 +187,7 @@ async def test_strict_escalation_silences_bot_when_agent_initiated_media():
          patch.object(main.follow_ups, "cancel", AsyncMock()), \
          patch.object(main.db, "get_history", AsyncMock(return_value=[])), \
          patch.object(main.db, "get_bot_skill", AsyncMock(return_value=mock_escalation_skill)), \
-         patch.object(main.db, "is_conversation_initiated_by_agent", AsyncMock(return_value=True)), \
-         patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)), \
+         patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=True)), \
          patch.object(main.db, "save_message", AsyncMock()) as mock_save, \
          patch.object(main.db, "set_conversation_handoff_active", AsyncMock()) as mock_set_handoff, \
          patch.object(main.escalations, "record_agent_initiated_escalation", AsyncMock()) as mock_record_esc, \
@@ -225,9 +198,8 @@ async def test_strict_escalation_silences_bot_when_agent_initiated_media():
         # Se guardó el mensaje del archivo entrante
         mock_save.assert_awaited_once_with("5215512345678", "user", "Aquí la foto", bot_id=10)
         
-        # Se activó el handoff y se registró la escalación
-        mock_set_handoff.assert_awaited_once_with(10, "5215512345678")
-        mock_record_esc.assert_awaited_once()
+        mock_set_handoff.assert_not_awaited()
+        mock_record_esc.assert_not_awaited()
 
         # No se envió ninguna respuesta automática
         mock_send_wa.assert_not_called()
@@ -236,7 +208,7 @@ async def test_strict_escalation_silences_bot_when_agent_initiated_media():
 @pytest.mark.asyncio
 async def test_normal_flow_when_customer_initiated():
     """
-    Verifica que si la conversación fue iniciada por el cliente (is_conversation_initiated_by_agent=False),
+    Verifica que una conversación de cliente sin handoff sigue el flujo normal,
     el bot responde normalmente con IA.
     """
     bot = MagicMock()
@@ -284,8 +256,8 @@ async def test_normal_flow_when_customer_initiated():
          patch.object(main.follow_ups, "schedule", AsyncMock()), \
          patch.object(main.db, "get_history", AsyncMock(return_value=[])), \
          patch.object(main.db, "get_bot_skill", AsyncMock(return_value=mock_escalation_skill)), \
-         patch.object(main.db, "is_conversation_initiated_by_agent", AsyncMock(return_value=False)), \
          patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)), \
+         patch.object(main.db, "is_conversation_handoff_active", AsyncMock(return_value=False)), \
          patch.object(main.db, "save_message", AsyncMock()) as mock_save, \
          patch.object(main.db, "upsert_lead", AsyncMock()), \
          patch.object(main.db, "get_lead", AsyncMock(return_value={"qualification_status": "calificado"})), \
@@ -344,11 +316,9 @@ async def test_meta_provider_send_template_and_test_saves_message():
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_web_human_outbound_status_triggers_handoff_and_silences_bot():
+async def test_whatsapp_status_does_not_trigger_handoff():
     """
-    Verifica que cuando un asesor humano escribe en WhatsApp Web, Meta envía un evento de status ('sent').
-    El sistema debe detectar que el mensaje no fue emitido por Asistto, activar el relevo humano
-    y silenciar al bot para los mensajes entrantes posteriores del cliente.
+    Los estados sent/delivered son lifecycle y no identifican a un autor humano.
     """
     bot = MagicMock()
     bot.id = 170
@@ -357,7 +327,7 @@ async def test_whatsapp_web_human_outbound_status_triggers_handoff_and_silences_
     bot.whatsapp_phone_number_id = "phone-170"
     bot.whatsapp_access_token = "token-170"
 
-    # 1. Payload de webhook de Meta con status 'sent' para un mensaje enviado desde WhatsApp Web
+    # Un status sent no es un eco canónico de coexistencia.
     status_payload = {
         "entry": [
             {
@@ -380,8 +350,6 @@ async def test_whatsapp_web_human_outbound_status_triggers_handoff_and_silences_
     }
 
     with patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=bot)), \
-         patch.object(main.db, "is_bot_sent_message", AsyncMock(return_value=False)), \
-         patch.object(main.db, "record_bot_sent_message", AsyncMock()) as mock_record_bot_msg, \
          patch.object(main.db, "set_conversation_handoff_active", AsyncMock()) as mock_set_handoff, \
          patch.object(main.db, "save_message", AsyncMock()) as mock_save, \
          patch.object(main.escalations, "record_agent_initiated_escalation", AsyncMock()) as mock_record_esc, \
@@ -389,13 +357,10 @@ async def test_whatsapp_web_human_outbound_status_triggers_handoff_and_silences_
 
         await main._process_message(status_payload)
 
-        # Se activó el relevo humano por intervención desde WhatsApp Web
-        mock_set_handoff.assert_awaited_once_with(170, "5215512345678")
-        mock_save.assert_awaited_once_with(
-            "5215512345678", "assistant", "[Mensaje del asesor desde WhatsApp Web/App]", bot_id=170
-        )
-        mock_record_esc.assert_awaited_once()
-        mock_cancel_fu.assert_awaited_once_with("5215512345678", 170)
+        mock_set_handoff.assert_not_awaited()
+        mock_save.assert_not_awaited()
+        mock_record_esc.assert_not_awaited()
+        mock_cancel_fu.assert_not_awaited()
 
 
 @pytest.mark.asyncio

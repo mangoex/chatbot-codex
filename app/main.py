@@ -147,7 +147,12 @@ async def receive_webhook(request: Request, bg: BackgroundTasks):
         log.warning("Firma invalida de webhook.")
         raise HTTPException(status_code=403, detail="Invalid signature")
     payload = await request.json()
-    bg.add_task(_process_message_safe, payload)
+    # A native-human echo is a durable control boundary: persist it before ACK
+    # so a database failure receives Meta's normal retry instead of losing the
+    # handoff. Customer work remains asynchronous to keep webhook ACKs fast.
+    if whatsapp_client.extract_human_message_echoes(payload):
+        await _process_human_message_echoes(payload)
+    bg.add_task(_process_inbound_messages_safe, payload)
     return {"status": "received"}
 
 @app.post("/webhooks/chatwoot/{bot_id}")
@@ -324,6 +329,18 @@ AI_ERROR_REPLY = (
 )
 
 
+async def _automatic_reply_allowed(bot_id: int, wa_id: str) -> bool:
+    """Fail closed when human-handoff state cannot be checked at send time."""
+    try:
+        if await db.is_chatwoot_handoff_active(bot_id, wa_id):
+            log.info("Respuesta automática cancelada: relevo humano activo (bot_id=%s).", bot_id)
+            return False
+    except Exception:
+        log.exception("No se pudo comprobar relevo humano antes de responder (bot_id=%s).", bot_id)
+        return False
+    return True
+
+
 async def _send_and_track(
     bot: bots.BotContext,
     wa_id: str,
@@ -331,8 +348,10 @@ async def _send_and_track(
     reply: str,
     history: list[dict],
     scheduled: bool = False,
-) -> None:
+) -> bool:
     reply = reply_safety.polish(reply, history, user_text=user_text, bot_name=bot.name)
+    if not await _automatic_reply_allowed(bot.id, wa_id):
+        return False
     log.info("Sending polished reply to %s (%d chars)", wa_id, len(reply))
     await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
     res = await whatsapp_client.send_text(
@@ -341,10 +360,6 @@ async def _send_and_track(
         phone_number_id=bot.whatsapp_phone_number_id,
         access_token=bot.whatsapp_access_token,
     )
-    if isinstance(res, dict) and res.get("messages"):
-        for m in res["messages"]:
-            if m.get("id"):
-                await db.record_bot_sent_message(m["id"], bot.id)
     if scheduled:
         await db.upsert_lead(
             wa_id,
@@ -364,6 +379,7 @@ async def _send_and_track(
     lead = await db.get_lead(wa_id, bot_id=bot.id)
     if not lead or lead.get("qualification_status") == "en_progreso":
         await follow_ups.schedule(wa_id, bot_id=bot.id)
+    return True
 
 
 async def forward_payload_to_external_webhook(webhook_url: str, payload: dict, auth_token: str) -> None:
@@ -381,67 +397,75 @@ async def forward_payload_to_external_webhook(webhook_url: str, payload: dict, a
 _processing_message_ids = set()
 
 
+async def _human_handoff_enabled(bot_id: int) -> bool:
+    """Return whether the explicit native-human handoff rule is enabled."""
+    skill = await db.get_bot_skill(bot_id, "escalation")
+    if not skill or not skill.get("enabled", True):
+        return False
+    return bool((skill.get("config") or {}).get("escalate_when_agent_initiates", False))
+
+
+async def _process_human_message_echo(echo: dict) -> None:
+    """Persist the native human intervention and activate the durable handoff."""
+    wa_id = echo["recipient_id"]
+    message_id = echo["message_id"]
+    bot = await bots.resolve_by_phone_number_id(echo.get("phone_number_id"))
+    if bot is None:
+        log.warning("human_echo_unknown_phone_number_id=%s", echo.get("phone_number_id"))
+        return
+    if not await _human_handoff_enabled(bot.id):
+        log.info("human_echo_ignored_rule_disabled bot_id=%s", bot.id)
+        return
+    if await db.was_processed(message_id):
+        log.info("human_echo_duplicate bot_id=%s message_id=%s", bot.id, message_id)
+        return
+    content = echo.get("text") or f"[Mensaje multimedia del asesor: {echo.get('type', 'unknown')}]"
+    await db.set_conversation_handoff_active(bot.id, wa_id)
+    await db.save_message(wa_id, "assistant", content, bot_id=bot.id)
+    await escalations.record_agent_initiated_escalation(wa_id, content, [], bot_id=bot.id)
+    await follow_ups.cancel(wa_id, bot.id)
+    # Mark only after the durable human-control effects succeed. A failure
+    # before this point must be retried by Meta rather than hidden as duplicate.
+    if not await db.mark_processed(message_id, bot_id=bot.id):
+        log.info("human_echo_duplicate_race_after_handoff bot_id=%s message_id=%s", bot.id, message_id)
+    log.info(
+        "human_echo_handoff_activated source=%s bot_id=%s message_id=%s",
+        echo.get("human_source"), bot.id, message_id,
+    )
+
+
+async def _process_human_message_echoes(payload: dict) -> None:
+    # Native business-device echoes are the only authorship signal for this rule.
+    # ``statuses`` are lifecycle notifications and must never activate a handoff.
+    for echo in whatsapp_client.extract_human_message_echoes(payload):
+        await _process_human_message_echo(echo)
+
+
+async def _process_inbound_messages(payload: dict) -> None:
+    # Meta can batch several customer messages in the same webhook delivery.
+    for msg in whatsapp_client.extract_messages(payload):
+        msg_id = msg["message_id"]
+        if msg_id in _processing_message_ids:
+            log.info("Mensaje ya en procesamiento en memoria, ignorado: %s", msg_id)
+            continue
+        _processing_message_ids.add(msg_id)
+        try:
+            await _process_message_impl(msg, payload)
+        finally:
+            _processing_message_ids.discard(msg_id)
+
+
+async def _process_inbound_messages_safe(payload: dict) -> None:
+    try:
+        await _process_inbound_messages(payload)
+    except Exception:
+        log.exception("Error procesando mensajes entrantes")
+
+
 async def _process_message(payload: dict) -> None:
-    # 1. Procesar eventos de estado (statuses) para detectar mensajes salientes de asesores en WhatsApp Web/App
-    try:
-        statuses = whatsapp_client.extract_statuses(payload)
-        if statuses:
-            for st in statuses:
-                if st.get("status") in ("sent", "delivered"):
-                    msg_id = st.get("message_id")
-                    wa_id = st.get("recipient_id")
-                    phone_id = st.get("phone_number_id")
-                    if not wa_id or not msg_id:
-                        continue
-                    # Si el mensaje no fue emitido por Asistto, proviene de un asesor en WhatsApp Web / Mobile
-                    if not await db.is_bot_sent_message(msg_id):
-                        bot = await bots.resolve_by_phone_number_id(phone_id)
-                        if bot:
-                            await db.record_bot_sent_message(msg_id, bot.id)
-                            await db.set_conversation_handoff_active(bot.id, wa_id)
-                            await db.save_message(wa_id, "assistant", "[Mensaje del asesor desde WhatsApp Web/App]", bot_id=bot.id)
-                            await escalations.record_agent_initiated_escalation(
-                                wa_id, "[Asesor escribió desde WhatsApp Web/App]", [], bot_id=bot.id
-                            )
-                            await follow_ups.cancel(wa_id, bot.id)
-                            log.info(
-                                "Intervención/inicio de asesor en WhatsApp Web/App detectado (wa_id=%s, bot_id=%s). Relevo activado e IA silenciada.",
-                                wa_id, bot.id
-                            )
-    except Exception as exc:
-        log.warning("Error comprobando eventos de estado para intervención de asesor: %s", exc)
-
-    msg = whatsapp_client.extract_message(payload)
-    if msg is None:
-        return
-
-    # Si es un eco de mensaje saliente enviado desde WhatsApp Web/App
-    if msg.get("is_echo"):
-        rec_id = msg.get("recipient_id")
-        if rec_id:
-            try:
-                bot = await bots.resolve_by_phone_number_id(msg.get("phone_number_id"))
-                if bot:
-                    await db.set_conversation_handoff_active(bot.id, rec_id)
-                    await db.save_message(rec_id, "assistant", msg.get("text") or "[Mensaje del asesor desde WhatsApp Web/App]", bot_id=bot.id)
-                    await escalations.record_agent_initiated_escalation(
-                        rec_id, msg.get("text") or "[Asesor escribió desde WhatsApp Web/App]", [], bot_id=bot.id
-                    )
-                    await follow_ups.cancel(rec_id, bot.id)
-                    log.info("Mensaje saliente de WhatsApp Web/App (echo) detectado para bot %s y %s. Relevo activado.", bot.id, rec_id)
-            except Exception as exc:
-                log.warning("Error procesando eco de mensaje de asesor: %s", exc)
-        return
-
-    msg_id = msg["message_id"]
-    if msg_id in _processing_message_ids:
-        log.info("Mensaje ya en procesamiento en memoria, ignorado: %s", msg_id)
-        return
-    _processing_message_ids.add(msg_id)
-    try:
-        await _process_message_impl(msg, payload)
-    finally:
-        _processing_message_ids.discard(msg_id)
+    """Compatibility entrypoint used by tests and non-HTTP callers."""
+    await _process_human_message_echoes(payload)
+    await _process_inbound_messages(payload)
 
 
 async def _process_message_impl(msg: dict, payload: dict) -> None:
@@ -520,33 +544,12 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
 
     history = await db.get_history(wa_id, config.HISTORY_WINDOW, bot_id=bot.id)
 
-    # Comprobar regla estricta: Escalar cuando yo inicio la conversación
-    escalate_when_agent_initiates = False
-    try:
-        escalate_skill = await db.get_bot_skill(bot.id, "escalation")
-        escalate_config = (escalate_skill.get("config") or {}) if escalate_skill else {}
-        escalate_enabled = escalate_skill.get("enabled", True) if escalate_skill else True
-        escalate_when_agent_initiates = (
-            escalate_enabled and bool(escalate_config.get("escalate_when_agent_initiates", False))
-        )
-    except Exception:
-        pass
-
-
     # Caso A: media entrante (audios se transcriben; imágenes/comprobantes u otros se delegan).
     if media_type:
         if media_type in ("audio", "voice"):
             if await db.is_chatwoot_handoff_active(bot.id, wa_id):
                 await db.save_message(wa_id, "user", "[Nota de voz/Audio]", bot_id=bot.id)
                 log.info("Relevo humano activo para bot %s y %s; IA en silencio ante audio.", bot.id, wa_id)
-                return
-            if escalate_when_agent_initiates and await db.is_conversation_initiated_by_agent(bot.id, wa_id):
-                await db.save_message(wa_id, "user", "[Nota de voz/Audio]", bot_id=bot.id)
-                await db.set_conversation_handoff_active(bot.id, wa_id)
-                await escalations.record_agent_initiated_escalation(
-                    wa_id, "[Nota de voz/Audio]", history, bot_id=bot.id, media_type=media_type
-                )
-                log.info("Escalado estricto por inicio de asesor (audio) para bot %s y %s; IA en silencio.", bot.id, wa_id)
                 return
             if bot.status == "paused":
                 await db.save_message(wa_id, "user", "[Nota de voz/Audio]", bot_id=bot.id)
@@ -574,6 +577,8 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             if not transcribed_text:
                 await db.save_message(wa_id, "user", "[Audio inaudible]", bot_id=bot.id)
                 fallback_reply = config.AUDIO_FALLBACK_REPLY
+                if not await _automatic_reply_allowed(bot.id, wa_id):
+                    return
                 await db.save_message(wa_id, "assistant", fallback_reply, bot_id=bot.id)
                 await whatsapp_client.send_text(
                     wa_id,
@@ -592,13 +597,6 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             if await db.is_chatwoot_handoff_active(bot.id, wa_id):
                 log.info("Relevo humano activo para bot %s y %s; IA en silencio.", bot.id, wa_id)
                 return
-            if escalate_when_agent_initiates and await db.is_conversation_initiated_by_agent(bot.id, wa_id):
-                await db.set_conversation_handoff_active(bot.id, wa_id)
-                await escalations.record_agent_initiated_escalation(
-                    wa_id, saved_user_msg, history, bot_id=bot.id, media_type=media_type
-                )
-                log.info("Escalado estricto por inicio de asesor (media) para bot %s y %s; IA en silencio.", bot.id, wa_id)
-                return
             if bot.status == "paused":
                 log.info("Bot %s esta pausado. Ignorando respuesta a media de %s.", bot.id, wa_id)
                 return
@@ -613,6 +611,8 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             )
             if reply is None:
                 reply = MEDIA_REPLY
+            if not await _automatic_reply_allowed(bot.id, wa_id):
+                return
             await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
             await whatsapp_client.send_text(
                 wa_id,
@@ -639,6 +639,12 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
 
     await db.save_message(wa_id, "user", user_text, bot_id=bot.id)
 
+    # Administrative command replies are automated output too. Reanudación is
+    # an explicit panel action; a native-human handoff must stay silent here.
+    if await db.is_chatwoot_handoff_active(bot.id, wa_id):
+        log.info("Relevo humano activo para bot %s y %s; comando no responde.", bot.id, wa_id)
+        return
+
     # Comandos de control administrativo (Pausa / Seguir)
     control_cmd = bot_control.detect_control_command(user_text)
     if control_cmd and bot_control.is_authorized_admin(wa_id, bot, extra_phone=msg.get("display_phone_number")):
@@ -647,14 +653,6 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
 
     if await db.is_chatwoot_handoff_active(bot.id, wa_id):
         log.info("Relevo humano activo para bot %s y %s; IA en silencio.", bot.id, wa_id)
-        return
-
-    if escalate_when_agent_initiates and await db.is_conversation_initiated_by_agent(bot.id, wa_id):
-        await db.set_conversation_handoff_active(bot.id, wa_id)
-        await escalations.record_agent_initiated_escalation(
-            wa_id, user_text, history, bot_id=bot.id
-        )
-        log.info("Escalado estricto por inicio de asesor (texto) para bot %s y %s; IA en silencio.", bot.id, wa_id)
         return
 
     if bot.status == "paused":
@@ -668,8 +666,9 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         core_reply = core_replies.maybe_handle(user_text, history)
         if core_reply:
             reply = await leads.process_reply(wa_id, core_reply, current_history, bot_id=bot.id)
-            await _send_and_track(bot, wa_id, user_text, reply, history)
-            log.info("Core reply respondio a %s (%d chars)", wa_id, len(reply))
+            sent = await _send_and_track(bot, wa_id, user_text, reply, history)
+            if sent:
+                log.info("Core reply respondio a %s (%d chars)", wa_id, len(reply))
             return
 
     from app import skill_runtime
@@ -679,8 +678,9 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         )
         if agenda_reply:
             reply = await leads.process_reply(wa_id, agenda_reply, current_history, bot_id=bot.id)
-            await _send_and_track(bot, wa_id, user_text, reply, history, scheduled=scheduled)
-            log.info("Agenda guard respondio a %s (%d chars)", wa_id, len(reply))
+            sent = await _send_and_track(bot, wa_id, user_text, reply, history, scheduled=scheduled)
+            if sent:
+                log.info("Agenda guard respondio a %s (%d chars)", wa_id, len(reply))
             return
 
     try:
@@ -693,6 +693,8 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         )
     except Exception:
         log.exception("Error llamando al modelo")
+        if not await _automatic_reply_allowed(bot.id, wa_id):
+            return
         await db.save_message(wa_id, "assistant", AI_ERROR_REPLY, bot_id=bot.id)
         await whatsapp_client.send_text(
             wa_id,
@@ -709,9 +711,9 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
     )
     reply = await leads.process_reply(wa_id, calendar_reply, current_history, bot_id=bot.id)
 
-    await _send_and_track(bot, wa_id, user_text, reply, history, scheduled=scheduled)
-
-    log.info("Respondido a %s (%d chars)", wa_id, len(reply))
+    sent = await _send_and_track(bot, wa_id, user_text, reply, history, scheduled=scheduled)
+    if sent:
+        log.info("Respondido a %s (%d chars)", wa_id, len(reply))
 
 
 @app.get("/debug-waba/{bot_id}")

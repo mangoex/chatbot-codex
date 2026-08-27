@@ -340,10 +340,6 @@ async def send_test_message(
     )
     result = await graph_post(f"{phone_number_id}/messages", token, payload)
     try:
-        if isinstance(result, dict) and result.get("messages"):
-            for m in result["messages"]:
-                if m.get("id"):
-                    await db.record_bot_sent_message(m["id"], bot_id)
         saved_text = body_text or f"[Plantilla enviada: {template_name}]"
         await db.save_message(_clean(to_wa_id), "assistant", saved_text, bot_id=bot_id)
     except Exception as exc:
@@ -401,6 +397,8 @@ async def diagnose_bot_connection(bot_id: int) -> dict[str, Any]:
         "subscribed_apps": None,
         "phone_number": None,
         "override_callback_uri": "",
+        "required_webhook_field": "smb_message_echoes",
+        "webhook_field_verification": "manual_required",
         "error": "",
     }
     if not token:
@@ -567,10 +565,6 @@ async def send_template_message(
 
     result = await graph_post(f"{phone_number_id}/messages", token, payload)
     try:
-        if isinstance(result, dict) and result.get("messages"):
-            for m in result["messages"]:
-                if m.get("id"):
-                    await db.record_bot_sent_message(m["id"], bot_id)
         saved_text = f"[Plantilla enviada: {template_name}]"
         if parameters:
             saved_text += f" ({', '.join(str(p) for p in parameters)})"

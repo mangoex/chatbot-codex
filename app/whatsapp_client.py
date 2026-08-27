@@ -100,6 +100,85 @@ async def download_media(
     return b"".join(chunks), mime
 
 
+def _message_details(msg: dict, metadata: dict, *, recipient_id: str | None = None) -> dict | None:
+    """Normalize one Meta message without deciding whether its author is human."""
+    if not isinstance(msg, dict) or not msg.get("id"):
+        return None
+    mtype = msg.get("type", "unknown")
+    out = {
+        "wa_id": msg.get("from", ""),
+        "message_id": msg["id"],
+        "type": mtype,
+        "text": "",
+        "media_id": None,
+        "media_mime": None,
+        "phone_number_id": metadata.get("phone_number_id", ""),
+        "display_phone_number": metadata.get("display_phone_number", ""),
+    }
+    if mtype == "text":
+        out["text"] = (msg.get("text") or {}).get("body", "")
+    elif mtype in ("image", "video", "audio", "document", "sticker", "voice"):
+        media = msg.get(mtype, {}) or {}
+        out["media_id"] = media.get("id")
+        out["media_mime"] = media.get("mime_type")
+        out["text"] = media.get("caption", "")
+    elif mtype == "interactive":
+        interactive = msg.get("interactive", {}) or {}
+        reply = interactive.get("button_reply") or interactive.get("list_reply") or {}
+        out["text"] = reply.get("title", "")
+    elif mtype == "location":
+        loc = msg.get("location", {}) or {}
+        out["text"] = f"[ubicación lat={loc.get('latitude')} lon={loc.get('longitude')}]"
+    if recipient_id:
+        out["recipient_id"] = recipient_id
+    return out
+
+
+def _changes(payload: dict):
+    """Yield all webhook changes; Meta may batch entries and changes together."""
+    for entry in payload.get("entry") or []:
+        if not isinstance(entry, dict):
+            continue
+        for change in entry.get("changes") or []:
+            if isinstance(change, dict):
+                yield change
+
+
+def extract_messages(payload: dict) -> list[dict]:
+    """Extract every customer inbound message from standard ``messages`` changes."""
+    out = []
+    for change in _changes(payload):
+        value = change.get("value") or {}
+        metadata = value.get("metadata", {}) or {}
+        for msg in value.get("messages") or []:
+            details = _message_details(msg, metadata)
+            if details and details["wa_id"]:
+                out.append(details)
+    return out
+
+
+def extract_human_message_echoes(payload: dict) -> list[dict]:
+    """Extract canonical coexistence echoes emitted by a human WhatsApp client.
+
+    Only ``smb_message_echoes`` is evidence of a native WhatsApp Business
+    device message. Delivery statuses are deliberately excluded: they identify
+    lifecycle, not authorship.
+    """
+    out = []
+    for change in _changes(payload):
+        if change.get("field") != "smb_message_echoes":
+            continue
+        value = change.get("value") or {}
+        metadata = value.get("metadata", {}) or {}
+        for echo in value.get("message_echoes") or []:
+            recipient_id = (echo.get("to") or echo.get("recipient_id") or "").strip()
+            details = _message_details(echo, metadata, recipient_id=recipient_id)
+            if details and recipient_id:
+                details["human_source"] = "smb_message_echoes"
+                out.append(details)
+    return out
+
+
 def extract_message(payload: dict) -> dict | None:
     """
     Extrae info estructurada del payload de WhatsApp. Soporta todos los tipos
@@ -111,52 +190,8 @@ def extract_message(payload: dict) -> dict | None:
     - 'media_id' y 'media_mime' solo están llenos si es media.
     - Devuelve None para payloads de 'statuses' (delivered/read) o malformados.
     """
-    try:
-        entry = payload["entry"][0]
-        change = entry["changes"][0]
-        value = change["value"]
-        metadata = value.get("metadata", {}) or {}
-        messages = value.get("messages")
-        if not messages:
-            return None
-        msg = messages[0]
-        mtype = msg.get("type", "unknown")
-        out = {
-            "wa_id": msg["from"],
-            "message_id": msg["id"],
-            "type": mtype,
-            "text": "",
-            "media_id": None,
-            "media_mime": None,
-            "phone_number_id": metadata.get("phone_number_id", ""),
-            "display_phone_number": metadata.get("display_phone_number", ""),
-        }
-        if mtype == "text":
-            out["text"] = msg.get("text", {}).get("body", "")
-        elif mtype in ("image", "video", "audio", "document", "sticker", "voice"):
-            media = msg.get(mtype, {}) or {}
-            out["media_id"] = media.get("id")
-            out["media_mime"] = media.get("mime_type")
-            # El caption es texto opcional que viene junto con la imagen/video
-            out["text"] = media.get("caption", "")
-        elif mtype == "interactive":
-            interactive = msg.get("interactive", {}) or {}
-            reply = interactive.get("button_reply") or interactive.get("list_reply") or {}
-            out["text"] = reply.get("title", "")
-        if mtype == "location":
-            loc = msg.get("location", {}) or {}
-            out["text"] = f"[ubicación lat={loc.get('latitude')} lon={loc.get('longitude')}]"
-        
-        # Detectar eco saliente enviado desde WhatsApp Web/App
-        display_phone = (metadata.get("display_phone_number") or "").replace("+", "").replace(" ", "").replace("-", "")
-        msg_from = (msg.get("from") or "").replace("+", "")
-        if display_phone and (msg_from == display_phone or msg_from == metadata.get("phone_number_id")):
-            out["is_echo"] = True
-            out["recipient_id"] = msg.get("recipient_id") or msg.get("to") or ""
-
-        return out
-    except (KeyError, IndexError, TypeError):
-        return None
+    messages = extract_messages(payload)
+    return messages[0] if messages else None
 
 
 def extract_statuses(payload: dict) -> list[dict]:

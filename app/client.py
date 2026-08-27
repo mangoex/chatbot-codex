@@ -3347,8 +3347,8 @@ async def client_app(
 
           <div class="checkbox-group" style="margin-bottom:18px;">
             <input type="checkbox" name="escalate_when_agent_initiates" id="escalateWhenAgentInitiates" {"checked" if escalate_config.get("escalate_when_agent_initiates", False) else ""}>
-            <label for="escalateWhenAgentInitiates" style="margin:0; font-weight:500; cursor:pointer;">Escalar cuando yo inicio la conversación</label>
-            <p class="muted-text" style="margin:4px 0 0 24px; font-size:12px;">Si tú o tu equipo inician la conversación con un cliente, prospecto o colaborador, el bot no participará cuando ellos respondan.</p>
+            <label for="escalateWhenAgentInitiates" style="margin:0; font-weight:500; cursor:pointer;">Escalar cuando yo inicio o intervengo en la conversación</label>
+            <p class="muted-text" style="margin:4px 0 0 24px; font-size:12px;">Si tú o tu equipo inician o intervienen desde WhatsApp Business o un dispositivo vinculado, el bot queda en silencio hasta una reanudación explícita.</p>
           </div>
           
           <div style="margin-top:20px;">
@@ -5182,6 +5182,13 @@ async def process_broadcast_queue(broadcast_id: int, bot_id: int) -> None:
             for r in recipients:
                 recipient_id = int(r["id"])
                 wa_id = r["wa_id"]
+                if await db.is_conversation_handoff_active(bot_id, wa_id):
+                    log.info(
+                        "Campaña omitida por relevo humano: broadcast_id=%s bot_id=%s recipient_id=%s",
+                        broadcast_id, bot_id, recipient_id,
+                    )
+                    await db.update_broadcast_recipient_status(recipient_id, "skipped_human_handoff")
+                    continue
                 
                 # Resolver variables para este destinatario específico
                 resolved_params = []
@@ -5202,6 +5209,13 @@ async def process_broadcast_queue(broadcast_id: int, bot_id: int) -> None:
                         
                 # Llamar API de Meta
                 try:
+                    if await db.is_conversation_handoff_active(bot_id, wa_id):
+                        log.info(
+                            "Campaña cancelada antes de enviar por relevo humano: broadcast_id=%s bot_id=%s recipient_id=%s",
+                            broadcast_id, bot_id, recipient_id,
+                        )
+                        await db.update_broadcast_recipient_status(recipient_id, "skipped_human_handoff")
+                        continue
                     await meta_provider.send_template_message(
                         bot_id=bot_id,
                         to_wa_id=wa_id,

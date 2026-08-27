@@ -135,7 +135,8 @@ async def test_process_broadcast_queue(
         []
     ]
 
-    await client.process_broadcast_queue(broadcast_id=10, bot_id=43)
+    with patch("app.db.is_conversation_handoff_active", AsyncMock(return_value=False)):
+        await client.process_broadcast_queue(broadcast_id=10, bot_id=43)
 
     # Check calls
     mock_update_status.assert_any_call(10, "running")
