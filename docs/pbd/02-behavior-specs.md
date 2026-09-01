@@ -2,10 +2,10 @@
 
 ## Metadata
 
-- Version: 0.1.0
+- Version: 0.1.1
 - Status: DRAFT
 - Bot: Asistente Inmobiliario Virtual (Asistto Real Estate)
-- Last updated: 2026-08-20
+- Last updated: 2026-08-31
 
 ## Scope
 
@@ -23,6 +23,7 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
 - US-002 [CONFIRMED]: Como prospecto calificado, quiero recibir fichas resumidas y enlaces de propiedades con información veraz y fotos para evaluarlas.
 - US-003 [CONFIRMED]: Como asesor inmobiliario, quiero que el bot capture los datos del contacto (nombre, teléfono, interés) y los envíe al CRM de Easybroker para dar seguimiento comercial oportuno.
 - US-004 [CONFIRMED]: Como prospecto y asesor, queremos coordinar una llamada de seguimiento (nombre, teléfono, fecha y hora) y que quede agendada automáticamente en el calendario del asesor.
+- US-005 [CONFIRMED]: Como propietario autorizado, quiero pausar o reanudar mi bot desde el WhatsApp conectado usando los comandos administrativos existentes, sin que el eco propio sea confundido con una intervención humana ni afecte otros bots.
 
 ## Conversational States
 
@@ -85,6 +86,15 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
   - Responder: "Con gusto te comunico con nuestro asesor inmobiliario titular para que te atienda personalmente. En breve se pondrá en contacto contigo."
   - Notificar/transferir al agente humano con el historial previo de la conversación.
 
+## Control operativo propietario (SPEC-006, US-005, CON-016)
+
+- Antes de activar el relevo humano por un eco de coexistencia, comprobar si el texto es un comando administrativo existente de pausa o reanudación.
+- Ejecutarlo únicamente cuando el remitente esté autorizado y el destinatario sea el número visible del mismo bot resuelto por `phone_number_id`.
+- Un comando autorizado tiene precedencia sobre el handoff solamente para esa operación administrativa; no elimina ni relaja el silencio de conversaciones humanas.
+- Un mensaje dirigido por el asesor a un cliente, aunque contenga una palabra de control, conserva el flujo normal de relevo humano y nunca cambia el estado global del bot.
+- Los eventos técnicos `sent` y `delivered` no prueban autoría humana y no activan relevo.
+- Las confirmaciones automáticas deben registrar sus identificadores de Meta para conservar idempotencia y evitar falsos handoffs.
+
 ## WhatsApp Format Rules (CON-005)
 - Mensajes directos, máximo 3-4 líneas por turno en interacción normal.
 - Máximo 3 viñetas breves si se listan características.
@@ -95,11 +105,13 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
 - RF-001: Integración con Easybroker API para búsqueda de propiedades en tiempo real.
 - RF-002: Integración con CRM de Easybroker para creación de contactos/leads con propiedad de interés.
 - RF-003: Integración de calendario para verificación de disponibilidad y reserva de llamadas de seguimiento.
+- RF-004: Control determinista y multi-tenant del estado `active`/`paused` desde WhatsApp para propietarios autorizados.
 
 ## Non-Functional Requirements
 - RNF-001: Tiempo de respuesta conversacional óptimo.
 - RNF-002: Seguridad absoluta en el manejo de credenciales de API.
 - RNF-003: Trazabilidad total de estados conversacionales.
+- RNF-004: Aislamiento estricto de comandos por `bot_id`, remitente autorizado, destinatario propio y `message_id` idempotente.
 
 ## Out-of-Scope Rules
 - No procesar cobros de enganches ni contratos de compraventa directos en el chat sin validación humana.

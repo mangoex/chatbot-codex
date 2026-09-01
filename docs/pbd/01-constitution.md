@@ -2,12 +2,12 @@
 
 ## Metadata
 
-- Version: 0.1.0
+- Version: 0.1.1
 - Status: DRAFT
 - Bot: Asistente Inmobiliario Virtual (Asistto Real Estate)
 - Documentation language: Spanish
 - Bot response language: Spanish
-- Last updated: 2026-08-20
+- Last updated: 2026-08-31
 
 ## Identity And Persona
 
@@ -53,6 +53,7 @@
   1. El usuario lo solicite expresamente ("quiero hablar con un asesor/humano").
   2. El usuario manifieste quejas, molestias o controversias legales.
   3. Existan requerimientos altamente personalizados fuera del catálogo o fallos reiterados en la consulta de propiedades.
+- CON-016 [CONFIRMED]: Los comandos administrativos de pausa y reanudación enviados por un propietario autorizado al número de su propio bot se ejecutan de forma determinista antes del relevo humano y fuera del modelo conversacional. Esta excepción no autoriza respuestas automáticas durante handoff: cualquier otro mensaje humano conserva el silencio estricto y el aislamiento por `bot_id` y contacto.
 
 ## Authorized Sources
 
@@ -92,3 +93,4 @@
 | Fecha | Cambio | Reglas Afectadas | Evidencia | Decisión del Propietario |
 | --- | --- | --- | --- | --- |
 | 2026-08-20 | Reconstrucción Inicial PBD para Asesor Inmobiliario con Easybroker | CON-001..CON-015 | Solicitud de integración Easybroker + CRM + Agenda | [TBD: requiere validación del propietario] |
+| 2026-08-31 | Control operativo del bot desde el WhatsApp propietario sin debilitar el relevo humano | CON-016 | Diagnóstico de ecos de coexistencia y autorización explícita del propietario | Confirmado: conservar comandos existentes; no agregar `Parar` |

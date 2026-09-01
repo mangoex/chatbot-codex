@@ -126,6 +126,44 @@ class BotControlUnitTests(unittest.TestCase):
             # Fallback to extra_phone metadata
             self.assertTrue(bot_control.is_authorized_admin("5216671020672", bot=None, extra_phone="16671020672"))
 
+    def test_detect_authorized_owner_control_requires_bot_as_recipient(self):
+        bot = bots.BotContext(
+            id=170,
+            client_id=1,
+            slug="mobi",
+            name="Mobi Muebles",
+            whatsapp_phone_number_id="phone-170",
+            whatsapp_access_token="token",
+            display_phone_number="+52 55 1111 2222",
+            status="active",
+        )
+        with patch.object(bot_control.config, "ADMIN_PHONE_NUMBERS", []):
+            self.assertEqual(
+                bot_control.detect_authorized_owner_control(
+                    "Pausa",
+                    sender_wa_id="525511112222",
+                    recipient_wa_id="525511112222",
+                    bot=bot,
+                ),
+                "pause",
+            )
+            self.assertIsNone(
+                bot_control.detect_authorized_owner_control(
+                    "Pausa",
+                    sender_wa_id="525511112222",
+                    recipient_wa_id="5215512345678",
+                    bot=bot,
+                )
+            )
+            self.assertIsNone(
+                bot_control.detect_authorized_owner_control(
+                    "sincronizar drive",
+                    sender_wa_id="525511112222",
+                    recipient_wa_id="525511112222",
+                    bot=bot,
+                )
+            )
+
 
     @patch("app.db.update_bot_status", new_callable=AsyncMock)
     @patch("app.db.save_message", new_callable=AsyncMock)

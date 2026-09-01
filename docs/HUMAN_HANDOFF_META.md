@@ -19,7 +19,11 @@ identifican al autor y nunca activan el relevo.
 3. Cuando llega un echo válido, Asistto registra la escalación, cancela
    follow-ups y bloquea respuestas de IA, follow-ups y automatizaciones para
    ese contacto. Los reintentos del mismo `message_id` son idempotentes.
-4. La reanudación es explícita: resolver la escalación o limpiar el relevo
+4. Antes de activar el relevo, Asistto comprueba si el eco es un comando de
+   pausa o reanudación ya soportado, enviado por un propietario autorizado al
+   número visible del mismo bot. Solo ese caso controla el estado global; una
+   frase equivalente enviada a un cliente sigue siendo intervención humana.
+5. La reanudación del relevo de una conversación es explícita: resolver la escalación o limpiar el relevo
    desde la acción administrativa autorizada. Un nuevo mensaje del cliente no
    reactiva al bot por sí mismo.
 

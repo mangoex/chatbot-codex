@@ -2,10 +2,10 @@
 
 ## Metadata
 
-- Version: 0.1.0
+- Version: 0.1.1
 - Status: DEFINED
 - Bot: Asistente Inmobiliario Virtual (Asistto Real Estate)
-- Last updated: 2026-08-20
+- Last updated: 2026-08-31
 
 ## Test Strategy
 
@@ -131,3 +131,43 @@ Estado de ejecución de las pruebas: `DEFINED` / `STATICALLY REVIEWED`.
   Y NO DEBE enviar bloques gigantescos de texto que saturen la pantalla del teléfono móvil.
   ```
 - Estado: `STATICALLY REVIEWED`
+
+---
+
+## Platform Control Regression Tests
+
+### TEST-010: Pausa desde el WhatsApp propietario
+- Trace: US-005, SPEC-006, CON-016, RF-004, RNF-004
+- Criterio de Aceptación (AC-010):
+  ```text
+  DADO un eco de coexistencia con un comando existente de pausa, enviado por el número autorizado hacia el número visible del mismo bot
+  CUANDO Asistto procesa el webhook
+  ENTONCES cambia únicamente ese bot a paused, confirma la operación y no activa relevo humano.
+  ```
+
+### TEST-011: Reanudación con handoff previo
+- Trace: US-005, SPEC-006, CON-016, RF-004
+- Criterio de Aceptación (AC-011):
+  ```text
+  DADO un bot pausado y un handoff previo asociado al chat propio
+  CUANDO el propietario envía un comando existente de reanudación hacia su propio número
+  ENTONCES el bot cambia a active y el handoff no impide ejecutar el comando.
+  ```
+
+### TEST-012: Mensaje humano a cliente no controla el bot
+- Trace: SPEC-006, CON-016, RNF-004
+- Criterio de Aceptación (AC-012):
+  ```text
+  DADO que un asesor escribe a un cliente un texto que coincide con un comando administrativo
+  CUANDO el destinatario no es el número visible del bot
+  ENTONCES se conserva el relevo humano y no cambia el estado global del bot.
+  ```
+
+### TEST-013: Status técnico y aislamiento multi-tenant
+- Trace: SPEC-006, CON-016, RNF-004
+- Criterio de Aceptación (AC-013):
+  ```text
+  DADOS eventos sent/delivered, reintentos y bots con phone_number_id distintos
+  CUANDO se procesan los webhooks
+  ENTONCES los statuses no activan handoff, los reintentos son idempotentes y ningún comando modifica otro bot.
+  ```

@@ -147,8 +147,9 @@ async def receive_webhook(request: Request, bg: BackgroundTasks):
         log.warning("Firma invalida de webhook.")
         raise HTTPException(status_code=403, detail="Invalid signature")
     payload = await request.json()
-    # Ecos e intervenciones de asesor: persistir antes de ACK para asegurar relevo humano durable
-    if whatsapp_client.extract_human_message_echoes(payload) or whatsapp_client.extract_statuses(payload):
+    # Ecos e intervenciones de asesor: persistir antes de ACK para asegurar relevo humano durable.
+    # Los statuses son eventos de entrega y no prueban autoría humana.
+    if whatsapp_client.extract_human_message_echoes(payload):
         await _process_human_message_echoes(payload)
     bg.add_task(_process_inbound_messages_safe, payload)
     return {"status": "received"}
@@ -430,13 +431,31 @@ async def _process_human_message_echo(echo: dict) -> None:
     if bot is None:
         log.warning("human_echo_unknown_phone_number_id=%s", echo.get("phone_number_id"))
         return
-    if not await _human_handoff_enabled(bot.id):
-        log.info("human_echo_ignored_rule_disabled bot_id=%s", bot.id)
-        return
     if await db.was_processed(message_id):
         log.info("human_echo_duplicate bot_id=%s message_id=%s", bot.id, message_id)
         return
     content = echo.get("text") or f"[Mensaje multimedia del asesor: {echo.get('type', 'unknown')}]"
+    control_command = bot_control.detect_authorized_owner_control(
+        content,
+        sender_wa_id=echo.get("wa_id") or "",
+        recipient_wa_id=wa_id,
+        bot=bot,
+        metadata_display_phone=echo.get("display_phone_number"),
+    )
+    if control_command:
+        await db.save_message(wa_id, "user", content, bot_id=bot.id)
+        await bot_control.handle_control_command(bot, wa_id, control_command)
+        if not await db.mark_processed(message_id, bot_id=bot.id):
+            log.info("owner_control_duplicate_race bot_id=%s message_id=%s", bot.id, message_id)
+        log.info(
+            "owner_control_executed source=%s bot_id=%s message_id=%s command=%s",
+            echo.get("human_source"), bot.id, message_id, control_command,
+        )
+        return
+
+    if not await _human_handoff_enabled(bot.id):
+        log.info("human_echo_ignored_rule_disabled bot_id=%s", bot.id)
+        return
     await db.set_conversation_handoff_active(bot.id, wa_id)
     await db.save_message(wa_id, "assistant", content, bot_id=bot.id)
     await escalations.record_agent_initiated_escalation(wa_id, content, [], bot_id=bot.id)
@@ -453,32 +472,9 @@ async def _process_human_message_echo(echo: dict) -> None:
 
 
 async def _process_human_message_echoes(payload: dict) -> None:
-    # 1. Ecos de mensajes salientes (SMB, Cloud API, coexistencia)
+    # Los ecos canónicos de coexistencia sí identifican mensajes del dispositivo humano.
     for echo in whatsapp_client.extract_human_message_echoes(payload):
         await _process_human_message_echo(echo)
-
-    # 2. Eventos de status ('sent') enviados cuando el asesor escribe en WhatsApp Web
-    try:
-        statuses = whatsapp_client.extract_statuses(payload)
-        for st in statuses:
-            if st.get("status") in ("sent", "delivered"):
-                msg_id = st.get("message_id")
-                wa_id = st.get("recipient_id")
-                phone_id = st.get("phone_number_id")
-                if not wa_id or not msg_id:
-                    continue
-                if not await db.is_bot_sent_message(msg_id):
-                    echo = {
-                        "recipient_id": wa_id,
-                        "message_id": msg_id,
-                        "phone_number_id": phone_id,
-                        "text": "[Mensaje del asesor desde WhatsApp Web/App]",
-                        "type": "text",
-                        "human_source": "meta_status_outbound",
-                    }
-                    await _process_human_message_echo(echo)
-    except Exception as exc:
-        log.warning("Error procesando status de asesor: %s", exc)
 
 
 async def _process_inbound_messages(payload: dict) -> None:
@@ -538,6 +534,21 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
     mtype = msg["type"]
     user_text = (msg.get("text") or "")[: config.MAX_USER_MESSAGE_CHARS]
     media_type = mtype if mtype != "text" else None
+
+    # Control global del bot: solo un remitente autorizado escribiendo al
+    # número visible de este mismo bot puede adelantarse a routing y handoff.
+    if not media_type and user_text.strip():
+        control_command = bot_control.detect_authorized_owner_control(
+            user_text,
+            sender_wa_id=wa_id,
+            recipient_wa_id=msg.get("display_phone_number") or bot.display_phone_number,
+            bot=bot,
+            metadata_display_phone=msg.get("display_phone_number"),
+        )
+        if control_command:
+            await db.save_message(wa_id, "user", user_text, bot_id=bot.id)
+            await bot_control.handle_control_command(bot, wa_id, control_command)
+            return
 
     # Check for active routing rules (forward_and_bypass)
     try:

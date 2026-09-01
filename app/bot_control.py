@@ -185,6 +185,36 @@ def is_authorized_admin(
     return False
 
 
+def detect_authorized_owner_control(
+    text: str,
+    *,
+    sender_wa_id: str,
+    recipient_wa_id: str,
+    bot: bots.BotContext,
+    metadata_display_phone: str | None = None,
+) -> str | None:
+    """Return a pause/resume command only for an authorized message to this bot.
+
+    Native WhatsApp coexistence echoes represent every message sent by the
+    business device. Requiring the bot itself as recipient prevents a phrase
+    sent by an adviser to a customer from changing the global bot status.
+    """
+    command = detect_control_command(text)
+    if command not in ("pause", "resume"):
+        return None
+    if not is_authorized_admin(sender_wa_id, bot, extra_phone=metadata_display_phone):
+        return None
+
+    own_numbers = [
+        phone
+        for phone in (bot.display_phone_number, metadata_display_phone)
+        if phone
+    ]
+    if not own_numbers or not is_phone_in_list(recipient_wa_id, own_numbers):
+        return None
+    return command
+
+
 
 async def handle_control_command(
     bot: bots.BotContext,
@@ -255,12 +285,17 @@ async def handle_control_command(
 
 
     await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
-    await whatsapp_client.send_text(
+    send_result = await whatsapp_client.send_text(
         wa_id,
         reply,
         phone_number_id=bot.whatsapp_phone_number_id,
         access_token=bot.whatsapp_access_token,
     )
+    if isinstance(send_result, dict):
+        for message in send_result.get("messages") or []:
+            message_id = message.get("id") if isinstance(message, dict) else None
+            if message_id:
+                await db.record_bot_sent_message(message_id, bot.id)
 
     return {
         "action": action,

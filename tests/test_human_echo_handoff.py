@@ -16,10 +16,17 @@ def _bot(bot_id: int, phone_number_id: str) -> MagicMock:
     bot.status = "active"
     bot.whatsapp_phone_number_id = phone_number_id
     bot.whatsapp_access_token = "test-token"
+    bot.display_phone_number = "525511112222"
     return bot
 
 
-def _echo(message_id: str, recipient: str, *, message_type: str = "text") -> dict:
+def _echo(
+    message_id: str,
+    recipient: str,
+    *,
+    message_type: str = "text",
+    body: str = "El asesor ya atiende este caso",
+) -> dict:
     message = {
         "from": "525511112222",
         "to": recipient,
@@ -27,7 +34,7 @@ def _echo(message_id: str, recipient: str, *, message_type: str = "text") -> dic
         "type": message_type,
     }
     if message_type == "text":
-        message["text"] = {"body": "El asesor ya atiende este caso"}
+        message["text"] = {"body": body}
     else:
         message[message_type] = {"id": f"media-{message_id}", "mime_type": "image/jpeg"}
     return message
@@ -58,6 +65,143 @@ class HumanEchoHandoffTests(unittest.TestCase):
         self.assertEqual([item["message_id"] for item in echoes], ["echo-1", "echo-2", "echo-3"])
         self.assertEqual(echoes[1]["type"], "image")
         self.assertEqual(echoes[2]["phone_number_id"], "phone-b")
+
+    def test_owner_self_echo_pause_runs_control_before_handoff(self):
+        async def run():
+            bot = _bot(147, "phone-147")
+            payload = _echo_payload({"field": "smb_message_echoes", "value": {
+                "metadata": {
+                    "phone_number_id": "phone-147",
+                    "display_phone_number": "+52 55 1111 2222",
+                },
+                "message_echoes": [_echo("owner-pause", "525511112222", body="Pausa")],
+            }})
+            with patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=bot)), \
+                 patch.object(main.db, "was_processed", AsyncMock(return_value=False)), \
+                 patch.object(main.db, "mark_processed", AsyncMock(return_value=True)) as marked, \
+                 patch.object(main.db, "update_bot_status", AsyncMock()) as update_status, \
+                 patch.object(main.db, "save_message", AsyncMock()), \
+                 patch.object(main.db, "record_bot_sent_message", AsyncMock()) as record_sent, \
+                 patch.object(main.db, "set_conversation_handoff_active", AsyncMock()) as handoff, \
+                 patch.object(main.follow_ups, "cancel", AsyncMock()), \
+                 patch.object(main.whatsapp_client, "send_text", AsyncMock(return_value={
+                     "messages": [{"id": "confirmation-pause"}],
+                 })):
+                await main._process_message(payload)
+                update_status.assert_awaited_once_with(147, "paused")
+                handoff.assert_not_awaited()
+                record_sent.assert_awaited_once_with("confirmation-pause", 147)
+                marked.assert_awaited_once_with("owner-pause", bot_id=147)
+
+        asyncio.run(run())
+
+    def test_owner_self_echo_resume_bypasses_existing_handoff(self):
+        async def run():
+            bot = _bot(147, "phone-147")
+            bot.status = "paused"
+            payload = _echo_payload({"field": "smb_message_echoes", "value": {
+                "metadata": {"phone_number_id": "phone-147", "display_phone_number": "525511112222"},
+                "message_echoes": [_echo("owner-resume", "525511112222", body="Sigue")],
+            }})
+            with patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=bot)), \
+                 patch.object(main.db, "was_processed", AsyncMock(return_value=False)), \
+                 patch.object(main.db, "mark_processed", AsyncMock(return_value=True)), \
+                 patch.object(main.db, "update_bot_status", AsyncMock()) as update_status, \
+                 patch.object(main.db, "save_message", AsyncMock()), \
+                 patch.object(main.db, "record_bot_sent_message", AsyncMock()), \
+                 patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=True)) as handoff_check, \
+                 patch.object(main.db, "set_conversation_handoff_active", AsyncMock()) as handoff, \
+                 patch.object(main.follow_ups, "cancel", AsyncMock()), \
+                 patch.object(main.whatsapp_client, "send_text", AsyncMock(return_value={
+                     "messages": [{"id": "confirmation-resume"}],
+                 })):
+                await main._process_message(payload)
+                update_status.assert_awaited_once_with(147, "active")
+                handoff_check.assert_not_awaited()
+                handoff.assert_not_awaited()
+
+        asyncio.run(run())
+
+    def test_owner_controls_are_isolated_by_phone_number_id(self):
+        async def run():
+            bot_a = _bot(7, "phone-a")
+            bot_b = _bot(8, "phone-b")
+            bot_b.display_phone_number = "526622223333"
+            second_echo = _echo("owner-b-resume", "526622223333", body="Sigue")
+            second_echo["from"] = "526622223333"
+            payload = _echo_payload(
+                {"field": "smb_message_echoes", "value": {
+                    "metadata": {"phone_number_id": "phone-a", "display_phone_number": "525511112222"},
+                    "message_echoes": [_echo("owner-a-pause", "525511112222", body="Pausa")],
+                }},
+                {"field": "smb_message_echoes", "value": {
+                    "metadata": {"phone_number_id": "phone-b", "display_phone_number": "526622223333"},
+                    "message_echoes": [second_echo],
+                }},
+            )
+
+            async def resolve(phone_id):
+                return {"phone-a": bot_a, "phone-b": bot_b}.get(phone_id)
+
+            with patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(side_effect=resolve)), \
+                 patch.object(main.db, "was_processed", AsyncMock(return_value=False)), \
+                 patch.object(main.db, "mark_processed", AsyncMock(return_value=True)), \
+                 patch.object(main.db, "update_bot_status", AsyncMock()) as update_status, \
+                 patch.object(main.db, "save_message", AsyncMock()), \
+                 patch.object(main.db, "record_bot_sent_message", AsyncMock()), \
+                 patch.object(main.db, "set_conversation_handoff_active", AsyncMock()) as handoff, \
+                 patch.object(main.follow_ups, "cancel", AsyncMock()), \
+                 patch.object(main.whatsapp_client, "send_text", AsyncMock(return_value={"messages": []})):
+                await main._process_message(payload)
+                self.assertEqual(
+                    [call.args for call in update_status.await_args_list],
+                    [(7, "paused"), (8, "active")],
+                )
+                handoff.assert_not_awaited()
+
+        asyncio.run(run())
+
+    def test_control_word_sent_to_customer_remains_human_handoff(self):
+        async def run():
+            bot = _bot(147, "phone-147")
+            payload = _echo_payload({"field": "smb_message_echoes", "value": {
+                "metadata": {"phone_number_id": "phone-147", "display_phone_number": "525511112222"},
+                "message_echoes": [_echo("advisor-pause", "5215512345678", body="Pausa")],
+            }})
+            skill = {"enabled": True, "config": {"escalate_when_agent_initiates": True}}
+            with patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=bot)), \
+                 patch.object(main.db, "get_bot_skill", AsyncMock(return_value=skill)), \
+                 patch.object(main.db, "was_processed", AsyncMock(return_value=False)), \
+                 patch.object(main.db, "mark_processed", AsyncMock(return_value=True)), \
+                 patch.object(main.db, "update_bot_status", AsyncMock()) as update_status, \
+                 patch.object(main.db, "set_conversation_handoff_active", AsyncMock()) as handoff, \
+                 patch.object(main.db, "save_message", AsyncMock()), \
+                 patch.object(main.db, "record_bot_sent_message", AsyncMock()), \
+                 patch.object(main.escalations, "record_agent_initiated_escalation", AsyncMock()), \
+                 patch.object(main.follow_ups, "cancel", AsyncMock()):
+                await main._process_message(payload)
+                update_status.assert_not_awaited()
+                handoff.assert_awaited_once_with(147, "5215512345678")
+
+        asyncio.run(run())
+
+    def test_delivery_status_never_activates_handoff_when_rule_enabled(self):
+        async def run():
+            payload = {"entry": [{"changes": [{"field": "messages", "value": {
+                "metadata": {"phone_number_id": "phone-147"},
+                "statuses": [{
+                    "id": "confirmation-status",
+                    "status": "delivered",
+                    "recipient_id": "525511112222",
+                }],
+            }}]}]}
+            with patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock()) as resolve, \
+                 patch.object(main.db, "set_conversation_handoff_active", AsyncMock()) as handoff:
+                await main._process_message(payload)
+                resolve.assert_not_awaited()
+                handoff.assert_not_awaited()
+
+        asyncio.run(run())
 
     def test_human_initiates_then_next_customer_message_is_silent(self):
         async def run():
@@ -142,6 +286,7 @@ class HumanEchoHandoffTests(unittest.TestCase):
             disabled = {"enabled": False, "config": {"escalate_when_agent_initiates": True}}
             with patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=bot)), \
                  patch.object(main.db, "get_bot_skill", AsyncMock(return_value=disabled)), \
+                 patch.object(main.db, "was_processed", AsyncMock(return_value=False)), \
                  patch.object(main.db, "set_conversation_handoff_active", AsyncMock()) as handoff:
                 await main._process_message(echo_payload)
                 await main._process_message(status_payload)
