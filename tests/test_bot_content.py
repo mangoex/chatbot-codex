@@ -65,7 +65,7 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Prompt bot 7", result)
         self.assertIn("Respuesta personalizada.", result)
 
-    async def test_system_prompt_falls_back_to_file_prompt(self):
+    async def test_default_bot_falls_back_to_file_prompt(self):
         config.SYSTEM_PROMPT = "Prompt desde archivo"
 
         async def no_prompt(bot_id):
@@ -79,12 +79,100 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
         db.get_active_bot_prompt = no_prompt
         db.list_bot_knowledge = no_knowledge
         try:
-            result = await bot_content.system_prompt_for_bot(9)
+            result = await bot_content.system_prompt_for_bot(1)
         finally:
             db.get_active_bot_prompt = original_prompt
             db.list_bot_knowledge = original_knowledge
 
         self.assertEqual(result, "Prompt desde archivo")
+
+    async def test_tenant_without_active_prompt_fails_closed(self):
+        config.SYSTEM_PROMPT = "Prompt global confidencial de Asistto"
+
+        async def no_prompt(bot_id):
+            return None
+
+        async def no_knowledge(bot_id, active_only=True):
+            return []
+
+        with patch.object(db, "get_active_bot_prompt", no_prompt), patch.object(
+            db, "list_bot_knowledge", no_knowledge
+        ):
+            with self.assertRaises(bot_content.BotPromptUnavailable) as raised:
+                await bot_content.system_prompt_for_bot(170)
+
+        self.assertEqual(raised.exception.bot_id, 170)
+        self.assertEqual(raised.exception.reason, "no active prompt")
+
+    async def test_tenant_prompt_load_error_fails_closed(self):
+        config.SYSTEM_PROMPT = "Prompt global confidencial de Asistto"
+
+        async def broken_prompt(bot_id):
+            raise RuntimeError("database unavailable")
+
+        with patch.object(db, "get_active_bot_prompt", broken_prompt):
+            with self.assertRaises(bot_content.BotPromptUnavailable):
+                await bot_content.system_prompt_for_bot(170)
+
+    async def test_prompts_are_selected_independently_for_two_bots(self):
+        prompts = {
+            170: {"content": "Configuración exclusiva de Mobi"},
+            171: {"content": "Configuración exclusiva de Clínica"},
+        }
+        calls = []
+
+        async def prompt_for(bot_id):
+            calls.append(("prompt", bot_id))
+            return prompts[bot_id]
+
+        async def knowledge_for(bot_id, active_only=True):
+            calls.append(("knowledge", bot_id))
+            return [
+                {
+                    "title": f"Datos {bot_id}",
+                    "content": f"Conocimiento exclusivo {bot_id}",
+                    "status": "active",
+                }
+            ]
+
+        with patch.object(db, "get_active_bot_prompt", prompt_for), patch.object(
+            db, "list_bot_knowledge", knowledge_for
+        ):
+            mobi = await bot_content.system_prompt_for_bot(170)
+            clinic = await bot_content.system_prompt_for_bot(171)
+
+        self.assertIn("exclusiva de Mobi", mobi)
+        self.assertIn("Conocimiento exclusivo 170", mobi)
+        self.assertNotIn("Clínica", mobi)
+        self.assertNotIn("171", mobi)
+        self.assertIn("exclusiva de Clínica", clinic)
+        self.assertIn("Conocimiento exclusivo 171", clinic)
+        self.assertNotIn("Mobi", clinic)
+        self.assertNotIn("170", clinic)
+        self.assertEqual(
+            calls,
+            [
+                ("prompt", 170),
+                ("knowledge", 170),
+                ("prompt", 171),
+                ("knowledge", 171),
+            ],
+        )
+
+    async def test_missing_tenant_prompt_never_invokes_model(self):
+        from app import openai_client
+
+        unavailable = bot_content.BotPromptUnavailable(170, "no active prompt")
+        chat = AsyncMock(return_value="No debe ejecutarse")
+        with patch.object(
+            bot_content,
+            "system_prompt_for_bot",
+            AsyncMock(side_effect=unavailable),
+        ), patch.object(openai_client, "_chat", chat):
+            with self.assertRaises(bot_content.BotPromptUnavailable):
+                await openai_client.complete("Hola", [], bot_id=170)
+
+        chat.assert_not_awaited()
 
     async def test_system_prompt_bypasses_rag_for_small_knowledge(self):
         async def fake_prompt(bot_id):

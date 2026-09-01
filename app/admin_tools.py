@@ -19,6 +19,26 @@ def _require_login(request: Request) -> str:
     return user
 
 
+async def _require_bot_access(request: Request, bot_id: int) -> dict:
+    bot = await db.get_bot(bot_id)
+    if not bot:
+        raise HTTPException(status_code=404, detail="Bot no encontrado")
+    session = request.session
+    if (
+        session.get("role") != "agency_admin"
+        and bot.get("client_id") != session.get("client_id")
+    ):
+        raise HTTPException(status_code=403, detail="Sin acceso a este bot")
+    return bot
+
+
+async def _require_bot_editor(request: Request, bot_id: int) -> dict:
+    bot = await _require_bot_access(request, bot_id)
+    if request.session.get("role") not in ("agency_admin", "client_admin"):
+        raise HTTPException(status_code=403, detail="Solo administradores pueden limpiar datos")
+    return bot
+
+
 def _page(title: str, body: str) -> str:
     return f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
@@ -50,8 +70,9 @@ def _yesno(value: object) -> str:
 
 
 @router.get("/reset-contact", response_class=HTMLResponse)
-async def reset_contact_page(request: Request, wa_id: str = ""):
+async def reset_contact_page(request: Request, bot_id: int, wa_id: str = ""):
     _require_login(request)
+    await _require_bot_editor(request, bot_id)
     csrf_token = request.session.get("_csrf_token") or ""
     clean_wa_id = "".join(ch for ch in wa_id if ch.isdigit())
     body = f"""
@@ -60,6 +81,7 @@ async def reset_contact_page(request: Request, wa_id: str = ""):
       <p>Esto borra historial, CRM, escalaciones y follow-ups pendientes de un contacto para probar desde cero.</p>
       <p class="danger">No borra mensajes dentro de WhatsApp; solo la memoria del bot y el panel.</p>
       <form method="post" action="/admin/reset-contact?csrf_token={html.escape(csrf_token)}">
+        <input type="hidden" name="bot_id" value="{bot_id}">
         <label>WhatsApp ID o telefono con lada</label>
         <input name="wa_id" value="{html.escape(clean_wa_id)}" placeholder="521667..." required autofocus>
         <div class="actions">
@@ -73,13 +95,18 @@ async def reset_contact_page(request: Request, wa_id: str = ""):
 
 
 @router.post("/reset-contact")
-async def reset_contact_submit(request: Request, wa_id: str = Form(...)):
+async def reset_contact_submit(
+    request: Request,
+    bot_id: int = Form(...),
+    wa_id: str = Form(...),
+):
     _require_login(request)
+    await _require_bot_editor(request, bot_id)
     clean_wa_id = "".join(ch for ch in wa_id if ch.isdigit())
     if not clean_wa_id:
         raise HTTPException(400, "wa_id requerido")
     try:
-        await db.clear_contact_data([clean_wa_id])
+        await db.clear_contact_data([clean_wa_id], bot_id=bot_id)
     except Exception as exc:
         import traceback
         tb = traceback.format_exc()
@@ -90,7 +117,7 @@ async def reset_contact_submit(request: Request, wa_id: str = Form(...)):
             f"<h2>Error al reiniciar contacto</h2><pre>{html.escape(str(exc))}\n\n{html.escape(tb)}</pre>",
             status_code=500
         )
-    return RedirectResponse("/admin/conversations", status_code=302)
+    return RedirectResponse(f"/admin/conversations?bot_id={bot_id}", status_code=302)
 
 
 @router.get("/calendar-status", response_class=HTMLResponse)

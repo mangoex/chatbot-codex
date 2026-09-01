@@ -189,7 +189,7 @@ CREATE TABLE IF NOT EXISTS chatwoot_handoffs (
 
 CREATE TABLE IF NOT EXISTS leads (
     id BIGSERIAL PRIMARY KEY,
-    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
     wa_id TEXT NOT NULL,
     nombre TEXT,
     negocio TEXT,
@@ -207,7 +207,7 @@ CREATE INDEX IF NOT EXISTS idx_leads_bot_status ON leads(bot_id, qualification_s
 
 CREATE TABLE IF NOT EXISTS pending_follow_ups (
     id BIGSERIAL PRIMARY KEY,
-    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
     wa_id TEXT NOT NULL,
     send_after TIMESTAMPTZ NOT NULL,
     sent BOOLEAN NOT NULL DEFAULT FALSE,
@@ -220,7 +220,7 @@ CREATE INDEX IF NOT EXISTS idx_follow_ups_due
 
 CREATE TABLE IF NOT EXISTS conversations (
     id BIGSERIAL PRIMARY KEY,
-    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
     wa_id TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user','assistant')),
     content TEXT NOT NULL,
@@ -231,19 +231,19 @@ CREATE INDEX IF NOT EXISTS idx_conv_bot_wa_ts ON conversations(bot_id, wa_id, cr
 
 CREATE TABLE IF NOT EXISTS processed_messages (
     message_id TEXT PRIMARY KEY,
-    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
     processed_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS bot_sent_messages (
     message_id TEXT PRIMARY KEY,
-    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS calendar_appointments (
     id BIGSERIAL PRIMARY KEY,
-    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
     wa_id TEXT NOT NULL,
     google_event_id TEXT UNIQUE NOT NULL,
     calendar_id TEXT NOT NULL,
@@ -264,7 +264,7 @@ CREATE INDEX IF NOT EXISTS idx_calendar_appts_bot_status
 
 CREATE TABLE IF NOT EXISTS escalations (
     id BIGSERIAL PRIMARY KEY,
-    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
     wa_id TEXT NOT NULL,
     customer_name TEXT,
     city TEXT,
@@ -292,7 +292,7 @@ CREATE INDEX IF NOT EXISTS idx_esc_bot_wa_status
 
 CREATE TABLE IF NOT EXISTS external_action_runs (
     id BIGSERIAL PRIMARY KEY,
-    bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
     wa_id TEXT,
     action_type TEXT NOT NULL,
     integration_id BIGINT REFERENCES bot_integrations(id) ON DELETE SET NULL,
@@ -397,6 +397,94 @@ async def check_health() -> bool:
         return False
 
 
+async def tenant_isolation_diagnostics() -> dict:
+    """Return metadata-only checks for tenant attribution; never returns content."""
+    tenant_tables = (
+        "leads",
+        "pending_follow_ups",
+        "conversations",
+        "processed_messages",
+        "bot_sent_messages",
+        "calendar_appointments",
+        "escalations",
+        "external_action_runs",
+        "contacts",
+        "broadcasts",
+        "template_triggers",
+        "trigger_executions",
+    )
+    unscoped_rows: dict[str, int] = {}
+    orphan_rows: dict[str, int] = {}
+    async with _pool.acquire() as conn:
+        for table in tenant_tables:
+            unscoped_rows[table] = int(
+                await conn.fetchval(f"SELECT COUNT(*) FROM {table} WHERE bot_id IS NULL")
+                or 0
+            )
+            orphan_rows[table] = int(
+                await conn.fetchval(
+                    f"""
+                    SELECT COUNT(*)
+                    FROM {table} tenant_row
+                    LEFT JOIN bots ON bots.id = tenant_row.bot_id
+                    WHERE tenant_row.bot_id IS NOT NULL AND bots.id IS NULL
+                    """
+                )
+                or 0
+            )
+
+        missing_prompts = await conn.fetch(
+            """
+            SELECT bots.id
+            FROM bots
+            WHERE bots.id <> 1
+              AND bots.status = 'active'
+              AND NOT EXISTS (
+                SELECT 1 FROM bot_prompts
+                WHERE bot_prompts.bot_id = bots.id
+                  AND bot_prompts.status = 'active'
+                  AND length(trim(bot_prompts.content)) > 0
+              )
+            ORDER BY bots.id
+            """
+        )
+        duplicate_active_prompts = await conn.fetch(
+            """
+            SELECT bot_id, COUNT(*) AS active_count
+            FROM bot_prompts
+            WHERE status = 'active'
+            GROUP BY bot_id
+            HAVING COUNT(*) > 1
+            ORDER BY bot_id
+            """
+        )
+        shared_prompt_hashes = await conn.fetch(
+            """
+            SELECT md5(content) AS content_hash,
+                   array_agg(DISTINCT bot_id ORDER BY bot_id) AS bot_ids
+            FROM bot_prompts
+            WHERE status = 'active'
+            GROUP BY md5(content)
+            HAVING COUNT(DISTINCT bot_id) > 1
+            """
+        )
+
+    issues = {
+        "unscoped_rows": {k: v for k, v in unscoped_rows.items() if v},
+        "orphan_rows": {k: v for k, v in orphan_rows.items() if v},
+        "active_tenant_bots_without_prompt": [int(row["id"]) for row in missing_prompts],
+        "bots_with_multiple_active_prompts": [
+            {"bot_id": int(row["bot_id"]), "active_count": int(row["active_count"])}
+            for row in duplicate_active_prompts
+        ],
+        "shared_active_prompt_hashes": [
+            {"content_hash": row["content_hash"], "bot_ids": list(row["bot_ids"])}
+            for row in shared_prompt_hashes
+        ],
+    }
+    return {"ok": not any(issues.values()), "issues": issues}
+
+
 async def run_migrations() -> None:
     async with _pool.acquire() as conn:
         await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_constitution TEXT")
@@ -411,8 +499,10 @@ async def run_migrations() -> None:
             "pending_follow_ups",
             "conversations",
             "processed_messages",
+            "bot_sent_messages",
             "calendar_appointments",
             "escalations",
+            "external_action_runs",
         ):
             await conn.execute(
                 f"""
@@ -487,6 +577,7 @@ async def run_migrations() -> None:
             await conn.execute(
                 f"ALTER TABLE bot_whatsapp_numbers ADD COLUMN IF NOT EXISTS {column} {definition}"
             )
+        await _migrate_bot_foreign_keys_to_cascade(conn)
         await _migrate_tenant_scoped_contact_state(conn)
         # Setup RAG tables and extension
         from app import rag
@@ -494,12 +585,32 @@ async def run_migrations() -> None:
     await ensure_default_bot()
 
 
-async def _migrate_tenant_scoped_contact_state(conn) -> None:
-    """Move legacy globally-unique contact state to bot-scoped uniqueness."""
-    for table in ("leads", "pending_follow_ups"):
+async def _migrate_bot_foreign_keys_to_cascade(conn) -> None:
+    """Prevent future bot deletion from turning tenant rows into unscoped data."""
+    for table in (
+        "leads",
+        "pending_follow_ups",
+        "conversations",
+        "processed_messages",
+        "bot_sent_messages",
+        "calendar_appointments",
+        "escalations",
+        "external_action_runs",
+    ):
+        constraint = f"{table}_bot_id_fkey"
         await conn.execute(
-            f"UPDATE {table} SET bot_id = 1 WHERE bot_id IS NULL"
+            f"""
+            ALTER TABLE {table} DROP CONSTRAINT IF EXISTS {constraint};
+            ALTER TABLE {table}
+                ADD CONSTRAINT {constraint}
+                FOREIGN KEY (bot_id) REFERENCES bots(id) ON DELETE CASCADE
+                NOT VALID;
+            """
         )
+
+
+async def _migrate_tenant_scoped_contact_state(conn) -> None:
+    """Deduplicate tenant-scoped state without assigning unknown legacy rows."""
 
     await conn.execute(
         """
@@ -553,19 +664,14 @@ async def was_processed(message_id: str) -> bool:
 
 
 async def mark_processed(message_id: str, bot_id: int | None = None) -> bool:
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para registrar mensajes procesados")
     async with _pool.acquire() as conn:
-        if bot_id is not None:
-            result = await conn.execute(
-                "INSERT INTO processed_messages(message_id, bot_id) VALUES($1, $2) "
-                "ON CONFLICT DO NOTHING",
-                message_id, bot_id,
-            )
-        else:
-            result = await conn.execute(
-                "INSERT INTO processed_messages(message_id) VALUES($1) "
-                "ON CONFLICT DO NOTHING",
-                message_id,
-            )
+        result = await conn.execute(
+            "INSERT INTO processed_messages(message_id, bot_id) VALUES($1, $2) "
+            "ON CONFLICT DO NOTHING",
+            message_id, bot_id,
+        )
         inserted = int(result.split()[-1]) if result else 0
         return inserted > 0
 
@@ -574,6 +680,8 @@ async def record_bot_sent_message(message_id: str, bot_id: int | None = None) ->
     """Registra que un message_id fue emitido automaticamente por el motor del bot."""
     if not message_id or _pool is None:
         return
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para registrar mensajes del bot")
     try:
         async with _pool.acquire() as conn:
             await conn.execute(
@@ -600,18 +708,16 @@ async def is_bot_sent_message(message_id: str) -> bool:
         return False
 
 
-async def get_history(wa_id: str, limit: int, bot_id: int | None = None) -> list[dict]:
+async def get_history(wa_id: str, limit: int, *, bot_id: int) -> list[dict]:
     """Devuelve los últimos `limit` mensajes en orden cronológico ascendente."""
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para leer historial")
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT role, content FROM conversations
             WHERE wa_id = $1
-              AND (
-                $3::bigint IS NULL
-                OR bot_id = $3
-                OR ($3 = 1 AND bot_id IS NULL)
-              )
+              AND bot_id = $3
             ORDER BY created_at DESC LIMIT $2
             """,
             wa_id, limit, bot_id,
@@ -619,12 +725,14 @@ async def get_history(wa_id: str, limit: int, bot_id: int | None = None) -> list
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
 
-async def is_conversation_initiated_by_agent(bot_id: int | None, wa_id: str, timeout_hours: int | None = None) -> bool:
+async def is_conversation_initiated_by_agent(bot_id: int, wa_id: str, timeout_hours: int | None = None) -> bool:
     """
     Devuelve True si el primer mensaje registrado en el hilo de conversación
     fue enviado por el asesor/asistente (role = 'assistant') y, si se especifica timeout_hours,
     el último mensaje no supera timeout_hours de antigüedad.
     """
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para comprobar inicio de conversacion")
     if not wa_id or _pool is None:
         return False
     try:
@@ -633,10 +741,10 @@ async def is_conversation_initiated_by_agent(bot_id: int | None, wa_id: str, tim
                 """
                 SELECT
                     (SELECT role FROM conversations
-                     WHERE wa_id = $1 AND ($2::bigint IS NULL OR bot_id = $2 OR ($2 = 1 AND bot_id IS NULL))
+                     WHERE wa_id = $1 AND bot_id = $2
                      ORDER BY created_at ASC, id ASC LIMIT 1) AS first_role,
                     (SELECT created_at FROM conversations
-                     WHERE wa_id = $1 AND ($2::bigint IS NULL OR bot_id = $2 OR ($2 = 1 AND bot_id IS NULL))
+                     WHERE wa_id = $1 AND bot_id = $2
                      ORDER BY created_at DESC, id DESC LIMIT 1) AS last_created_at
                 """,
                 wa_id, bot_id,
@@ -657,8 +765,15 @@ async def is_conversation_initiated_by_agent(bot_id: int | None, wa_id: str, tim
         return False
 
 
-async def list_conversation_threads(limit: int = 100, bot_id: int | None = None) -> list[dict]:
+async def list_conversation_threads(
+    limit: int = 100,
+    bot_id: int | None = None,
+    *,
+    allow_all_bots: bool = False,
+) -> list[dict]:
     """Lista conversaciones agrupadas por wa_id con ultimo mensaje y metadata de lead."""
+    if bot_id is None and not allow_all_bots:
+        raise ValueError("bot_id requerido; use allow_all_bots solo para vistas de agencia")
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -669,7 +784,6 @@ async def list_conversation_threads(limit: int = 100, bot_id: int | None = None)
                 WHERE (
                     $1::bigint IS NULL
                     OR bot_id = $1
-                    OR ($1 = 1 AND bot_id IS NULL)
                 )
                 ORDER BY wa_id, created_at DESC
             ),
@@ -679,7 +793,6 @@ async def list_conversation_threads(limit: int = 100, bot_id: int | None = None)
                 WHERE (
                     $1::bigint IS NULL
                     OR bot_id = $1
-                    OR ($1 = 1 AND bot_id IS NULL)
                 )
                 GROUP BY wa_id
             )
@@ -698,7 +811,6 @@ async def list_conversation_threads(limit: int = 100, bot_id: int | None = None)
               ON leads.wa_id = lm.wa_id
              AND (
                 leads.bot_id = $1
-                OR ($1 = 1 AND leads.bot_id IS NULL)
              )
             ORDER BY lm.created_at DESC
             LIMIT $2
@@ -712,20 +824,19 @@ async def list_conversation_threads(limit: int = 100, bot_id: int | None = None)
 async def list_conversation_messages(
     wa_id: str,
     limit: int = 100,
-    bot_id: int | None = None,
+    *,
+    bot_id: int,
 ) -> list[dict]:
     """Devuelve los mensajes de una conversacion en orden cronologico."""
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para leer mensajes")
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT role, content, created_at
             FROM conversations
             WHERE wa_id = $1
-              AND (
-                $3::bigint IS NULL
-                OR bot_id = $3
-                OR ($3 = 1 AND bot_id IS NULL)
-              )
+              AND bot_id = $3
             ORDER BY created_at DESC
             LIMIT $2
             """,
@@ -772,6 +883,9 @@ async def find_pending_escalation(wa_id: str, bot_id: int) -> dict | None:
 
 
 async def create_escalation(data: dict) -> int:
+    bot_id = data.get("bot_id")
+    if not bot_id or int(bot_id) < 1:
+        raise ValueError("bot_id requerido para crear escalaciones")
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -793,7 +907,7 @@ async def create_escalation(data: dict) -> int:
             data.get("media_count", 0),
             data.get("last_media_type"),
             data.get("conversation_excerpt"),
-            data.get("bot_id"),
+            bot_id,
         )
     return row["id"]
 
@@ -912,11 +1026,7 @@ async def get_lead(wa_id: str, bot_id: int | None = None) -> dict | None:
             """
             SELECT * FROM leads
             WHERE wa_id = $1
-              AND (
-                $2::bigint IS NULL
-                OR bot_id = $2
-                OR ($2 = 1 AND bot_id IS NULL)
-              )
+              AND bot_id = $2
             """,
             wa_id,
             bot_id,
@@ -934,6 +1044,8 @@ async def save_calendar_appointment(
     end_at,
     bot_id: int | None = None,
 ) -> None:
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para guardar citas")
     async with _pool.acquire() as conn:
         await conn.execute(
             """
@@ -969,17 +1081,15 @@ async def list_active_calendar_appointments(
     wa_id: str,
     bot_id: int | None = None,
 ) -> list[dict]:
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para leer citas")
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT *
             FROM calendar_appointments
             WHERE wa_id = $1
-              AND (
-                $2::bigint IS NULL
-                OR bot_id = $2
-                OR ($2 = 1 AND bot_id IS NULL)
-              )
+              AND bot_id = $2
               AND status = 'scheduled'
               AND start_at >= now() - interval '2 hours'
             ORDER BY start_at ASC
@@ -1019,7 +1129,7 @@ async def list_leads(
         filters.append(f"qualification_status = ${len(args)}")
     if bot_id:
         args.append(bot_id)
-        filters.append(f"(bot_id = ${len(args)} OR (${len(args)} = 1 AND bot_id IS NULL))")
+        filters.append(f"bot_id = ${len(args)}")
     if filters:
         query += " WHERE " + " AND ".join(filters)
     query += f" ORDER BY created_at DESC LIMIT ${len(args) + 1}"
@@ -1065,7 +1175,7 @@ async def crm_counts(bot_id: int | None = None) -> dict:
                 """
                 SELECT qualification_status, COUNT(*) AS n
                 FROM leads
-                WHERE bot_id = $1 OR ($1 = 1 AND bot_id IS NULL)
+                WHERE bot_id = $1
                 GROUP BY qualification_status
                 """,
                 bot_id,
@@ -1084,11 +1194,11 @@ async def admin_metrics(bot_id: int | None = None) -> dict:
             row = await conn.fetchrow(
                 """
                 SELECT
-                    (SELECT COUNT(DISTINCT wa_id) FROM conversations WHERE bot_id = $1 OR ($1 = 1 AND bot_id IS NULL)) AS conversations,
-                    (SELECT COUNT(*) FROM conversations WHERE bot_id = $1 OR ($1 = 1 AND bot_id IS NULL)) AS messages,
-                    (SELECT COUNT(*) FROM leads WHERE bot_id = $1 OR ($1 = 1 AND bot_id IS NULL)) AS leads,
-                    (SELECT COUNT(*) FROM leads WHERE qualification_status = 'calificado' AND (bot_id = $1 OR ($1 = 1 AND bot_id IS NULL))) AS qualified,
-                    (SELECT COUNT(*) FROM escalations WHERE status = 'pendiente' AND (bot_id = $1 OR ($1 = 1 AND bot_id IS NULL))) AS pending_escalations
+                    (SELECT COUNT(DISTINCT wa_id) FROM conversations WHERE bot_id = $1) AS conversations,
+                    (SELECT COUNT(*) FROM conversations WHERE bot_id = $1) AS messages,
+                    (SELECT COUNT(*) FROM leads WHERE bot_id = $1) AS leads,
+                    (SELECT COUNT(*) FROM leads WHERE qualification_status = 'calificado' AND bot_id = $1) AS qualified,
+                    (SELECT COUNT(*) FROM escalations WHERE status = 'pendiente' AND bot_id = $1) AS pending_escalations
                 """,
                 bot_id,
             )
@@ -1131,14 +1241,12 @@ async def qualify_leads_with_action_link(
                           AND (
                             $2::bigint IS NULL
                             OR conversations.bot_id = $2
-                            OR ($2 = 1 AND conversations.bot_id IS NULL)
                           )
                     )
                   )
                   AND (
                     $2::bigint IS NULL
                     OR leads.bot_id = $2
-                    OR ($2 = 1 AND leads.bot_id IS NULL)
                   )
                 """,
                 action_url,
@@ -1157,7 +1265,6 @@ async def qualify_leads_with_action_link(
                   AND (
                     $1::bigint IS NULL
                     OR leads.bot_id = $1
-                    OR ($1 = 1 AND leads.bot_id IS NULL)
                   )
                 """,
                 bot_id,
@@ -1167,6 +1274,8 @@ async def qualify_leads_with_action_link(
 
 async def upsert_follow_up(wa_id: str, delay_minutes: int = 10, bot_id: int | None = None) -> None:
     """Programa (o reprograma) un único follow-up para wa_id."""
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para programar seguimiento")
     async with _pool.acquire() as conn:
         await conn.execute(
             """
@@ -1232,15 +1341,17 @@ def get_phone_variants(phone: str) -> list[str]:
     return list(set(variants))
 
 
-async def clear_contact_data(wa_ids: list[str], bot_id: int | None = None) -> dict[str, int]:
-    """Borra estado conversacional y comercial de una lista de contactos."""
+async def clear_contact_data(wa_ids: list[str], *, bot_id: int) -> dict[str, int]:
+    """Borra estado de contactos exclusivamente dentro de un bot."""
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para limpiar datos de contacto")
     expanded_wa_ids = []
     for wa_id in wa_ids:
         expanded_wa_ids.extend(get_phone_variants(wa_id))
     expanded_wa_ids = list(set(expanded_wa_ids))
 
-    bot_filter = "" if bot_id is None else " AND bot_id = $2"
-    args: list = [expanded_wa_ids] if bot_id is None else [expanded_wa_ids, bot_id]
+    bot_filter = " AND bot_id = $2"
+    args: list = [expanded_wa_ids, bot_id]
     async with _pool.acquire() as conn:
         results = {
             "conversations": await conn.execute(
@@ -1304,6 +1415,8 @@ async def record_external_action_run(
     response_data: dict | None = None,
     error_message: str | None = None,
 ) -> None:
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para registrar acciones externas")
     async with _pool.acquire() as conn:
         await conn.execute(
             """
@@ -1482,6 +1595,8 @@ async def record_bot_control_event(
     action: str,
     source: str = "whatsapp",
 ) -> None:
+    if not bot_id or bot_id < 1:
+        raise ValueError("bot_id requerido para guardar conversaciones")
     async with _pool.acquire() as conn:
         await conn.execute(
             """

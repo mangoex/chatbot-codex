@@ -2338,13 +2338,19 @@ async def bot_prompt_page(request: Request, bot_id: int, saved: str | None = Non
     pbd_constitution = (prompt or {}).get("pbd_constitution") or ""
     pbd_specs = (prompt or {}).get("pbd_specs") or ""
     pbd_test_suite = (prompt or {}).get("pbd_test_suite") or ""
-    if not content:
+    if not content and bot_id == 1:
         content = config.SYSTEM_PROMPT
-        if bot_id != 1:
-            content = content.replace("Asistto", bot["name"]).replace("asistto", bot["name"].lower())
-    source = "Postgres" if prompt else "Archivo base"
+    source = "Postgres" if prompt else ("Archivo base Asistto" if bot_id == 1 else "Sin prompt activo")
     can_edit = _is_agency(session) or session.get("role") == "client_admin"
-    notice = '<div class="trend">Prompt publicado.</div>' if saved else ""
+    if saved:
+        notice = '<div class="trend">Prompt publicado.</div>'
+    elif bot_id != 1 and not prompt:
+        notice = (
+            '<div class="err">Este tenant no tiene prompt activo. '
+            'El runtime permanecera bloqueado hasta publicar uno propio.</div>'
+        )
+    else:
+        notice = ""
     button = (
         '<button class="btn" type="submit">Publicar prompt</button>'
         if can_edit else
@@ -3770,7 +3776,11 @@ async def dashboard(request: Request):
         )
         metrics = await db.admin_metrics(bot_id=scoped_bot_id)
         crm_counts = await db.crm_counts(bot_id=scoped_bot_id)
-        latest = await db.list_conversation_threads(limit=5, bot_id=scoped_bot_id)
+        latest = await db.list_conversation_threads(
+            limit=5,
+            bot_id=scoped_bot_id,
+            allow_all_bots=_is_agency(session),
+        )
     else:
         metrics = _empty_metrics()
         crm_counts = {}
@@ -3852,7 +3862,9 @@ async def conversations(request: Request, wa_id: str | None = None, bot_id: int 
     has_data_scope = True
     if bot_id:
         await _require_bot_access(session, bot_id)
-    elif not _is_agency(session):
+    else:
+        # Never render a conversation transcript across tenants. Agency users
+        # also start in one explicit bot and can switch scope deliberately.
         bot = await _first_allowed_bot(session)
         if bot:
             bot_id = bot["id"]
@@ -3924,7 +3936,7 @@ async def conversations(request: Request, wa_id: str | None = None, bot_id: int 
             <div style="font-weight:600;font-size:15px;margin-bottom:4px;">{name_display}</div>
             <div style="color:var(--muted);font-size:13px;margin-bottom:12px;">{html.escape((lead or {}).get("negocio") or "Sin negocio")}</div>
             <a class="btn whatsapp" href="{_wa_link(selected)}" target="_blank" style="width:100%; justify-content:center;">{ICONS["wa"]} Contactar</a>
-            <a class="btn secondary" href="/admin/reset-contact?wa_id={html.escape(selected)}" style="width:100%; justify-content:center; margin-top:8px; border-color:#95322d; color:#95322d;">🗑️ Limpiar memoria</a>
+            <a class="btn secondary" href="/admin/reset-contact?bot_id={bot_id}&wa_id={html.escape(selected)}" style="width:100%; justify-content:center; margin-top:8px; border-color:#95322d; color:#95322d;">🗑️ Limpiar memoria</a>
           </div>
           <div class="crm-section">
             <h3>Estado del Lead</h3>

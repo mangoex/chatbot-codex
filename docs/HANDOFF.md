@@ -209,11 +209,14 @@ Cancelacion:
 
 - `GET /health`: valida que la app este viva.
 - `POST /reload`: recarga prompts sin redeploy; requiere `RELOAD_TOKEN`.
-- `POST /maintenance/reset-contact`: limpia memoria de un contacto; requiere
+- `POST /maintenance/reset-contact`: limpia memoria de un contacto dentro del
+  `bot_id` requerido; exige `RELOAD_TOKEN`.
+- `GET /maintenance/tenant-isolation`: diagnóstico metadata-only de filas sin
+  tenant, bots sin prompt activo y prompts activos duplicados; exige
   `RELOAD_TOKEN`.
 - `GET /admin`: panel principal.
 - `GET /admin/conversations`: conversaciones.
-- `GET /admin/reset-contact`: UI para limpiar un contacto.
+- `GET /admin/reset-contact`: UI para limpiar un contacto dentro de un bot explícito.
 - `GET /admin/calendar-status`: diagnostico seguro de Google Calendar.
 - `GET /admin/ai-status`: diagnostico seguro de IA/OpenRouter/OpenAI.
 
@@ -311,7 +314,8 @@ Phase 3A agrega configuracion editable del agente por bot:
 - `/admin/bots/{bot_id}/knowledge` crea y lista documentos de conocimiento.
 - `/admin/bots/{bot_id}/knowledge/{knowledge_id}` edita o archiva documentos.
 - El runtime usa prompt/conocimiento activo por `bot_id`; si un bot no tiene
-  contenido propio, conserva el fallback de archivos versionados.
+  contenido propio, bloquea la llamada al modelo. El fallback de archivos
+  versionados pertenece exclusivamente al bot base de Asistto (`bot_id=1`).
 - La agencia y los usuarios `client_admin` pueden editar. `client_viewer` tiene
   acceso de solo lectura.
 

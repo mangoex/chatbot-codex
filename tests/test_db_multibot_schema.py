@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import asyncio
 import sys
 import types
 import unittest
@@ -54,6 +55,74 @@ class MultiBotSchemaTests(unittest.TestCase):
         self.assertIn("idx_follow_ups_bot_wa_unique", sql)
         self.assertIn("external_action_runs", sql)
         self.assertNotIn("1173938019132326", inspect.getsource(db.run_migrations))
+
+    def test_tenant_rows_do_not_use_set_null_foreign_keys(self):
+        sql = db.SCHEMA_SQL
+        tenant_table_section = sql.replace(
+            "integration_id BIGINT REFERENCES bot_integrations(id) ON DELETE SET NULL",
+            "",
+        )
+        self.assertNotIn("bot_id BIGINT REFERENCES bots(id) ON DELETE SET NULL", tenant_table_section)
+        self.assertIn("ON DELETE CASCADE", inspect.getsource(db._migrate_bot_foreign_keys_to_cascade))
+
+    def test_sensitive_operations_reject_missing_bot_scope(self):
+        with self.assertRaises(ValueError):
+            asyncio.run(db.get_history("5210000000000", 10, bot_id=0))
+        with self.assertRaises(ValueError):
+            asyncio.run(db.list_conversation_threads())
+        with self.assertRaises(ValueError):
+            asyncio.run(db.list_conversation_messages("5210000000000", bot_id=0))
+        with self.assertRaises(ValueError):
+            asyncio.run(db.clear_contact_data(["5210000000000"], bot_id=0))
+        with self.assertRaises(ValueError):
+            asyncio.run(db.is_conversation_initiated_by_agent(0, "5210000000000"))
+        with self.assertRaises(ValueError):
+            asyncio.run(db.list_active_calendar_appointments("5210000000000", bot_id=0))
+
+    def test_scoped_queries_do_not_claim_null_rows_for_bot_one(self):
+        for function in (
+            db.get_history,
+            db.list_conversation_threads,
+            db.list_conversation_messages,
+            db.get_lead,
+            db.crm_counts,
+            db.admin_metrics,
+        ):
+            self.assertNotIn("bot_id IS NULL", inspect.getsource(function))
+
+    def test_reset_contact_applies_bot_filter_to_every_table(self):
+        calls = []
+
+        class FakeConn:
+            async def execute(self, query, *args):
+                calls.append((query, args))
+                return "DELETE 1"
+
+        class Acquire:
+            async def __aenter__(self):
+                return FakeConn()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class FakePool:
+            def acquire(self):
+                return Acquire()
+
+        original_pool = db._pool
+        db._pool = FakePool()
+        try:
+            result = asyncio.run(
+                db.clear_contact_data(["5210000000000"], bot_id=170)
+            )
+        finally:
+            db._pool = original_pool
+
+        self.assertTrue(calls)
+        self.assertEqual(set(result.values()), {1})
+        for query, args in calls:
+            self.assertIn("AND bot_id = $2", query)
+            self.assertEqual(args[1], 170)
 
     def test_bot_lookup_helper_exists(self):
         self.assertTrue(callable(db.get_bot_by_phone_number_id))

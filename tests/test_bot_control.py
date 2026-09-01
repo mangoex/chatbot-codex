@@ -586,3 +586,69 @@ class BotControlWebhookIntegrationTests(unittest.TestCase):
         self.assertIn("8 documentos actualizados", res["reply"])
         mock_sync_drive.assert_awaited_once_with(170, "1folderDrive123", '{"type": "service_account"}')
         mock_send_text.assert_awaited_once()
+
+    def test_missing_tenant_prompt_sends_only_safe_operational_reply(self):
+        from app import bot_content, main
+
+        mock_bot = bots.BotContext(
+            id=170,
+            client_id=44,
+            slug="mobi",
+            name="Mobi Muebles",
+            whatsapp_phone_number_id="phone_170",
+            whatsapp_access_token="token_170",
+            display_phone_number="5216671020672",
+            status="active",
+        )
+        msg = {
+            "wa_id": "5216671638814",
+            "phone_number_id": "phone_170",
+            "display_phone_number": "5216671020672",
+            "message_id": "tenant_prompt_missing_1",
+            "type": "text",
+            "text": "Hola",
+        }
+        save_message = AsyncMock()
+        send_text = AsyncMock()
+        unavailable = bot_content.BotPromptUnavailable(170, "no active prompt")
+
+        with patch.object(
+            main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=mock_bot)
+        ), patch.object(
+            main.db, "was_processed", AsyncMock(return_value=False)
+        ), patch.object(
+            main.db, "mark_processed", AsyncMock(return_value=True)
+        ), patch.object(
+            main.db, "get_active_bot_integration", AsyncMock(return_value=None)
+        ), patch.object(
+            main.follow_ups, "cancel", AsyncMock()
+        ), patch.object(
+            main, "_get_handoff_expiration_hours", AsyncMock(return_value=24)
+        ), patch.object(
+            main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)
+        ), patch.object(
+            main, "_human_handoff_enabled", AsyncMock(return_value=False)
+        ), patch.object(
+            main.db, "get_history", AsyncMock(return_value=[])
+        ), patch.object(
+            main.db, "save_message", save_message
+        ), patch(
+            "app.skill_runtime.calendar_skill_enabled", AsyncMock(return_value=False)
+        ), patch.object(
+            main.openai_client, "complete", AsyncMock(side_effect=unavailable)
+        ), patch.object(
+            main, "_automatic_reply_allowed", AsyncMock(return_value=True)
+        ), patch.object(
+            main.whatsapp_client, "send_text", send_text
+        ):
+            asyncio.run(main._process_message_impl(msg, {}))
+
+        send_text.assert_awaited_once_with(
+            "5216671638814",
+            main.BOT_CONFIGURATION_ERROR_REPLY,
+            phone_number_id="phone_170",
+            access_token="token_170",
+        )
+        self.assertEqual(save_message.await_count, 2)
+        self.assertEqual(save_message.await_args_list[-1].args[2], main.BOT_CONFIGURATION_ERROR_REPLY)
+        self.assertEqual(save_message.await_args_list[-1].kwargs["bot_id"], 170)

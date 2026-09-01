@@ -12,6 +12,15 @@ from app.knowledge_privacy import is_private_directory_title
 log = logging.getLogger("whatsapp-bot")
 
 
+class BotPromptUnavailable(RuntimeError):
+    """Raised when a tenant bot cannot load its own active prompt safely."""
+
+    def __init__(self, bot_id: int | None, reason: str):
+        self.bot_id = bot_id
+        self.reason = reason
+        super().__init__(f"Prompt unavailable for bot_id={bot_id}: {reason}")
+
+
 def combine_prompt(base_prompt: str, knowledge_docs: list[dict]) -> str:
     prompt = (base_prompt or "").strip()
     active_docs = [
@@ -109,21 +118,12 @@ async def system_prompt_for_bot(
     query: str | None = None,
     lexical_query: str | None = None,
 ) -> str:
-    bot_name = "Asistto"
-    if bot_id and bot_id != 1:
-        try:
-            bot_data = await db.get_bot(bot_id)
-            if bot_data and bot_data.get("name"):
-                bot_name = bot_data["name"]
-        except Exception:
-            pass
+    if not bot_id or bot_id < 1:
+        raise BotPromptUnavailable(bot_id, "missing tenant context")
 
-    fallback = config.SYSTEM_PROMPT
-    if bot_name != "Asistto":
-        fallback = fallback.replace("Asistto", bot_name).replace("asistto", bot_name.lower())
-
-    if not bot_id:
-        return fallback
+    # The file-based prompt belongs exclusively to Asistto (bot 1). Tenant
+    # bots must never inherit it or receive a name-replaced derivative.
+    default_prompt = (config.SYSTEM_PROMPT or "").strip()
     try:
         prompt_row = await db.get_active_bot_prompt(bot_id)
         # Cargar todos los documentos de conocimiento primero
@@ -150,9 +150,20 @@ async def system_prompt_for_bot(
             knowledge_docs = [{"title": f"Fragmento de conocimiento {i+1}", "content": chunk, "status": "active"} for i, chunk in enumerate(rag_chunks)]
         else:
             knowledge_docs = all_docs
-    except Exception:
+    except Exception as exc:
         log.exception("No se pudo cargar prompt/conocimiento del bot %s", bot_id)
-        return fallback
+        if bot_id == 1 and default_prompt:
+            log.warning("Bot 1 usara el prompt local de Asistto por error de carga.")
+            return default_prompt
+        raise BotPromptUnavailable(bot_id, "prompt or knowledge load failed") from exc
+
+    base_prompt = ((prompt_row or {}).get("content") or "").strip()
+    if not base_prompt:
+        if bot_id == 1 and default_prompt:
+            base_prompt = default_prompt
+        else:
+            log.error("Bot tenant sin prompt activo; respuesta de IA bloqueada. bot_id=%s", bot_id)
+            raise BotPromptUnavailable(bot_id, "no active prompt")
 
     log.info(
         "Cargando prompt para bot_id=%s. ¿Se encontró row activo?: %s, Documentos de conocimiento: %d, RAG usado: %s",
@@ -161,5 +172,4 @@ async def system_prompt_for_bot(
         len(knowledge_docs),
         bool(query and rag_chunks),
     )
-    base_prompt = (prompt_row or {}).get("content") or fallback
     return combine_prompt(base_prompt, knowledge_docs)

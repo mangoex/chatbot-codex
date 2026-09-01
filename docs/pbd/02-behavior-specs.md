@@ -2,7 +2,7 @@
 
 ## Metadata
 
-- Version: 0.1.2
+- Version: 0.1.3
 - Status: DRAFT
 - Bot: Asistente Inmobiliario Virtual (Asistto Real Estate)
 - Last updated: 2026-08-31
@@ -24,6 +24,7 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
 - US-003 [CONFIRMED]: Como asesor inmobiliario, quiero que el bot capture los datos del contacto (nombre, teléfono, interés) y los envíe al CRM de Easybroker para dar seguimiento comercial oportuno.
 - US-004 [CONFIRMED]: Como prospecto y asesor, queremos coordinar una llamada de seguimiento (nombre, teléfono, fecha y hora) y que quede agendada automáticamente en el calendario del asesor.
 - US-005 [CONFIRMED]: Como propietario autorizado, quiero pausar o reanudar mi bot desde un número administrador registrado para ese bot usando los comandos existentes, sin depender de ecos propios ni afectar otros tenants.
+- US-006 [CONFIRMED]: Como cliente SaaS, quiero que mi bot responda únicamente con mi prompt, conocimiento e historial, y que quede indisponible de forma segura si su configuración propia no puede cargarse.
 
 ## Conversational States
 
@@ -97,6 +98,14 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
 - Los eventos técnicos `sent` y `delivered` no prueban autoría humana y no activan relevo.
 - Las confirmaciones automáticas deben registrar sus identificadores de Meta para conservar idempotencia y evitar falsos handoffs.
 
+## Aislamiento de configuración y datos (SPEC-007, US-006, CON-017)
+
+- Resolver primero el `bot_id` por el `phone_number_id` receptor y conservarlo en todas las lecturas, escrituras y acciones posteriores.
+- Un tenant distinto del bot base requiere un prompt activo, no vacío y asociado a su propio `bot_id`.
+- Si el prompt o conocimiento no puede cargarse, no invocar al modelo; emitir únicamente el aviso operativo neutro definido por la plataforma, salvo que exista relevo humano activo, caso en el que se conserva el silencio.
+- Las filas con `bot_id NULL` son datos no atribuidos y nunca se asumen pertenecientes al bot 1 ni a ningún otro tenant.
+- Las vistas de conversaciones y operaciones destructivas requieren un bot explícito. Los agregados de agencia deben declarar explícitamente su alcance global y no construyen transcripts mezclando tenants.
+
 ## WhatsApp Format Rules (CON-005)
 - Mensajes directos, máximo 3-4 líneas por turno en interacción normal.
 - Máximo 3 viñetas breves si se listan características.
@@ -108,12 +117,15 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
 - RF-002: Integración con CRM de Easybroker para creación de contactos/leads con propiedad de interés.
 - RF-003: Integración de calendario para verificación de disponibilidad y reserva de llamadas de seguimiento.
 - RF-004: Control determinista y multi-tenant del estado `active`/`paused` desde WhatsApp para propietarios autorizados por bot.
+- RF-005: Carga fail-closed de prompt y conocimiento por `bot_id`, sin fallback global para tenants.
+- RF-006: Limpieza de contactos y lectura de conversaciones obligatoriamente acotadas por `bot_id`.
 
 ## Non-Functional Requirements
 - RNF-001: Tiempo de respuesta conversacional óptimo.
 - RNF-002: Seguridad absoluta en el manejo de credenciales de API.
 - RNF-003: Trazabilidad total de estados conversacionales.
 - RNF-004: Aislamiento estricto de comandos por `bot_id`, remitente autorizado, destinatario propio y `message_id` idempotente.
+- RNF-005: Ninguna fila sin atribución tenant puede aparecer por compatibilidad heredada; las eliminaciones futuras de bots no generan datos huérfanos visibles.
 
 ## Out-of-Scope Rules
 - No procesar cobros de enganches ni contratos de compraventa directos en el chat sin validación humana.

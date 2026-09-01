@@ -166,8 +166,9 @@ La primera version del panel multi-bot agrega:
 - Login de clientes con usuarios guardados en Postgres.
 
 Si un bot tiene prompt o conocimiento activo en Postgres, el runtime lo usa en
-las respuestas de WhatsApp. Si no tiene contenido propio, conserva el fallback
-de `prompts/system.md` y `prompts/knowledge/`.
+las respuestas de WhatsApp. El fallback de `prompts/system.md` se reserva para
+el bot base de Asistto (`bot_id=1`). Cualquier otro tenant necesita un prompt
+activo propio; si falta o no puede cargarse, la llamada al modelo se bloquea.
 
 ## 3. Agenda con Google Calendar
 
@@ -212,10 +213,16 @@ Endpoints:
 - `POST /webhooks/whatsapp`
 - `POST /reload`
 - `POST /maintenance/reset-contact`
+- `GET /maintenance/tenant-isolation`
 - `GET /admin`
 - `GET /admin/ai-status`
 - `GET /admin/calendar-status`
 - `GET /admin/reset-contact`
+
+`POST /maintenance/reset-contact` requiere `wa_id`, `bot_id` y el header
+`X-Reload-Token`; nunca limpia el mismo teléfono en otros bots. El diagnóstico
+de aislamiento usa el mismo header y devuelve solo conteos, IDs y hashes, nunca
+el contenido de prompts o conversaciones.
 
 ## 5. DNS para Easypanel
 

@@ -2,7 +2,7 @@
 
 ## Metadata
 
-- Version: 0.1.2
+- Version: 0.1.3
 - Status: DEFINED
 - Bot: Asistente Inmobiliario Virtual (Asistto Real Estate)
 - Last updated: 2026-08-31
@@ -191,4 +191,43 @@ Estado de ejecución de las pruebas: `DEFINED` / `STATICALLY REVIEWED`.
   CUANDO guarda uno o más números administradores válidos
   ENTONCES los números se normalizan, deduplican y se almacenan bajo el bot_id del Bot A.
   Y NO DEBE poder configurar ni leer los números administradores de un bot perteneciente a otro cliente.
+  ```
+
+### TEST-016: Tenant sin prompt activo falla cerrado
+- Trace: US-006, SPEC-007, CON-017, RF-005
+- Criterio de Aceptación (AC-016):
+  ```text
+  DADO un Bot A distinto del bot base que no tiene prompt activo o cuya carga falla
+  CUANDO recibe un mensaje válido
+  ENTONCES la plataforma no invoca al modelo y envía únicamente el aviso operativo neutro.
+  Y NO DEBE reutilizar el prompt global de Asistto cambiando el nombre del bot.
+  ```
+
+### TEST-017: Matriz cruzada de prompt y conocimiento Bot A/B
+- Trace: US-006, SPEC-007, CON-017, RF-005
+- Criterio de Aceptación (AC-017):
+  ```text
+  DADOS Bot A y Bot B con prompts y documentos deliberadamente distintos
+  CUANDO cada bot compone su contexto
+  ENTONCES cada resultado contiene exclusivamente el prompt y conocimiento de su propio bot_id.
+  Y NO DEBE aparecer ningún marcador del otro tenant.
+  ```
+
+### TEST-018: Filas sin tenant no se atribuyen al bot base
+- Trace: SPEC-007, CON-017, RNF-005
+- Criterio de Aceptación (AC-018):
+  ```text
+  DADAS conversaciones o leads heredados con bot_id NULL
+  CUANDO se consulta el Bot 1 o cualquier tenant
+  ENTONCES esas filas no aparecen en historial, panel, CRM ni métricas scoped.
+  ```
+
+### TEST-019: Reset de contacto acotado por bot
+- Trace: SPEC-007, RF-006, RNF-005
+- Criterio de Aceptación (AC-019):
+  ```text
+  DADO el mismo teléfono presente en Bot A y Bot B
+  CUANDO un administrador ejecuta reset-contact para Bot A
+  ENTONCES solo se eliminan filas cuyo bot_id es A.
+  Y las filas de Bot B permanecen sin cambios.
   ```

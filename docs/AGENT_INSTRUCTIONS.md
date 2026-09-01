@@ -66,7 +66,8 @@ los secretos viven en Easypanel, Meta, Google y OpenRouter.
 
 - `/admin/ai-status`: valida OpenRouter/OpenAI sin mostrar API key.
 - `/admin/calendar-status`: valida Google Calendar sin mostrar secretos.
-- `/admin/reset-contact`: limpia memoria de un contacto para empezar una prueba.
+- `/admin/reset-contact?bot_id=...`: limpia memoria de un contacto únicamente
+  dentro del bot seleccionado para empezar una prueba.
 - `/reload`: solo recarga prompts; cambios Python requieren redeploy completo.
 
 ## Seguridad

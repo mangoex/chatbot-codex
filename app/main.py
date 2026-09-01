@@ -20,6 +20,7 @@ from app import (
     agenda_guard,
     audio_transcriber,
     automations,
+    bot_content,
     bot_control,
     bots,
     calendar_client,
@@ -302,12 +303,22 @@ def reload_prompts(x_reload_token: str = Header(None)):
 @app.post("/maintenance/reset-contact")
 async def reset_contact_memory(
     wa_id: str,
+    bot_id: int,
     x_reload_token: str = Header(None),
 ):
     if not config.RELOAD_TOKEN or x_reload_token != config.RELOAD_TOKEN:
         raise HTTPException(status_code=403, detail="Forbidden")
-    deleted = await db.clear_contact_data([wa_id])
-    return {"cleared_wa_ids": [wa_id], "deleted": deleted}
+    if not await db.get_bot(bot_id):
+        raise HTTPException(status_code=404, detail="Bot no encontrado")
+    deleted = await db.clear_contact_data([wa_id], bot_id=bot_id)
+    return {"bot_id": bot_id, "cleared_wa_ids": [wa_id], "deleted": deleted}
+
+
+@app.get("/maintenance/tenant-isolation")
+async def tenant_isolation_status(x_reload_token: str = Header(None)):
+    if not config.RELOAD_TOKEN or x_reload_token != config.RELOAD_TOKEN:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    return await db.tenant_isolation_diagnostics()
 
 
 async def _process_message_safe(payload: dict) -> None:
@@ -325,6 +336,11 @@ MEDIA_REPLY = (
 AI_ERROR_REPLY = (
     "Perdón, tardé más de lo esperado y no pude procesar bien ese mensaje. "
     "¿Me lo repites en una frase?"
+)
+
+BOT_CONFIGURATION_ERROR_REPLY = (
+    "Por el momento este asistente no está disponible. "
+    "El equipo responsable ya puede revisar su configuración."
 )
 
 
@@ -758,6 +774,26 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             openai_model=bot.openai_model,
             wa_id=wa_id,
         )
+    except bot_content.BotPromptUnavailable:
+        log.exception(
+            "Respuesta bloqueada por configuracion tenant incompleta. bot_id=%s",
+            bot.id,
+        )
+        if not await _automatic_reply_allowed(bot.id, wa_id):
+            return
+        await db.save_message(
+            wa_id,
+            "assistant",
+            BOT_CONFIGURATION_ERROR_REPLY,
+            bot_id=bot.id,
+        )
+        await whatsapp_client.send_text(
+            wa_id,
+            BOT_CONFIGURATION_ERROR_REPLY,
+            phone_number_id=bot.whatsapp_phone_number_id,
+            access_token=bot.whatsapp_access_token,
+        )
+        return
     except Exception:
         log.exception("Error llamando al modelo")
         if not await _automatic_reply_allowed(bot.id, wa_id):

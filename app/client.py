@@ -3018,6 +3018,7 @@ async def client_app(
     
     <!-- 3. TAB PANEL: COMPORTAMIENTO (PROMPT) -->
     <div id="panel-prompt" class="tab-panel">
+      {'' if prompt_row else '<div class="notice-banner error">Este bot no tiene un prompt activo. Permanecera bloqueado hasta publicar un comportamiento propio.</div>'}
       <form id="behaviorForm" method="post" action="/client/bots/{bot_id}/prompt/save?csrf_token={html.escape(csrf_token)}">
         <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
 

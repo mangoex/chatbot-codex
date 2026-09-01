@@ -4,6 +4,7 @@ import unittest
 import sys
 import types
 import asyncio
+from unittest.mock import patch
 
 
 class _DummyRouter:
@@ -188,6 +189,29 @@ class AdminControlAppTests(unittest.TestCase):
         self.assertIn("promptAssistantForm", response.content)
         self.assertIn("/admin/bots/7/prompt/assist", response.content)
         self.assertIn("Prompt actual", response.content)
+
+    def test_tenant_prompt_page_does_not_copy_global_prompt(self):
+        class Request:
+            session = {"user": "admin", "role": "agency_admin", "client_id": None}
+
+        async def fake_get_bot(bot_id):
+            return {"id": bot_id, "name": "Tenant Demo", "client_id": 9}
+
+        async def no_prompt(bot_id):
+            return None
+
+        with patch.object(admin.db, "get_bot", fake_get_bot), patch.object(
+            admin.db, "get_active_bot_prompt", no_prompt
+        ), patch.object(
+            admin.config,
+            "SYSTEM_PROMPT",
+            "CONFIGURACION_GLOBAL_QUE_NO_DEBE_COPIARSE",
+        ):
+            response = asyncio.run(admin.bot_prompt_page(Request(), 170))
+
+        self.assertIn("Sin prompt activo", response.content)
+        self.assertIn("runtime permanecera bloqueado", response.content)
+        self.assertNotIn("CONFIGURACION_GLOBAL_QUE_NO_DEBE_COPIARSE", response.content)
 
     def test_client_without_bot_gets_empty_panel_state(self):
         session = {"user": "rubi@example.com", "role": "client_admin", "client_id": 44}
@@ -447,31 +471,43 @@ class AdminControlAppTests(unittest.TestCase):
 
         # 1. Test GET /reset-contact page sets CSRF and displays form
         req = Request()
-        resp = asyncio.run(admin_tools.reset_contact_page(req, wa_id="12345"))
+        original_get_bot = admin_tools.db.get_bot
+
+        async def fake_get_bot(bot_id):
+            self.assertEqual(bot_id, 7)
+            return {"id": 7, "client_id": 44}
+
+        admin_tools.db.get_bot = fake_get_bot
+        resp = asyncio.run(admin_tools.reset_contact_page(req, bot_id=7, wa_id="12345"))
         self.assertIsNotNone(resp)
         self.assertIn("_csrf_token", req.session)
         token = req.session["_csrf_token"]
         self.assertIn(f'action="/admin/reset-contact?csrf_token={token}"', resp.body.decode("utf-8"))
+        self.assertIn('name="bot_id" value="7"', resp.body.decode("utf-8"))
 
         # 2. Test POST /reset-contact submit clears data
-        async def fake_clear_contact_data(wa_ids):
+        async def fake_clear_contact_data(wa_ids, *, bot_id):
             self.assertEqual(wa_ids, ["12345"])
+            self.assertEqual(bot_id, 7)
             return True
 
         original_clear = admin_tools.db.clear_contact_data
         admin_tools.db.clear_contact_data = fake_clear_contact_data
         try:
-            resp_post = asyncio.run(admin_tools.reset_contact_submit(Request(), wa_id="12345"))
+            resp_post = asyncio.run(
+                admin_tools.reset_contact_submit(Request(), bot_id=7, wa_id="12345")
+            )
             self.assertIsNotNone(resp_post)
             if hasattr(resp_post, "headers") and "location" in resp_post.headers:
-                self.assertEqual(resp_post.headers["location"], "/admin/conversations")
+                self.assertEqual(resp_post.headers["location"], "/admin/conversations?bot_id=7")
             elif hasattr(resp_post, "content"):
-                self.assertEqual(resp_post.content, "/admin/conversations")
+                self.assertEqual(resp_post.content, "/admin/conversations?bot_id=7")
             elif hasattr(resp_post, "body"):
                 # fallback for RedirectResponse body if headers are not structure-matching standard
-                self.assertEqual(resp_post.headers.get("location"), "/admin/conversations")
+                self.assertEqual(resp_post.headers.get("location"), "/admin/conversations?bot_id=7")
         finally:
             admin_tools.db.clear_contact_data = original_clear
+            admin_tools.db.get_bot = original_get_bot
 
 
 if __name__ == "__main__":
