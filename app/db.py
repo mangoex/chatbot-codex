@@ -69,6 +69,30 @@ CREATE TABLE IF NOT EXISTS bot_whatsapp_numbers (
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS bot_admin_phones (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    phone_number TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(bot_id, phone_number)
+);
+CREATE INDEX IF NOT EXISTS idx_bot_admin_phones_active
+    ON bot_admin_phones(bot_id, enabled);
+
+CREATE TABLE IF NOT EXISTS bot_control_events (
+    id BIGSERIAL PRIMARY KEY,
+    bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+    sender_last4 TEXT NOT NULL,
+    command TEXT NOT NULL,
+    action TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'whatsapp',
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_bot_control_events_bot_created
+    ON bot_control_events(bot_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS bot_prompts (
     id BIGSERIAL PRIMARY KEY,
     bot_id BIGINT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
@@ -1356,7 +1380,16 @@ async def get_bot_by_phone_number_id(phone_number_id: str) -> dict | None:
                 bot_whatsapp_numbers.waba_id,
                 bot_whatsapp_numbers.meta_app_id,
                 bot_whatsapp_numbers.meta_config_id,
-                bots.openai_model
+                bots.openai_model,
+                COALESCE(
+                    (
+                        SELECT array_agg(admin_phone.phone_number ORDER BY admin_phone.id)
+                        FROM bot_admin_phones admin_phone
+                        WHERE admin_phone.bot_id = bots.id
+                          AND admin_phone.enabled = TRUE
+                    ),
+                    ARRAY[]::TEXT[]
+                ) AS admin_phone_numbers
             FROM bot_whatsapp_numbers
             JOIN bots ON bots.id = bot_whatsapp_numbers.bot_id
             WHERE bot_whatsapp_numbers.phone_number_id = $1
@@ -1384,7 +1417,16 @@ async def get_bot_whatsapp_number(bot_id: int) -> dict | None:
                 connected_at,
                 last_sync_status,
                 last_sync_at,
-                status
+                status,
+                COALESCE(
+                    (
+                        SELECT array_agg(admin_phone.phone_number ORDER BY admin_phone.id)
+                        FROM bot_admin_phones admin_phone
+                        WHERE admin_phone.bot_id = bot_whatsapp_numbers.bot_id
+                          AND admin_phone.enabled = TRUE
+                    ),
+                    ARRAY[]::TEXT[]
+                ) AS admin_phone_numbers
             FROM bot_whatsapp_numbers
             WHERE bot_id = $1
               AND status = 'active'
@@ -1393,6 +1435,65 @@ async def get_bot_whatsapp_number(bot_id: int) -> dict | None:
             bot_id,
         )
     return dict(row) if row else None
+
+
+async def list_bot_admin_phones(bot_id: int, enabled_only: bool = True) -> list[dict]:
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, bot_id, phone_number, enabled, created_at, updated_at
+            FROM bot_admin_phones
+            WHERE bot_id = $1
+              AND ($2::boolean = FALSE OR enabled = TRUE)
+            ORDER BY id
+            """,
+            bot_id,
+            enabled_only,
+        )
+    return [dict(row) for row in rows]
+
+
+async def replace_bot_admin_phones(bot_id: int, phone_numbers: list[str]) -> None:
+    """Replace the active WhatsApp control numbers for one bot only."""
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                "UPDATE bot_admin_phones SET enabled = FALSE, updated_at = now() WHERE bot_id = $1",
+                bot_id,
+            )
+            for phone_number in phone_numbers:
+                await conn.execute(
+                    """
+                    INSERT INTO bot_admin_phones(bot_id, phone_number, enabled)
+                    VALUES($1, $2, TRUE)
+                    ON CONFLICT (bot_id, phone_number) DO UPDATE SET
+                        enabled = TRUE,
+                        updated_at = now()
+                    """,
+                    bot_id,
+                    phone_number,
+                )
+
+
+async def record_bot_control_event(
+    bot_id: int,
+    sender_last4: str,
+    command: str,
+    action: str,
+    source: str = "whatsapp",
+) -> None:
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO bot_control_events(bot_id, sender_last4, command, action, source)
+            VALUES($1, $2, $3, $4, $5)
+            """,
+            bot_id,
+            sender_last4,
+            command,
+            action,
+            source,
+        )
 
 
 

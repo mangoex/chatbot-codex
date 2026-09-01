@@ -27,6 +27,15 @@ identifican al autor y nunca activan el relevo.
    desde la acción administrativa autorizada. Un nuevo mensaje del cliente no
    reactiva al bot por sí mismo.
 
+## Control recomendado en instalaciones multi-tenant
+
+El control global del bot no debe depender del automensaje del número de negocio.
+Cada cliente registra en el panel uno o más números administradores para su bot y
+envía `Pausa` o `Sigue` desde uno de esos números al WhatsApp del bot. El webhook
+estándar se resuelve por `phone_number_id` y la autorización se valida únicamente
+contra el `bot_id` receptor. `ADMIN_PHONE_NUMBERS` queda reservado como acceso de
+emergencia de la agencia y no sustituye la configuración por tenant.
+
 ## Diagnóstico seguro
 
 El endpoint de diagnóstico WABA muestra la suscripción de la app y la URL de

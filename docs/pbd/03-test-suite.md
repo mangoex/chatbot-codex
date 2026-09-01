@@ -2,7 +2,7 @@
 
 ## Metadata
 
-- Version: 0.1.1
+- Version: 0.1.2
 - Status: DEFINED
 - Bot: Asistente Inmobiliario Virtual (Asistto Real Estate)
 - Last updated: 2026-08-31
@@ -170,4 +170,25 @@ Estado de ejecución de las pruebas: `DEFINED` / `STATICALLY REVIEWED`.
   DADOS eventos sent/delivered, reintentos y bots con phone_number_id distintos
   CUANDO se procesan los webhooks
   ENTONCES los statuses no activan handoff, los reintentos son idempotentes y ningún comando modifica otro bot.
+  ```
+
+### TEST-014: Segundo número administrador controla solo su bot
+- Trace: US-005, SPEC-006, CON-016, RF-004, RNF-004
+- Criterio de Aceptación (AC-014):
+  ```text
+  DADO un número administrador registrado únicamente para el Bot A
+  CUANDO ese número envía "Pausa" al WhatsApp del Bot A como mensaje estándar
+  ENTONCES Asistto cambia únicamente el Bot A a paused y confirma la operación.
+  Y CUANDO el mismo remitente escribe "Pausa" al Bot B
+  ENTONCES no obtiene privilegios administrativos en el Bot B y el estado del Bot B no cambia.
+  ```
+
+### TEST-015: Configuración multi-tenant desde el panel
+- Trace: US-005, SPEC-006, CON-016, RNF-004
+- Criterio de Aceptación (AC-015):
+  ```text
+  DADO un client_admin autenticado con acceso al Bot A
+  CUANDO guarda uno o más números administradores válidos
+  ENTONCES los números se normalizan, deduplican y se almacenan bajo el bot_id del Bot A.
+  Y NO DEBE poder configurar ni leer los números administradores de un bot perteneciente a otro cliente.
   ```

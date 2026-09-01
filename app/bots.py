@@ -16,6 +16,7 @@ class BotContext:
     display_phone_number: str = ""
     openai_model: str = ""
     status: str = "active"
+    admin_phone_numbers: tuple[str, ...] = ()
 
 
 def default_bot() -> BotContext:
@@ -47,6 +48,7 @@ def _from_row(row: dict) -> BotContext:
         display_phone_number=row.get("display_phone_number") or "",
         openai_model=row.get("openai_model") or config.OPENAI_MODEL,
         status=row.get("status") or "active",
+        admin_phone_numbers=tuple(row.get("admin_phone_numbers") or ()),
     )
 
 
@@ -92,6 +94,7 @@ async def resolve_by_bot_id(bot_id: int | None) -> BotContext | None:
                 "display_phone_number": display_num,
                 "openai_model": row.get("openai_model"),
                 "status": row.get("status"),
+                "admin_phone_numbers": wa_row.get("admin_phone_numbers", ()) if wa_row else (),
             }
             return _from_row(full_row)
         return None

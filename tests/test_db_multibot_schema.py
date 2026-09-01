@@ -20,6 +20,8 @@ class MultiBotSchemaTests(unittest.TestCase):
             "client_users",
             "bots",
             "bot_whatsapp_numbers",
+            "bot_admin_phones",
+            "bot_control_events",
             "bot_prompts",
             "bot_knowledge",
             "bot_skills",
@@ -121,6 +123,9 @@ class MultiBotSchemaTests(unittest.TestCase):
             "promote_order_payment_quote",
             "get_active_order_payment_expectation",
             "record_order_receipt_validation",
+            "list_bot_admin_phones",
+            "replace_bot_admin_phones",
+            "record_bot_control_event",
         ):
             self.assertTrue(callable(getattr(db, name)))
 

@@ -164,6 +164,46 @@ class BotControlUnitTests(unittest.TestCase):
                 )
             )
 
+    def test_per_bot_admin_cannot_control_another_tenant_bot(self):
+        bot_a = bots.BotContext(
+            id=201,
+            client_id=21,
+            slug="tenant-a",
+            name="Tenant A",
+            whatsapp_phone_number_id="phone-a",
+            whatsapp_access_token="token-a",
+            display_phone_number="525511110001",
+            admin_phone_numbers=("5215512345678",),
+        )
+        bot_b = bots.BotContext(
+            id=202,
+            client_id=22,
+            slug="tenant-b",
+            name="Tenant B",
+            whatsapp_phone_number_id="phone-b",
+            whatsapp_access_token="token-b",
+            display_phone_number="525511110002",
+            admin_phone_numbers=("5215587654321",),
+        )
+        with patch.object(bot_control.config, "ADMIN_PHONE_NUMBERS", []):
+            self.assertEqual(
+                bot_control.detect_authorized_owner_control(
+                    "Pausa",
+                    sender_wa_id="5215512345678",
+                    recipient_wa_id="525511110001",
+                    bot=bot_a,
+                ),
+                "pause",
+            )
+            self.assertIsNone(
+                bot_control.detect_authorized_owner_control(
+                    "Pausa",
+                    sender_wa_id="5215512345678",
+                    recipient_wa_id="525511110002",
+                    bot=bot_b,
+                )
+            )
+
 
     @patch("app.db.update_bot_status", new_callable=AsyncMock)
     @patch("app.db.save_message", new_callable=AsyncMock)
@@ -299,6 +339,7 @@ class BotControlUnitTests(unittest.TestCase):
 
 
 class BotControlWebhookIntegrationTests(unittest.TestCase):
+    @patch("app.db.record_bot_control_event", new_callable=AsyncMock)
     @patch("app.db.get_history", new_callable=AsyncMock, return_value=[])
     @patch("app.db.was_processed", new_callable=AsyncMock, return_value=False)
     @patch("app.db.mark_processed", new_callable=AsyncMock, return_value=True)
@@ -319,6 +360,7 @@ class BotControlWebhookIntegrationTests(unittest.TestCase):
         mock_mark_proc,
         mock_was_proc,
         mock_get_history,
+        mock_record_event,
     ):
         from app import main
 
@@ -329,6 +371,7 @@ class BotControlWebhookIntegrationTests(unittest.TestCase):
         mock_bot.whatsapp_phone_number_id = "phone_10"
         mock_bot.whatsapp_access_token = "token_10"
         mock_bot.display_phone_number = "5216869999999"
+        mock_bot.admin_phone_numbers = ("5216861234567",)
         mock_resolve_bot.return_value = mock_bot
 
         payload = {
@@ -353,12 +396,13 @@ class BotControlWebhookIntegrationTests(unittest.TestCase):
             ]
         }
 
-        with patch.object(bot_control.config, "ADMIN_PHONE_NUMBERS", ["5216861234567"]), \
+        with patch.object(bot_control.config, "ADMIN_PHONE_NUMBERS", []), \
              patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)):
             msg = main.whatsapp_client.extract_message(payload)
             asyncio.run(main._process_message_impl(msg, payload))
 
         mock_update_status.assert_awaited_once_with(10, "paused")
+        mock_record_event.assert_awaited_once_with(10, "4567", "pause", "paused")
         mock_send_text.assert_awaited()
         sent_body = mock_send_text.call_args[0][1]
         self.assertIn("pausado", sent_body.lower())

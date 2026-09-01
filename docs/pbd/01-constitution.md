@@ -2,7 +2,7 @@
 
 ## Metadata
 
-- Version: 0.1.1
+- Version: 0.1.2
 - Status: DRAFT
 - Bot: Asistente Inmobiliario Virtual (Asistto Real Estate)
 - Documentation language: Spanish
@@ -53,7 +53,7 @@
   1. El usuario lo solicite expresamente ("quiero hablar con un asesor/humano").
   2. El usuario manifieste quejas, molestias o controversias legales.
   3. Existan requerimientos altamente personalizados fuera del catálogo o fallos reiterados en la consulta de propiedades.
-- CON-016 [CONFIRMED]: Los comandos administrativos de pausa y reanudación enviados por un propietario autorizado al número de su propio bot se ejecutan de forma determinista antes del relevo humano y fuera del modelo conversacional. Esta excepción no autoriza respuestas automáticas durante handoff: cualquier otro mensaje humano conserva el silencio estricto y el aislamiento por `bot_id` y contacto.
+- CON-016 [CONFIRMED]: Los comandos administrativos de pausa y reanudación enviados por un propietario autorizado al número de su propio bot se ejecutan de forma determinista antes del relevo humano y fuera del modelo conversacional. La autorización pertenece al `bot_id` receptor: un propietario de un tenant nunca obtiene permisos sobre los bots de otro tenant. Esta excepción no autoriza respuestas automáticas durante handoff; cualquier otro mensaje humano conserva el silencio estricto.
 
 ## Authorized Sources
 
@@ -94,3 +94,4 @@
 | --- | --- | --- | --- | --- |
 | 2026-08-20 | Reconstrucción Inicial PBD para Asesor Inmobiliario con Easybroker | CON-001..CON-015 | Solicitud de integración Easybroker + CRM + Agenda | [TBD: requiere validación del propietario] |
 | 2026-08-31 | Control operativo del bot desde el WhatsApp propietario sin debilitar el relevo humano | CON-016 | Diagnóstico de ecos de coexistencia y autorización explícita del propietario | Confirmado: conservar comandos existentes; no agregar `Parar` |
+| 2026-08-31 | Números administradores independientes por bot para control multi-tenant | CON-016 | Decisión del propietario de usar un segundo número administrador en el SaaS | Confirmado: autorización aislada por bot receptor |

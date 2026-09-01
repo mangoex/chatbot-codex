@@ -102,6 +102,11 @@ def _clean_phone(phone: str | None) -> str:
     return digits
 
 
+def normalize_admin_phone(phone: str | None) -> str:
+    """Normalize a configured administrator phone without exposing formatting details."""
+    return _clean_phone(phone)
+
+
 def extract_10_digits(phone: str | None) -> str:
     """Extrae los últimos 10 dígitos numéricos para comparación libre de prefijos (52, 521, 1, etc.)."""
     if not phone:
@@ -172,6 +177,9 @@ def is_authorized_admin(
 ) -> bool:
     """Verifica si el remitente está autorizado para ejecutar comandos de control."""
     if is_phone_in_list(wa_id, config.ADMIN_PHONE_NUMBERS):
+        return True
+
+    if bot and is_phone_in_list(wa_id, bot.admin_phone_numbers):
         return True
 
     if bot and bot.display_phone_number:
@@ -283,6 +291,17 @@ async def handle_control_command(
     else:
         raise ValueError(f"Comando de control no reconocido: {command}")
 
+
+    try:
+        await db.record_bot_control_event(
+            bot.id,
+            extract_10_digits(wa_id)[-4:],
+            command,
+            action,
+        )
+    except Exception:
+        # Auditing must never roll back an already-applied operational command.
+        log.exception("No se pudo registrar auditoría de control para bot_id=%s", bot.id)
 
     await db.save_message(wa_id, "assistant", reply, bot_id=bot.id)
     send_result = await whatsapp_client.send_text(

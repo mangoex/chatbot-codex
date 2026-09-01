@@ -33,6 +33,7 @@ class BotResolverTests(unittest.TestCase):
             "display_phone_number": "15550001111",
             "whatsapp_access_token": None,
             "openai_model": "openrouter/free",
+            "admin_phone_numbers": ["5215512345678"],
         }
 
         with patch("app.bots.db.get_bot_by_phone_number_id", AsyncMock(return_value=row)), \
@@ -43,6 +44,7 @@ class BotResolverTests(unittest.TestCase):
         self.assertEqual(bot.client_id, 7)
         self.assertEqual(bot.slug, "clinica-demo")
         self.assertEqual(bot.whatsapp_phone_number_id, "pnid-42")
+        self.assertEqual(bot.admin_phone_numbers, ("5215512345678",))
 
     def test_resolve_by_phone_number_id_uses_encrypted_whatsapp_cloud_token(self):
         row = {

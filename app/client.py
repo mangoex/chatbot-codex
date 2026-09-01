@@ -16,7 +16,7 @@ from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Request, Form, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
-from app import db, config, auth, secure_store, meta_provider, prompt_assistant, pbd_validation, skill_runtime, calendar_client, file_parser
+from app import bot_control, db, config, auth, secure_store, meta_provider, prompt_assistant, pbd_validation, skill_runtime, calendar_client, file_parser
 from app.knowledge_privacy import is_private_directory_title
 
 log = logging.getLogger("client-panel")
@@ -1208,6 +1208,9 @@ async def client_app(
     # WhatsApp config
     wa_row = await db.get_bot_whatsapp_number(bot_id)
     wa_info = wa_row or {}
+    admin_phone_rows = await db.list_bot_admin_phones(bot_id)
+    admin_phone_numbers = [row["phone_number"] for row in admin_phone_rows]
+    admin_phone_numbers_text = "\n".join(admin_phone_numbers)
     
     # Check if access token is actually saved
     integration = await db.get_active_bot_integration(bot_id, "whatsapp_cloud")
@@ -1661,7 +1664,7 @@ async def client_app(
           </div>
         </div>
       </div>
-      
+
       <script>
         (function() {{
           const bodyText = document.querySelector(\'#panel-templates textarea[name="body_text"]\');
@@ -2945,6 +2948,21 @@ async def client_app(
           </div>
         </div>
       </div>
+
+      <div class="card" style="margin-top:20px;">
+        <div class="card-header">
+          <h2>Control por WhatsApp</h2>
+          <p>Autoriza números del propietario para pausar o reanudar únicamente este bot.</p>
+        </div>
+        <form method="post" action="/client/bots/{bot_id}/whatsapp/admin-phones">
+          <label>Números administradores</label>
+          <textarea name="admin_phone_numbers" rows="4" placeholder="5215512345678&#10;5215598765432">{html.escape(admin_phone_numbers_text)}</textarea>
+          <p class="muted-text" style="font-size:12px; margin-top:6px;">Escribe un número por línea, incluyendo código de país. Desde esos números envía <strong>Pausa</strong> o <strong>Sigue</strong> al WhatsApp de este bot.</p>
+          <div style="margin-top:16px;">
+            <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar números autorizados</button>
+          </div>
+        </form>
+      </div>
       
       <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
       <script>
@@ -3941,6 +3959,44 @@ async def client_whatsapp_connect(
     except Exception as exc:
         log.exception("Error vinculando WhatsApp desde panel cliente")
         return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=whatsapp&saved=err", status_code=302)
+
+
+@router.post("/bots/{bot_id}/whatsapp/admin-phones")
+async def client_whatsapp_admin_phones_save(
+    request: Request,
+    bot_id: int,
+    admin_phone_numbers: str = Form(""),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+
+    raw_numbers = re.split(r"[,;\n\r]+", admin_phone_numbers)
+    normalized: list[str] = []
+    for raw_number in raw_numbers:
+        if not raw_number.strip():
+            continue
+        phone_number = bot_control.normalize_admin_phone(raw_number)
+        if not 10 <= len(phone_number) <= 15:
+            error = quote("Ingresa números válidos de 10 a 15 dígitos con código de país.")
+            return RedirectResponse(
+                f"/client/app?bot_id={bot_id}&tab=whatsapp&saved=err_{error}",
+                status_code=302,
+            )
+        if phone_number not in normalized:
+            normalized.append(phone_number)
+
+    if len(normalized) > 10:
+        error = quote("Puedes autorizar como máximo 10 números por bot.")
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=whatsapp&saved=err_{error}",
+            status_code=302,
+        )
+
+    await db.replace_bot_admin_phones(bot_id, normalized)
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=whatsapp&saved=1",
+        status_code=302,
+    )
 
 @router.post("/bots/{bot_id}/prompt/save")
 async def client_prompt_save(

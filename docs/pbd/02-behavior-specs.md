@@ -2,7 +2,7 @@
 
 ## Metadata
 
-- Version: 0.1.1
+- Version: 0.1.2
 - Status: DRAFT
 - Bot: Asistente Inmobiliario Virtual (Asistto Real Estate)
 - Last updated: 2026-08-31
@@ -23,7 +23,7 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
 - US-002 [CONFIRMED]: Como prospecto calificado, quiero recibir fichas resumidas y enlaces de propiedades con información veraz y fotos para evaluarlas.
 - US-003 [CONFIRMED]: Como asesor inmobiliario, quiero que el bot capture los datos del contacto (nombre, teléfono, interés) y los envíe al CRM de Easybroker para dar seguimiento comercial oportuno.
 - US-004 [CONFIRMED]: Como prospecto y asesor, queremos coordinar una llamada de seguimiento (nombre, teléfono, fecha y hora) y que quede agendada automáticamente en el calendario del asesor.
-- US-005 [CONFIRMED]: Como propietario autorizado, quiero pausar o reanudar mi bot desde el WhatsApp conectado usando los comandos administrativos existentes, sin que el eco propio sea confundido con una intervención humana ni afecte otros bots.
+- US-005 [CONFIRMED]: Como propietario autorizado, quiero pausar o reanudar mi bot desde un número administrador registrado para ese bot usando los comandos existentes, sin depender de ecos propios ni afectar otros tenants.
 
 ## Conversational States
 
@@ -90,6 +90,8 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
 
 - Antes de activar el relevo humano por un eco de coexistencia, comprobar si el texto es un comando administrativo existente de pausa o reanudación.
 - Ejecutarlo únicamente cuando el remitente esté autorizado y el destinatario sea el número visible del mismo bot resuelto por `phone_number_id`.
+- Los números administradores configurados en el panel pertenecen exclusivamente al `bot_id` seleccionado. La variable global de administradores se reserva para acceso operativo de emergencia de Humanio.
+- Para el canal recomendado, el propietario escribe desde un segundo número autorizado al número del bot; el evento entra como mensaje estándar y no depende de `smb_message_echoes`.
 - Un comando autorizado tiene precedencia sobre el handoff solamente para esa operación administrativa; no elimina ni relaja el silencio de conversaciones humanas.
 - Un mensaje dirigido por el asesor a un cliente, aunque contenga una palabra de control, conserva el flujo normal de relevo humano y nunca cambia el estado global del bot.
 - Los eventos técnicos `sent` y `delivered` no prueban autoría humana y no activan relevo.
@@ -105,7 +107,7 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
 - RF-001: Integración con Easybroker API para búsqueda de propiedades en tiempo real.
 - RF-002: Integración con CRM de Easybroker para creación de contactos/leads con propiedad de interés.
 - RF-003: Integración de calendario para verificación de disponibilidad y reserva de llamadas de seguimiento.
-- RF-004: Control determinista y multi-tenant del estado `active`/`paused` desde WhatsApp para propietarios autorizados.
+- RF-004: Control determinista y multi-tenant del estado `active`/`paused` desde WhatsApp para propietarios autorizados por bot.
 
 ## Non-Functional Requirements
 - RNF-001: Tiempo de respuesta conversacional óptimo.

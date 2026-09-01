@@ -160,6 +160,7 @@ class TestClientPanelFeatures:
         assert reason[0] == "media_recibida"
 
     @pytest.mark.asyncio
+    @patch("app.db.list_bot_admin_phones", new=AsyncMock(return_value=[]))
     @patch("app.db.list_bots")
     @patch("app.db.get_bot_whatsapp_number")
     @patch("app.db.get_active_bot_prompt")
@@ -270,6 +271,57 @@ class TestClientPanelFeatures:
         mock_update.assert_called_once_with(1, "active")
 
     @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.replace_bot_admin_phones")
+    async def test_client_saves_tenant_scoped_admin_phones(self, mock_replace, mock_get_bot):
+        from app import client
+
+        class Request:
+            session = {
+                "user": "owner@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+                "user_id": 5,
+            }
+
+        mock_get_bot.return_value = {"id": 7, "client_id": 44, "status": "active"}
+        response = await client.client_whatsapp_admin_phones_save(
+            Request(),
+            bot_id=7,
+            admin_phone_numbers="+52 1 55 1234 5678\n5215512345678\n52 55 9876 5432",
+        )
+
+        assert response.status_code == 302
+        assert response.headers["location"] == "/client/app?bot_id=7&tab=whatsapp&saved=1"
+        mock_replace.assert_awaited_once_with(7, ["525512345678", "525598765432"])
+
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.replace_bot_admin_phones")
+    async def test_client_rejects_invalid_admin_phone(self, mock_replace, mock_get_bot):
+        from app import client
+
+        class Request:
+            session = {
+                "user": "owner@example.com",
+                "role": "client_admin",
+                "client_id": 44,
+                "user_id": 5,
+            }
+
+        mock_get_bot.return_value = {"id": 7, "client_id": 44, "status": "active"}
+        response = await client.client_whatsapp_admin_phones_save(
+            Request(),
+            bot_id=7,
+            admin_phone_numbers="123",
+        )
+
+        assert response.status_code == 302
+        assert "saved=err_" in response.headers["location"]
+        mock_replace.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("app.db.list_bot_admin_phones", new=AsyncMock(return_value=[]))
     @patch("app.db.list_bots")
     @patch("app.db.get_bot_whatsapp_number")
     @patch("app.db.get_active_bot_prompt")
