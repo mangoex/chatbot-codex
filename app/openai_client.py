@@ -29,11 +29,11 @@ def _get_client() -> AsyncOpenAI:
 
 
 async def get_embedding(text: str) -> list[float]:
-    """Genera embeddings utilizando el modelo text-embedding-3-small de OpenAI."""
+    """Genera embeddings usando el modelo configurado para el índice RAG."""
     client = _get_client()
     resp = await client.embeddings.create(
         input=text,
-        model="text-embedding-3-small"
+        model=config.EMBEDDING_MODEL,
     )
     return resp.data[0].embedding
 

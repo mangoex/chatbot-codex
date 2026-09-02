@@ -55,6 +55,38 @@ class TestClientPanelFeatures:
         assert "4 fragmentos" in rendered
         assert "Indexado" in rendered
 
+    def test_knowledge_table_renders_safe_partial_and_failed_badges(self):
+        from app import client
+
+        rendered = client._render_knowledge_table(
+            [
+                {
+                    "id": 56,
+                    "title": "Manual.md",
+                    "content": "Contenido",
+                    "chunk_count": 4,
+                    "embedded_chunk_count": 2,
+                    "vector_enabled": True,
+                    "index_status": "partial",
+                    "index_error": "<script>alert(1)</script>",
+                },
+                {
+                    "id": 57,
+                    "title": "Sin fragmentos.md",
+                    "content": "Contenido",
+                    "index_status": "failed",
+                    "index_error": "Error seguro",
+                },
+            ],
+            bot_id=170,
+            role="client_admin",
+        )
+
+        assert "Parcial" in rendered
+        assert "Fallido" in rendered
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in rendered
+        assert "<script>alert(1)</script>" not in rendered
+
     def test_client_layout_logout_includes_csrf_token(self):
         from app import client
 

@@ -41,17 +41,24 @@ def combine_prompt(base_prompt: str, knowledge_docs: list[dict]) -> str:
 
 
 def build_retrieval_query(user_message: str, history: list[dict]) -> str:
-    """Build a bounded, conversation-aware semantic retrieval query."""
-    recent = [
-        item for item in history[-config.RETRIEVAL_HISTORY_MESSAGES:]
-        if item.get("role") in ("user", "assistant") and (item.get("content") or "").strip()
-    ]
-    lines = []
-    for item in recent:
-        label = "Usuario" if item.get("role") == "user" else "Asistente"
-        content = re.sub(r"\s+", " ", str(item.get("content") or "")).strip()[:600]
-        lines.append(f"{label}: {content}")
+    """Build a conservative retrieval query from user-authored context only."""
     current = re.sub(r"\s+", " ", user_message or "").strip()
+    normalized = unicodedata.normalize("NFKD", current.lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = re.sub(r"^[^a-z0-9]+", "", normalized)
+    is_followup = bool(re.match(
+        r"^(?:y\s+para|y\s+en|y\s+si|tambien|cual(?:es)?\s+de\s+(?:esos|esas)|en\s+ese\s+caso|eso\b|esa\b)",
+        normalized,
+    )) and len(current) <= 240
+    lines = []
+    if is_followup:
+        recent_users = [
+            re.sub(r"\s+", " ", str(item.get("content") or "")).strip()[:600]
+            for item in history[-config.RETRIEVAL_HISTORY_MESSAGES:]
+            if item.get("role") == "user" and (item.get("content") or "").strip()
+        ]
+        for item in recent_users[-2:]:
+            lines.append(f"Contexto de usuario: {item}")
     lines.append(f"Pregunta actual: {current}")
     rendered = "\n".join(lines)
     if len(rendered) <= config.RETRIEVAL_QUERY_MAX_CHARS:
@@ -135,7 +142,8 @@ async def system_prompt_for_bot(
         
         # RAG Semantic search solo si se provee consulta y la base de conocimiento es grande
         rag_chunks = []
-        if query and total_chars > 15000:
+        uses_rag = total_chars > config.RAG_FULL_CONTEXT_MAX_CHARS
+        if uses_rag and (query or "").strip():
             from app import rag
             async with db._pool.acquire() as conn:
                 rag_chunks = await rag.search_knowledge(
@@ -146,8 +154,12 @@ async def system_prompt_for_bot(
                     limit=config.RAG_FINAL_CHUNKS,
                 )
         
-        if query and rag_chunks:
+        if uses_rag and rag_chunks:
             knowledge_docs = [{"title": f"Fragmento de conocimiento {i+1}", "content": chunk, "status": "active"} for i, chunk in enumerate(rag_chunks)]
+        elif uses_rag:
+            # A retrieval miss must not turn a large base into an unbounded
+            # system prompt.  The model receives no unverified document text.
+            knowledge_docs = []
         else:
             knowledge_docs = all_docs
     except Exception as exc:
@@ -164,6 +176,12 @@ async def system_prompt_for_bot(
         else:
             log.error("Bot tenant sin prompt activo; respuesta de IA bloqueada. bot_id=%s", bot_id)
             raise BotPromptUnavailable(bot_id, "no active prompt")
+
+    if 'uses_rag' in locals() and uses_rag and not rag_chunks:
+        base_prompt += (
+            "\n\nNo se encontró evidencia recuperada para esta consulta. "
+            "No inventes información de la base de conocimiento."
+        )
 
     log.info(
         "Cargando prompt para bot_id=%s. ¿Se encontró row activo?: %s, Documentos de conocimiento: %d, RAG usado: %s",

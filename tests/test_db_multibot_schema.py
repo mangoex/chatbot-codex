@@ -43,6 +43,7 @@ class MultiBotSchemaTests(unittest.TestCase):
         self.assertIn("amount_minor BIGINT NOT NULL CHECK (amount_minor > 0)", sql)
         self.assertIn("idx_order_payment_expectation_active", sql)
         self.assertIn("ux_order_payment_expectation_one_active", inspect.getsource(db.run_migrations))
+        self.assertIn("bot_knowledge_index_status_check", inspect.getsource(db.run_migrations))
 
     def test_existing_tables_get_bot_id(self):
         sql = db.SCHEMA_SQL

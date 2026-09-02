@@ -251,7 +251,7 @@ async def sync_google_drive_to_bot_knowledge(
                         old_id,
                         bot_id,
                     )
-                    await rag.delete_document_chunks(conn, old_id)
+                    await rag.delete_document_chunks(conn, bot_id, old_id)
 
     # Actualizar metadata en bot_integrations
     integration = await db.get_active_bot_integration(bot_id, "google_drive")
