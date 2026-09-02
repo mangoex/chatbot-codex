@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from hashlib import sha256
 
 from app import config
 from app.knowledge_privacy import is_private_directory_title
@@ -14,55 +15,139 @@ _PRIVATE_DIRECTORY_TITLE_RE = (
 
 
 def chunk_text(text: str, max_chars: int = 1200, overlap: int = 250) -> list[str]:
-    """Split text into overlapping chunks while preserving paragraphs and policy articles."""
+    """Split text into bounded chunks, repeating the active Markdown heading path.
 
+    The public contract intentionally remains character based.  For Markdown,
+    headings are metadata rather than chunkable content: every chunk of a
+    section carries its complete path so a retrieved paragraph keeps its
+    business meaning.  Plain text follows the same paragraph behaviour without
+    a prefix.
+    """
     text = (text or "").strip()
-    if not text:
+    if not text or max_chars <= 0:
         return []
 
-    paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
-    chunks: list[str] = []
-    current_chunk: list[str] = []
-    current_len = 0
+    # Closing ATX hashes are optional only when separated from the title by
+    # whitespace.  This preserves legitimate titles such as "Uso de C#".
+    heading_re = re.compile(r"^(#{1,6})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
+    sections: list[tuple[list[str], list[str]]] = []
+    heading_path: list[str] = []
+    paragraph_lines: list[str] = []
 
-    for paragraph in paragraphs:
-        if len(paragraph) > max_chars:
-            if current_chunk:
-                chunks.append("\n".join(current_chunk))
-                current_chunk = []
-                current_len = 0
+    def finish_paragraph() -> None:
+        if paragraph_lines:
+            paragraph = "\n".join(paragraph_lines).strip()
+            if paragraph:
+                if not sections or sections[-1][0] != heading_path:
+                    sections.append((heading_path.copy(), []))
+                sections[-1][1].append(paragraph)
+            paragraph_lines.clear()
 
-            start = 0
-            while start < len(paragraph):
-                end = start + max_chars
-                if end < len(paragraph):
-                    last_space = paragraph.rfind(" ", start, end)
-                    if last_space != -1 and last_space > start + max_chars // 2:
-                        end = last_space
-                chunks.append(paragraph[start:end].strip())
-                start = end - overlap if end - overlap > start else end
+    for line in text.splitlines():
+        match = heading_re.match(line.strip())
+        if match:
+            finish_paragraph()
+            level = len(match.group(1))
+            heading = f"{'#' * level} {match.group(2).strip()}"
+            heading_path = heading_path[: level - 1]
+            heading_path.append(heading)
             continue
-
-        extra = len(paragraph) + (1 if current_chunk else 0)
-        if current_len + extra <= max_chars:
-            current_chunk.append(paragraph)
-            current_len += extra
+        if not line.strip():
+            finish_paragraph()
         else:
-            chunks.append("\n".join(current_chunk))
-            overlap_chunk: list[str] = []
-            overlap_len = 0
-            for previous in reversed(current_chunk):
-                previous_extra = len(previous) + (1 if overlap_chunk else 0)
-                if overlap_len + previous_extra <= overlap:
-                    overlap_chunk.insert(0, previous)
-                    overlap_len += previous_extra
-                else:
-                    break
-            current_chunk = overlap_chunk + [paragraph]
-            current_len = sum(len(item) for item in current_chunk) + len(current_chunk) - 1
+            paragraph_lines.append(line.strip())
+    finish_paragraph()
 
-    if current_chunk:
-        chunks.append("\n".join(current_chunk))
+    chunks: list[str] = []
+
+    def bounded_prefix(path: list[str]) -> str:
+        """Return the full path when possible, else a deterministic compact marker.
+
+        A Markdown path can itself be longer than a chunk budget.  In that
+        impossible case, keeping the full path would discard the evidence
+        body.  The digest marker preserves a stable section identity while
+        reserving at least one character for body content.
+        """
+        prefix = "\n".join(path)
+        if not prefix or len(prefix) + 2 < max_chars:
+            return prefix
+        digest = sha256(prefix.encode("utf-8")).hexdigest()[:12]
+        marker = f"[H:{digest}]"
+        if len(marker) + 2 < max_chars:
+            return marker
+        # Tiny caller-provided limits cannot hold the marker and a separator;
+        # reserve one body character and remain deterministic.
+        return "[H]"[:max(0, max_chars - 2)]
+
+    def render(prefix: str, body: list[str]) -> str:
+        content = "\n\n".join(part for part in body if part.strip())
+        return f"{prefix}\n\n{content}".strip() if prefix else content.strip()
+
+    def split_to_budget(value: str, budget: int) -> list[str]:
+        """Split a large paragraph at word boundaries; always make progress."""
+        value = value.strip()
+        if not value:
+            return []
+        if budget <= 0:
+            # An impractically large heading is still emitted deterministically.
+            return [value[:max_chars]]
+        parts: list[str] = []
+        remaining = value
+        while remaining:
+            if len(remaining) <= budget:
+                parts.append(remaining)
+                break
+            boundary = remaining.rfind(" ", 0, budget + 1)
+            if boundary <= max(0, budget // 2):
+                boundary = budget
+            part = remaining[:boundary].strip()
+            if part:
+                parts.append(part)
+            remaining = remaining[boundary:].strip()
+        return parts
+
+    for path, paragraphs in sections:
+        prefix = bounded_prefix(path)
+        prefix_len = len(prefix)
+        separator_len = 2 if path else 0
+        body_budget = max_chars - prefix_len - separator_len
+        current: list[str] = []
+
+        def flush() -> None:
+            if current:
+                rendered = render(prefix, current)
+                if rendered:
+                    chunks.append(rendered[:max_chars])
+                current.clear()
+
+        for paragraph in paragraphs:
+            pending = split_to_budget(paragraph, body_budget)
+            while pending:
+                part = pending.pop(0)
+                prospective = render(prefix, current + [part])
+                if current and len(prospective) > max_chars:
+                    previous_body = "\n\n".join(current)
+                    flush()
+                    if overlap > 0 and body_budget > 0:
+                        # Keep space for a new word after the overlap.  This is
+                        # what makes overlap effective for a single long
+                        # paragraph, not only for paragraph boundaries.
+                        overlap_budget = max(0, body_budget - 3)
+                        overlap_body = previous_body[-min(overlap, overlap_budget):].strip()
+                        if overlap_body:
+                            current.append(overlap_body)
+                    available = max_chars - len(render(prefix, current)) - (2 if current else 0)
+                    if available <= 0:
+                        current.clear()
+                        available = body_budget
+                    if len(part) > available:
+                        split_parts = split_to_budget(part, available)
+                        if split_parts:
+                            pending = split_parts[1:] + pending
+                            part = split_parts[0]
+                current.append(part)
+        flush()
+
     return [chunk for chunk in chunks if chunk.strip()]
 
 
@@ -119,9 +204,48 @@ async def has_vector_column(conn) -> bool:
         return False
 
 
-async def index_document(conn, bot_id: int, knowledge_id: int, content: str) -> None:
+def _content_hash(content: str) -> str:
+    return sha256((content or "").encode("utf-8")).hexdigest()
+
+
+async def _set_index_state(
+    conn,
+    bot_id: int,
+    knowledge_id: int,
+    status: str,
+    *,
+    index_error: str | None = None,
+    content_hash: str | None = None,
+) -> None:
+    """Persist only sanitized indexing metadata for the tenant document."""
+    await conn.execute(
+        """
+        UPDATE bot_knowledge
+        SET index_status = $1,
+            index_error = $2,
+            indexed_at = CASE WHEN $1 IN ('indexed', 'partial', 'failed') THEN now() ELSE NULL END,
+            embedding_model = $3,
+            content_hash = COALESCE($4, content_hash)
+        WHERE id = $5 AND bot_id = $6
+        """,
+        status,
+        index_error,
+        config.EMBEDDING_MODEL,
+        content_hash,
+        knowledge_id,
+        bot_id,
+    )
+
+
+async def index_document(conn, bot_id: int, knowledge_id: int, content: str) -> dict:
     """Index one active knowledge document for a bot."""
-    await conn.execute("DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1", knowledge_id)
+    content_hash = _content_hash(content)
+    await _set_index_state(conn, bot_id, knowledge_id, "pending", content_hash=content_hash)
+    await conn.execute(
+        "DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1 AND bot_id = $2",
+        knowledge_id,
+        bot_id,
+    )
 
     title_row = await conn.fetchrow(
         "SELECT title FROM bot_knowledge WHERE id = $1 AND bot_id = $2",
@@ -129,76 +253,141 @@ async def index_document(conn, bot_id: int, knowledge_id: int, content: str) -> 
         bot_id,
     )
     title = title_row["title"] if title_row else None
+    if not title_row:
+        await _set_index_state(
+            conn, bot_id, knowledge_id, "failed", index_error="Documento no disponible."
+        )
+        return {
+            "status": "failed", "chunk_count": 0,
+            "embedded_chunk_count": 0, "failed_chunk_count": 0,
+        }
     if is_private_directory_title(title):
         log.info(
             "Directorio privado excluido de RAG. bot_id=%s knowledge_id=%s",
             bot_id,
             knowledge_id,
         )
-        return
+        await _set_index_state(conn, bot_id, knowledge_id, "indexed")
+        return {
+            "status": "indexed", "chunk_count": 0,
+            "embedded_chunk_count": 0, "failed_chunk_count": 0,
+        }
 
     chunks = chunk_text(content)
     if not chunks:
-        return
+        await _set_index_state(
+            conn, bot_id, knowledge_id, "failed", index_error="El documento no produjo fragmentos recuperables."
+        )
+        return {
+            "status": "failed", "chunk_count": 0,
+            "embedded_chunk_count": 0, "failed_chunk_count": 0,
+        }
 
     has_vector = await has_vector_column(conn)
 
     from app import openai_client
 
-    for index, chunk in enumerate(chunks):
-        if has_vector:
-            try:
-                embedding = await openai_client.get_embedding(chunk)
-                if len(embedding) != config.EMBEDDING_DIMENSIONS:
-                    raise ValueError("Embedding dimensions do not match EMBEDDING_DIMENSIONS")
-                emb_str = "[" + ",".join(map(str, embedding)) + "]"
-                await conn.execute(
-                    """
-                    INSERT INTO bot_knowledge_chunks(
-                        bot_id, knowledge_id, title, chunk_index, content, embedding
+    embedded_chunk_count = 0
+    failed_chunk_count = 0
+    try:
+        for index, chunk in enumerate(chunks):
+            if has_vector:
+                try:
+                    embedding = await openai_client.get_embedding(chunk)
+                    if len(embedding) != config.EMBEDDING_DIMENSIONS:
+                        raise ValueError("Embedding dimensions do not match EMBEDDING_DIMENSIONS")
+                    emb_str = "[" + ",".join(map(str, embedding)) + "]"
+                    await conn.execute(
+                        """
+                        INSERT INTO bot_knowledge_chunks(
+                            bot_id, knowledge_id, title, chunk_index, content, embedding
+                        )
+                        VALUES($1, $2, $3, $4, $5, $6::vector)
+                        """,
+                        bot_id,
+                        knowledge_id,
+                        title,
+                        index,
+                        chunk,
+                        emb_str,
                     )
-                    VALUES($1, $2, $3, $4, $5, $6::vector)
-                    """,
-                    bot_id,
-                    knowledge_id,
-                    title,
-                    index,
-                    chunk,
-                    emb_str,
-                )
-                continue
-            except Exception as exc:
-                log.warning("RAG embedding failed; storing plain text chunk: %s", exc)
+                    embedded_chunk_count += 1
+                    continue
+                except Exception:
+                    # Provider errors may include prompts or provider metadata; do
+                    # not persist or log their raw text.
+                    failed_chunk_count += 1
+                    log.warning(
+                        "RAG embedding failed; storing text-only chunk. bot_id=%s knowledge_id=%s",
+                        bot_id, knowledge_id,
+                    )
 
-        await conn.execute(
-            """
-            INSERT INTO bot_knowledge_chunks(bot_id, knowledge_id, title, chunk_index, content)
-            VALUES($1, $2, $3, $4, $5)
-            """,
-            bot_id,
-            knowledge_id,
-            title,
-            index,
-            chunk,
+            await conn.execute(
+                """
+                INSERT INTO bot_knowledge_chunks(bot_id, knowledge_id, title, chunk_index, content)
+                VALUES($1, $2, $3, $4, $5)
+                """,
+                bot_id,
+                knowledge_id,
+                title,
+                index,
+                chunk,
+            )
+    except Exception:
+        # A storage failure means the document cannot be relied on, even if a
+        # prior chunk was written in this transaction.  Keep the status honest
+        # and do not expose a provider/database exception.
+        log.warning("RAG document indexing failed. bot_id=%s knowledge_id=%s", bot_id, knowledge_id)
+        failed_chunk_count = max(failed_chunk_count, len(chunks) - embedded_chunk_count)
+        # Never leave partial, potentially stale chunks queryable after a
+        # fatal document failure.  The delete retains the tenant boundary.
+        await delete_document_chunks(conn, bot_id, knowledge_id)
+        await _set_index_state(
+            conn, bot_id, knowledge_id, "failed", index_error="No fue posible indexar el documento."
         )
+        return {
+            "status": "failed",
+            "chunk_count": len(chunks),
+            "embedded_chunk_count": embedded_chunk_count,
+            "failed_chunk_count": failed_chunk_count,
+        }
+
+    status = "partial" if failed_chunk_count else "indexed"
+    error = (
+        f"No fue posible generar {failed_chunk_count} embedding(s)."
+        if failed_chunk_count else None
+    )
+    await _set_index_state(conn, bot_id, knowledge_id, status, index_error=error)
+    return {
+        "status": status,
+        "chunk_count": len(chunks),
+        "embedded_chunk_count": embedded_chunk_count,
+        "failed_chunk_count": failed_chunk_count,
+    }
 
 
-async def delete_document_chunks(conn, knowledge_id: int) -> None:
-    await conn.execute("DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1", knowledge_id)
+async def delete_document_chunks(conn, bot_id: int, knowledge_id: int) -> None:
+    await conn.execute(
+        "DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1 AND bot_id = $2",
+        knowledge_id,
+        bot_id,
+    )
 
 
-async def reindex_bot_knowledge(conn, bot_id: int) -> int:
+async def reindex_bot_knowledge(conn, bot_id: int) -> dict[str, int]:
 
     """Re-chunks and re-indexes all active knowledge documents for a bot."""
     rows = await conn.fetch(
         "SELECT id, content FROM bot_knowledge WHERE bot_id = $1 AND status = 'active'",
         bot_id,
     )
-    count = 0
+    summary = {"total": 0, "indexed": 0, "partial": 0, "failed": 0}
     for row in rows:
-        await index_document(conn, bot_id, int(row["id"]), row["content"] or "")
-        count += 1
-    return count
+        report = await index_document(conn, bot_id, int(row["id"]), row["content"] or "")
+        summary["total"] += 1
+        status = str(report.get("status") or "failed")
+        summary[status if status in summary else "failed"] += 1
+    return summary
 
 
 def _row_value(row, key: str, default=None):
@@ -231,6 +420,7 @@ async def search_knowledge(
     query_text: str,
     limit: int = 8,
     lexical_query: str | None = None,
+    diagnostics: list[dict] | None = None,
 ) -> list[str]:
     """Hybrid vector/text retrieval with bot scope and per-document diversity."""
     query_text = (query_text or "").strip()
@@ -252,9 +442,10 @@ async def search_knowledge(
                     SELECT c.knowledge_id, c.chunk_index, c.title, c.content,
                            c.embedding <=> $2::vector AS distance
                     FROM bot_knowledge_chunks c
-                    JOIN bot_knowledge k ON k.id = c.knowledge_id
+                    JOIN bot_knowledge k ON k.id = c.knowledge_id AND k.bot_id = c.bot_id
                     WHERE c.bot_id = $1
                       AND k.status = 'active'
+                      AND k.index_status IN ('indexed', 'partial')
                       AND c.embedding IS NOT NULL
                       AND lower(COALESCE(c.title, '')) !~ $3
                     ORDER BY c.embedding <=> $2::vector
@@ -265,8 +456,8 @@ async def search_knowledge(
                     _PRIVATE_DIRECTORY_TITLE_RE,
                     candidate_limit,
                 )
-        except Exception as exc:
-            log.warning("Vector search failed; using text fallback: %s", exc)
+        except Exception:
+            log.warning("Vector search failed; using text fallback. bot_id=%s", bot_id)
 
     lexical = (lexical_query or query_text).strip()
     text_rows = await conn.fetch(
@@ -277,9 +468,10 @@ async def search_knowledge(
                    plainto_tsquery('spanish', $2)
                ) AS rank
         FROM bot_knowledge_chunks c
-        JOIN bot_knowledge k ON k.id = c.knowledge_id
+        JOIN bot_knowledge k ON k.id = c.knowledge_id AND k.bot_id = c.bot_id
         WHERE c.bot_id = $1
           AND k.status = 'active'
+          AND k.index_status IN ('indexed', 'partial')
           AND lower(COALESCE(c.title, '')) !~ $4
           AND (
               to_tsvector('spanish', COALESCE(c.title, '') || ' ' || c.content)
@@ -324,9 +516,14 @@ async def search_knowledge(
                     "title": title,
                     "content": _row_value(row, "content") or "",
                     "score": 0.0,
+                    "retrieval_sources": set(),
+                    "vector_distance": None,
                 },
             )
             item["score"] += weight / (60 + rank_index)
+            item["retrieval_sources"].add(source)
+            if source == "vector" and distance is not None:
+                item["vector_distance"] = float(distance)
 
     selected = []
     per_document: dict[object, int] = {}
@@ -338,6 +535,18 @@ async def search_knowledge(
         per_document[knowledge_id] = per_document.get(knowledge_id, 0) + 1
         if len(selected) == limit:
             break
+    if diagnostics is not None:
+        for item in selected:
+            diagnostic = {
+                "knowledge_id": item["knowledge_id"],
+                "chunk_index": item["chunk_index"],
+                "title": item["title"],
+                "score": float(item["score"]),
+                "retrieval_sources": sorted(item["retrieval_sources"]),
+            }
+            if item["vector_distance"] is not None:
+                diagnostic["vector_distance"] = item["vector_distance"]
+            diagnostics.append(diagnostic)
     return [_format_result(row) for row in selected]
 
 

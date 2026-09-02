@@ -7,8 +7,19 @@ from unittest.mock import AsyncMock, patch
 
 sys.modules.setdefault("asyncpg", types.SimpleNamespace(Pool=object))
 sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
+sys.modules.setdefault(
+    "tiktoken",
+    types.SimpleNamespace(
+        encoding_for_model=lambda _model: types.SimpleNamespace(encode=list),
+        get_encoding=lambda _name: types.SimpleNamespace(encode=list),
+    ),
+)
+sys.modules.setdefault(
+    "openai",
+    types.SimpleNamespace(AsyncOpenAI=type("AsyncOpenAI", (), {})),
+)
 
-from app import rag
+from app import openai_client, rag
 
 
 class HybridRagTests(unittest.IsolatedAsyncioTestCase):
@@ -28,10 +39,16 @@ class HybridRagTests(unittest.IsolatedAsyncioTestCase):
             content="Nombre,Area,Telefono\nAna,RH,6671234567",
         )
 
-        conn.execute.assert_awaited_once_with(
-            "DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1",
+        delete_calls = [
+            call for call in conn.execute.await_args_list
+            if "DELETE FROM bot_knowledge_chunks" in call.args[0]
+        ]
+        self.assertEqual(len(delete_calls), 1)
+        self.assertEqual(delete_calls[0].args, (
+            "DELETE FROM bot_knowledge_chunks WHERE knowledge_id = $1 AND bot_id = $2",
             55,
-        )
+            170,
+        ))
         mock_has_vector.assert_not_awaited()
 
     @patch("app.openai_client.get_embedding", new_callable=AsyncMock)

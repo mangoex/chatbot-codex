@@ -1173,6 +1173,8 @@ async def client_app(
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Configuración guardada correctamente.</div>'
     elif saved == "reindexed":
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Base de conocimiento reindexada correctamente.</div>'
+    elif saved == "reindexed_partial":
+        notice_html = f'<div class="notice-banner warning">{ICONS["error"]} La reindexación terminó con documentos parciales o fallidos. Revisa el estado de cada documento.</div>'
     elif saved == "err_reindex":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} No fue posible reindexar la base de conocimiento.</div>'
     elif saved == "chatwoot_api_only":
@@ -1247,8 +1249,8 @@ async def client_app(
     knowledge_docs = await db.list_bot_knowledge(bot_id, active_only=True)
     try:
         knowledge_stats = await db.get_bot_knowledge_index_stats(bot_id)
-    except Exception as exc:
-        log.warning("No se pudo leer diagnóstico RAG para bot %s: %s", bot_id, exc)
+    except Exception:
+        log.warning("No se pudo leer diagnóstico RAG para bot %s", bot_id)
         knowledge_stats = {}
     for doc in knowledge_docs:
         doc.update(knowledge_stats.get(int(doc["id"]), {}))
@@ -3884,6 +3886,15 @@ def _render_knowledge_table(docs: list, bot_id: int, role: str) -> str:
         vector_enabled = bool(doc.get("vector_enabled"))
         if is_directory:
             index_status = '<span class="badge success">Directorio privado</span><br><span class="muted-text" style="font-size:11px;">Coincidencia exacta; fuera del RAG</span>'
+        elif doc.get("index_status") == "pending":
+            index_status = '<span class="badge warning">Pendiente</span><br><span class="muted-text" style="font-size:11px;">Requiere indexación</span>'
+        elif doc.get("index_status") == "failed":
+            safe_error = html.escape(str(doc.get("index_error") or "No fue posible indexar el documento."))
+            index_status = f'<span class="badge danger">Fallido</span><br><span class="muted-text" style="font-size:11px;">{safe_error}</span>'
+        elif doc.get("index_status") == "partial":
+            vector_label = f" · {embedded_count} embeddings" if vector_enabled else " · búsqueda textual"
+            safe_error = html.escape(str(doc.get("index_error") or "Algunos embeddings no estuvieron disponibles."))
+            index_status = f'<span class="badge warning">Parcial</span><br><span class="muted-text" style="font-size:11px;">{chunk_count} fragmentos{vector_label}<br>{safe_error}</span>'
         elif chunk_count:
             vector_label = (
                 f" · {embedded_count} embeddings"
@@ -4295,15 +4306,16 @@ async def client_knowledge_reindex(request: Request, bot_id: int):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
     try:
-        count = await db.reindex_bot_knowledge(bot_id)
+        summary = await db.reindex_bot_knowledge(bot_id)
     except Exception:
         log.exception("Error reindexando conocimiento del bot %s", bot_id)
         return RedirectResponse(
             f"/client/app?bot_id={bot_id}&tab=knowledge&saved=err_reindex",
             status_code=302,
         )
+    saved = "reindexed" if not summary.get("partial") and not summary.get("failed") else "reindexed_partial"
     return RedirectResponse(
-        f"/client/app?bot_id={bot_id}&tab=knowledge&saved=reindexed&count={count}",
+        f"/client/app?bot_id={bot_id}&tab=knowledge&saved={saved}&count={summary.get('total', 0)}",
         status_code=302,
     )
 

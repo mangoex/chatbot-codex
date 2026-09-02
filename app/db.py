@@ -116,6 +116,12 @@ CREATE TABLE IF NOT EXISTS bot_knowledge (
     content TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active'
         CHECK (status IN ('active','draft','archived')),
+    index_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (index_status IN ('pending','indexed','partial','failed')),
+    index_error TEXT,
+    indexed_at TIMESTAMPTZ,
+    embedding_model TEXT,
+    content_hash TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -491,6 +497,32 @@ async def run_migrations() -> None:
         await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_specs TEXT")
         await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_test_suite TEXT")
         await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ DEFAULT now()")
+        for column, definition in (
+            ("index_status", "TEXT NOT NULL DEFAULT 'pending'"),
+            ("index_error", "TEXT"),
+            ("indexed_at", "TIMESTAMPTZ"),
+            ("embedding_model", "TEXT"),
+            ("content_hash", "TEXT"),
+        ):
+            await conn.execute(
+                f"ALTER TABLE bot_knowledge ADD COLUMN IF NOT EXISTS {column} {definition}"
+            )
+        await conn.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'bot_knowledge_index_status_check'
+                      AND conrelid = 'bot_knowledge'::regclass
+                ) THEN
+                    ALTER TABLE bot_knowledge
+                    ADD CONSTRAINT bot_knowledge_index_status_check
+                    CHECK (index_status IN ('pending','indexed','partial','failed'));
+                END IF;
+            END $$;
+            """
+        )
 
         # Existing deployments may already have these tables without bot_id.
         # Add the nullable column before SCHEMA_SQL creates bot_id indexes.
@@ -1938,23 +1970,32 @@ async def get_bot_knowledge_index_stats(bot_id: int) -> dict[int, dict]:
             f"""
             SELECT k.id AS knowledge_id,
                    COUNT(c.id) AS chunk_count,
-                   {embedded_expr} AS embedded_chunk_count
+                   {embedded_expr} AS embedded_chunk_count,
+                   k.index_status,
+                   k.index_error,
+                   k.embedding_model
             FROM bot_knowledge k
             LEFT JOIN bot_knowledge_chunks c
               ON c.knowledge_id = k.id AND c.bot_id = k.bot_id
             WHERE k.bot_id = $1 AND k.status = 'active'
-            GROUP BY k.id
+            GROUP BY k.id, k.index_status, k.index_error, k.embedding_model
             """,
             bot_id,
         )
-    return {
-        int(row["knowledge_id"]): {
-            "chunk_count": int(row["chunk_count"] or 0),
-            "embedded_chunk_count": int(row["embedded_chunk_count"] or 0),
+    stats = {}
+    for row in rows:
+        chunk_count = int(row["chunk_count"] or 0)
+        embedded_count = int(row["embedded_chunk_count"] or 0)
+        stats[int(row["knowledge_id"])] = {
+            "chunk_count": chunk_count,
+            "embedded_chunk_count": embedded_count,
+            "failed_chunk_count": max(0, chunk_count - embedded_count) if has_vector else 0,
             "vector_enabled": has_vector,
+            "index_status": row.get("index_status") or "pending",
+            "index_error": row.get("index_error"),
+            "embedding_model": row.get("embedding_model"),
         }
-        for row in rows
-    }
+    return stats
 
 
 async def get_bot_knowledge(bot_id: int, knowledge_id: int) -> dict | None:
@@ -2018,7 +2059,7 @@ async def update_bot_knowledge(
             if status == "active":
                 await rag.index_document(conn, bot_id, knowledge_id, content)
             else:
-                await rag.delete_document_chunks(conn, knowledge_id)
+                await rag.delete_document_chunks(conn, bot_id, knowledge_id)
     return success
 
 
@@ -2037,11 +2078,11 @@ async def archive_bot_knowledge(bot_id: int, knowledge_id: int) -> bool:
         success = result.endswith(" 1") if result else False
         if success:
             from app import rag
-            await rag.delete_document_chunks(conn, knowledge_id)
+            await rag.delete_document_chunks(conn, bot_id, knowledge_id)
     return success
 
 
-async def reindex_bot_knowledge(bot_id: int) -> int:
+async def reindex_bot_knowledge(bot_id: int) -> dict[str, int]:
     """Reindexa atómicamente el conocimiento activo de un solo bot."""
     async with _pool.acquire() as conn:
         from app import rag
