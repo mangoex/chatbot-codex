@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from hashlib import sha256
 
 from app import config
@@ -11,6 +12,12 @@ log = logging.getLogger("whatsapp-bot")
 
 _PRIVATE_DIRECTORY_TITLE_RE = (
     r"(^|[ /])(?:colaboradores|empleados|directorio_colaboradores)\.csv$"
+)
+
+_AMOUNT_EVIDENCE_RE = (
+    r"(?:(?:[$€£]|mxn|usd)\s*[0-9]"
+    r"|[0-9]+(?:[.,][0-9]+)?\s*(?:pesos?|mxn|usd|d[oó]lares?"
+    r"|diari[oa]s?|por\s+d[ií]a|l[ií]mite|tope))"
 )
 
 
@@ -414,6 +421,17 @@ def _keyword_patterns(query_text: str) -> list[str]:
     return [f"%{word}%" for word in words] or [f"%{query_text.strip()}%"]
 
 
+def _asks_for_amount(query_text: str) -> bool:
+    normalized = unicodedata.normalize("NFKD", (query_text or "").lower())
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    words = set(re.findall(r"[a-z0-9]+", normalized))
+    return bool(words & {
+        "cuanto", "cuantos", "cuanta", "cuantas", "monto", "montos",
+        "limite", "limites", "tope", "topes", "gastar", "gasto",
+        "cuesta", "costo", "costos", "precio", "precios", "importe",
+    })
+
+
 async def search_knowledge(
     conn,
     bot_id: int,
@@ -460,13 +478,24 @@ async def search_knowledge(
             log.warning("Vector search failed; using text fallback. bot_id=%s", bot_id)
 
     lexical = (lexical_query or query_text).strip()
+    keyword_patterns = _keyword_patterns(lexical)
+    asks_for_amount = _asks_for_amount(lexical)
     text_rows = await conn.fetch(
         """
         SELECT c.knowledge_id, c.chunk_index, c.title, c.content,
                ts_rank_cd(
                    to_tsvector('spanish', COALESCE(c.title, '') || ' ' || c.content),
                    plainto_tsquery('spanish', $2)
-               ) AS rank
+               ) AS rank,
+               (
+                   SELECT COUNT(*)::int
+                   FROM unnest($3::text[]) AS keyword(pattern)
+                   WHERE c.content ILIKE keyword.pattern
+               ) AS content_keyword_hits,
+               CASE
+                   WHEN $5::boolean AND c.content ~* $6 THEN 1
+                   ELSE 0
+               END AS answer_shape
         FROM bot_knowledge_chunks c
         JOIN bot_knowledge k ON k.id = c.knowledge_id AND k.bot_id = c.bot_id
         WHERE c.bot_id = $1
@@ -479,20 +508,23 @@ async def search_knowledge(
               OR c.content ILIKE ANY($3::text[])
               OR COALESCE(c.title, '') ILIKE ANY($3::text[])
           )
-        ORDER BY rank DESC, c.chunk_index ASC
-        LIMIT $5
+        ORDER BY answer_shape DESC, content_keyword_hits DESC, rank DESC, c.chunk_index ASC
+        LIMIT $7
         """,
         bot_id,
         lexical,
-        _keyword_patterns(lexical),
+        keyword_patterns,
         _PRIVATE_DIRECTORY_TITLE_RE,
+        asks_for_amount,
+        _AMOUNT_EVIDENCE_RE,
         candidate_limit,
     )
 
     candidates: dict[tuple, dict] = {}
     for source, rows, weight in (
-        ("vector", vector_rows, 1.0),
-        ("text", text_rows, 1.25),
+        # Semantic evidence must survive broad title-only lexical matches.
+        ("vector", vector_rows, 2.0),
+        ("text", text_rows, 1.0),
     ):
         for rank_index, row in enumerate(rows, start=1):
             title = _row_value(row, "title") or "Base de conocimiento"
@@ -518,18 +550,35 @@ async def search_knowledge(
                     "score": 0.0,
                     "retrieval_sources": set(),
                     "vector_distance": None,
+                    "text_rank": 0.0,
+                    "content_keyword_hits": 0,
+                    "answer_shape": 0,
                 },
             )
             item["score"] += weight / (60 + rank_index)
             item["retrieval_sources"].add(source)
             if source == "vector" and distance is not None:
                 item["vector_distance"] = float(distance)
+                item["score"] += max(0.0, 1.0 - float(distance)) * 0.05
+            elif source == "text":
+                text_rank = float(_row_value(row, "rank", 0.0) or 0.0)
+                keyword_hits = int(_row_value(row, "content_keyword_hits", 0) or 0)
+                answer_shape = int(_row_value(row, "answer_shape", 0) or 0)
+                item["text_rank"] = max(item["text_rank"], text_rank)
+                item["content_keyword_hits"] = max(
+                    item["content_keyword_hits"], keyword_hits
+                )
+                item["answer_shape"] = max(item["answer_shape"], answer_shape)
+                item["score"] += min(max(text_rank, 0.0), 1.0) * 0.02
+                item["score"] += min(max(keyword_hits, 0), 8) * 0.003
+                item["score"] += max(answer_shape, 0) * 0.06
 
     selected = []
     per_document: dict[object, int] = {}
+    per_document_limit = max(1, min(config.RAG_MAX_CHUNKS_PER_DOCUMENT, limit))
     for item in sorted(candidates.values(), key=lambda value: value["score"], reverse=True):
         knowledge_id = item["knowledge_id"]
-        if per_document.get(knowledge_id, 0) >= 2:
+        if per_document.get(knowledge_id, 0) >= per_document_limit:
             continue
         selected.append(item)
         per_document[knowledge_id] = per_document.get(knowledge_id, 0) + 1

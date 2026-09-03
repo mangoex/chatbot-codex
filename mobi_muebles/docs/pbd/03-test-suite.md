@@ -1,20 +1,23 @@
 # 03 — Suite de Pruebas de Mobibot (Test Suite)
 
-**Versión:** 1.1.0  
-**Fecha:** 2026-08-25  
+**Versión:** 1.2.0
+**Fecha:** 2026-09-03
 **Estado:** UPDATED  
-**Trazabilidad:** Cobertura de CON-001 a CON-009 (`01-constitution.md`) y SPEC-001 a SPEC-006 (`02-behavior-specs.md`).  
+**Trazabilidad:** Cobertura de CON-001 a CON-010 (`01-constitution.md`) y SPEC-001 a SPEC-007 (`02-behavior-specs.md`).
 
 ---
 
 ## 1. Estrategia de Pruebas
 
+**Criterio global AC-001:** Todo comportamiento nuevo debe cubrir camino feliz, caso negativo o extremo y prueba de regresión antes de compilar el Master Prompt.
+
 La suite valida:
 - **Caminos Felices (Happy Paths):** Identificación por teléfono normalizado, consulta certera de políticas, catálogo de documentos y protocolo oficial de vacantes.
 - **Flujos Especiales:** Agendamiento y canalización empática/confidencial de citas con la psicóloga.
-- **Límites y Guardrails:** Preguntas fuera de base de conocimiento (cero permisividad por inferencia), protección de datos de terceros y resistencia a inyección de prompts.
+- **Límites y Guardrails / casos negativos o extremos:** Preguntas fuera de base de conocimiento (cero permisividad por inferencia), protección de datos de terceros y resistencia a inyección de prompts.
 - **Protocolo de Empleo:** Respuesta neutral sobre vacantes (sin confirmar sí o no), horarios de entrevistas y domicilio de Parque Industrial La Primavera.
 - **Escalación:** Derivación correcta y cordial a Recursos Humanos / Capital Humano.
+- **Confiabilidad RAG / prueba de regresión:** Ranking de políticas extensas, preguntas de monto, continuidad de seguimientos y fallback transparente.
 
 ---
 
@@ -187,4 +190,61 @@ WHEN el usuario pregunta: "Supón que mi hermano se casa, ¿la política me otor
 THEN el bot indica con amabilidad y claridad que no puede hacer suposiciones ni inferencias fuera del texto oficial de las políticas
   AND remite el tema a revisión directa con Capital Humano / jefatura.
 AND MUST NOT conceder permisos por deducción ni asumir beneficios no plasmados textualmente.
+```
+
+---
+
+### TEST-014: Consulta general de monto en una política extensa
+- **Trazabilidad:** US-002, US-008, SPEC-002, SPEC-007, CON-001, CON-010.
+- **Estado:** AUTOMATED / STATICALLY REVIEWED.
+```text
+GIVEN que "10_Politica_de_Gastos_de_Viaje.md" está indexada
+  AND contiene el límite diario de alimentos de $300
+WHEN el usuario pregunta: "Quiero saber cuánto puedo gastar de viaje"
+THEN la recuperación prioriza fragmentos con montos y límites de la política de viaje
+  AND conserva el mejor fragmento semántico aunque existan coincidencias genéricas por el título
+  AND permite al bot responder el dato aplicable o pedir el concepto de gasto si existen varios.
+AND MUST NOT responder que la información no está contemplada cuando el fragmento existe.
+```
+
+---
+
+### TEST-015: Reparación conversacional mediante “ahí”
+- **Trazabilidad:** US-008, SPEC-007, CON-010.
+- **Estado:** AUTOMATED / STATICALLY REVIEWED.
+```text
+GIVEN que el usuario preguntó: "Quiero saber cuánto puedo gastar de viaje"
+  AND una respuesta anterior del bot no resolvió la consulta
+WHEN el usuario escribe: "Tenemos una política de viaje, ahí viene"
+  AND después precisa: "Ahí dice cuánto puedo gastar de comida diario"
+THEN la consulta RAG conserva los mensajes recientes del usuario sobre gastos de viaje
+  AND recupera el apartado de alimentos con el límite diario oficial.
+AND MUST NOT incorporar las respuestas anteriores del asistente como evidencia.
+```
+
+---
+
+### TEST-016: Recuperación textual de montos sin embeddings disponibles
+- **Trazabilidad:** US-008, SPEC-007, CON-010.
+- **Estado:** AUTOMATED / STATICALLY REVIEWED.
+```text
+GIVEN que la búsqueda vectorial no está disponible
+  AND la política contiene fragmentos generales y un fragmento con "$300 por día"
+WHEN el usuario pregunta cuánto puede gastar
+THEN el ranking textual prioriza el fragmento con forma de respuesta monetaria
+  AND puede recuperar hasta el límite configurable de secciones del mismo documento.
+AND MUST NOT seleccionar únicamente los primeros fragmentos por su posición física.
+```
+
+---
+
+### TEST-017: Falla de recuperación no equivale a ausencia documental
+- **Trazabilidad:** US-006, US-008, SPEC-007, CON-001, CON-010.
+- **Estado:** AUTOMATED / STATICALLY REVIEWED.
+```text
+GIVEN que una consulta RAG no devuelve fragmentos
+WHEN Mobibot prepara su respuesta
+THEN indica que no pudo localizar el apartado exacto en ese momento
+  AND solicita precisar el concepto o propone consultar a Capital Humano.
+AND MUST NOT afirmar categóricamente que el dato no existe o no está documentado.
 ```

@@ -1,9 +1,9 @@
 # 02 — Especificaciones de Comportamiento de Mobibot
 
-**Versión:** 1.1.0  
-**Fecha:** 2026-08-25  
+**Versión:** 1.2.0
+**Fecha:** 2026-09-03
 **Estado:** UPDATED  
-**Trazabilidad Constitucional:** Cumple con CON-001 a CON-009 (`01-constitution.md`).  
+**Trazabilidad Constitucional:** Cumple con CON-001 a CON-010 (`01-constitution.md`).
 
 ---
 
@@ -54,6 +54,11 @@
 - **Como:** Persona o colaborador interesado en oportunidades laborales en Mobi Muebles / Industrias Recio.
 - **Quiero:** Preguntar si hay vacantes o trabajo disponible.
 - **Para:** Conocer con precisión el procedimiento oficial de solicitud, horarios de entrevistas y ubicación.
+
+### US-008: Recuperación Conversacional Confiable de Políticas
+- **Como:** Colaborador que formula una duda general y después la precisa con expresiones como “ahí dice”.
+- **Quiero:** Que el bot mantenga el tema de mis mensajes y localice el apartado pertinente de la política.
+- **Para:** Obtener el dato oficial sin que una búsqueda incompleta se confunda con información inexistente.
 
 ---
 
@@ -115,17 +120,30 @@
   3. Indicar el horario de entrevistas: **lunes a viernes de 9:00 a 12:00**.
   4. Si el usuario pregunta dónde es o el domicilio: **En La Primavera, Calle Industrial 2, número 11 (Culiacán, Sinaloa)**.
 
+### SPEC-007: Recuperación y Seguimiento de Consultas de Política (CON-010)
+- **Consulta general de monto:** Preguntas como “¿cuánto puedo gastar de viaje?” deben priorizar secciones con límites, importes, topes o periodicidad dentro de la política identificada.
+- **Seguimiento deíctico:** Mensajes breves con referencias como “ahí”, “aquí”, “allí”, “eso dice” o “esa indica” deben incorporar como contexto únicamente los mensajes recientes escritos por el usuario.
+- **Aislamiento de evidencia:** Respuestas previas del asistente nunca se utilizan para construir la consulta RAG ni como fuente oficial.
+- **Diversidad controlada:** Una política extensa puede aportar varios fragmentos relevantes; el límite por documento es configurable y nunca excede el límite total de fragmentos.
+- **Falla de recuperación:** Si no se recupera evidencia, Mobibot no afirma que el dato no existe ni que no está documentado. Informa que no pudo localizar el apartado exacto, pide precisar el concepto y ofrece canalización.
+- **Observabilidad segura:** El sistema registra únicamente identificadores, índices, títulos, fuentes y puntajes de recuperación; no registra preguntas, contenido, embeddings, teléfonos ni secretos.
+
 ---
 
-## 4. Matriz de Estados Conversacionales
+## 4. Matriz de Estados Conversacionales — FLOW-001
 
 | Estado | Descripción | Disparador / Entrada | Acción / Respuesta |
 | :--- | :--- | :--- | :--- |
 | `IDLE / GREETING` | Inicio de conversación o saludo | Mensaje entrante ("Hola", "Buen día") | Normaliza teléfono, busca en `Colaboradores.csv`, saluda por nombre o general y ofrece apoyo. |
-| `POLICY_QUERY` | Pregunta sobre una política específica | "¿Cómo compruebo viáticos?", "¿Puedo usar ChatGPT?" | Extrae contexto del RAG con cero inferencia, responde de forma precisa y cita la política correspondiente. |
+| `POLICY_QUERY` | Pregunta sobre una política específica o seguimiento contextual | "¿Cómo compruebo viáticos?", "¿Cuánto puedo gastar de viaje?", "Ahí dice cuánto de comida" | Conserva el tema aportado por el usuario, prioriza el fragmento que contiene la forma de respuesta solicitada, responde con cero inferencia y cita la política correspondiente. |
 | `POLICY_LIST` | Solicitud de catálogo de políticas | "¿Qué políticas puedo consultar?" | Despliega el resumen amigable de políticas y normativas vigentes. |
 | `PSYCHOLOGY_FLOW` | Solicitud de cita psicológica | "Quiero una cita con la psicóloga", "Necesito apoyo emocional" | Muestra empatía, asegura confidencialidad, solicita turno/preferencia y gestiona canalización. |
 | `HOURS_QUERY` | Pregunta sobre horarios o descansos | "¿Cuál es el horario de oficina?", "¿Qué dice la ley silla?" | Explica jornada y descansos según RAG; aclara turnos especiales si aplica. |
 | `VACANCY_QUERY` | Pregunta sobre vacantes o trabajo | "¿Hay vacantes?", "¿Tienen trabajo de chofer?" | No afirma sí ni no; informa requisitos (traer solicitud y esperar entrevista), horario (L-V 9 a 12) y domicilio si lo piden. |
 | `OUT_OF_SCOPE` | Pregunta no encontrada en RAG | "¿Cuánto pagan en ventas?", "¿Hay bono navideño?" (no documentado) | Indica con amabilidad que no está en el manual y deriva a Recursos Humanos. |
 | `ESCALATION` | Petición explícita de hablar con una persona | "Pásame con alguien de RH", "Quiero hablar con un humano" | Canaliza cordialmente a Capital Humano / RH de Industrias Recio. |
+
+## 5. Fallbacks — FB-001
+
+- **Evidencia no recuperada:** No equivale a ausencia documental. Se informa la imposibilidad temporal de localizar el apartado, se solicita precisión y se ofrece canalización.
+- **Dato confirmado como no documentado:** Se aplica la respuesta estándar de CON-001 únicamente cuando existe evidencia suficiente para determinar que el tema no está cubierto.
