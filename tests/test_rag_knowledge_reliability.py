@@ -21,7 +21,7 @@ sys.modules.setdefault(
     types.SimpleNamespace(AsyncOpenAI=type("AsyncOpenAI", (), {})),
 )
 
-from app import bot_content, db, openai_client, rag
+from app import bot_content, config, db, openai_client, rag
 
 
 class MarkdownAwareChunkingTests(unittest.TestCase):
@@ -124,6 +124,44 @@ class RetrievalQueryTests(unittest.TestCase):
         self.assertIn("¿Y para alimentos?", query)
         self.assertNotIn("RESPUESTA_NO_CONFIABLE", query)
 
+    def test_deictic_policy_correction_keeps_the_original_user_question(self):
+        history = [
+            {
+                "role": "user",
+                "content": "Quiero saber cuánto puedo gastar de viaje",
+            },
+            {
+                "role": "assistant",
+                "content": "RESPUESTA_NO_CONFIABLE Esa información no existe.",
+            },
+        ]
+
+        query = bot_content.build_retrieval_query(
+            "Tenemos una política de viaje, ahí viene",
+            history,
+        )
+
+        self.assertIn("cuánto puedo gastar de viaje", query.lower())
+        self.assertIn("ahí viene", query.lower())
+        self.assertNotIn("RESPUESTA_NO_CONFIABLE", query)
+
+    def test_deictic_amount_followup_keeps_recent_user_context_only(self):
+        history = [
+            {"role": "user", "content": "Quiero saber cuánto puedo gastar de viaje"},
+            {"role": "assistant", "content": "RESPUESTA_NO_CONFIABLE No está documentado."},
+            {"role": "user", "content": "Tenemos una política de viaje, ahí viene"},
+            {"role": "assistant", "content": "RESPUESTA_NO_CONFIABLE Los montos varían."},
+        ]
+
+        query = bot_content.build_retrieval_query(
+            "Ahí dice cuánto puedo gastar de comida diario",
+            history,
+        )
+
+        self.assertIn("política de viaje", query.lower())
+        self.assertIn("comida diario", query.lower())
+        self.assertNotIn("RESPUESTA_NO_CONFIABLE", query)
+
 
 class BoundedKnowledgeFallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_retrieval_never_injects_every_large_document(self):
@@ -177,6 +215,7 @@ class BoundedKnowledgeFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Prompt exclusivo de Mobi", system)
         self.assertNotIn("MARCADOR_DOC_A", system)
         self.assertNotIn("MARCADOR_DOC_B", system)
+        self.assertIn("No afirmes que la información no existe", system)
         self.assertLess(len(system), 2000)
 
     async def test_large_base_without_query_is_bounded_for_follow_up_generation(self):
@@ -300,6 +339,130 @@ class SafeRetrievalDiagnosticsTests(unittest.IsolatedAsyncioTestCase):
 
         sql = conn.fetch.await_args.args[0]
         self.assertIn("k.index_status IN ('indexed', 'partial')", sql)
+
+
+class PolicyRetrievalRankingTests(unittest.IsolatedAsyncioTestCase):
+    @patch("app.openai_client.get_embedding", new_callable=AsyncMock)
+    @patch("app.rag.has_vector_column", new_callable=AsyncMock)
+    async def test_best_semantic_amount_chunk_survives_title_only_lexical_noise(
+        self,
+        mock_has_vector,
+        mock_embedding,
+    ):
+        mock_has_vector.return_value = True
+        mock_embedding.return_value = [0.1] * 1536
+        conn = AsyncMock()
+        relevant = {
+            "knowledge_id": 10,
+            "chunk_index": 27,
+            "title": "10_Politica_de_Gastos_de_Viaje.md",
+            "content": "El límite autorizado para alimentos es de $300 diarios.",
+            "distance": 0.12,
+        }
+        generic_rows = [
+            {
+                "knowledge_id": 10,
+                "chunk_index": index,
+                "title": "10_Politica_de_Gastos_de_Viaje.md",
+                "content": f"Introducción general de la política, fragmento {index}.",
+                "rank": 0.0,
+                "content_keyword_hits": 0,
+                "answer_shape": 0,
+            }
+            for index in range(2)
+        ]
+        conn.fetch.side_effect = [[relevant], generic_rows]
+
+        results = await rag.search_knowledge(
+            conn,
+            170,
+            "Pregunta actual: Quiero saber cuánto puedo gastar de viaje",
+            lexical_query="Quiero saber cuánto puedo gastar de viaje",
+            limit=2,
+        )
+
+        self.assertIn("$300 diarios", "\n".join(results))
+        self.assertIn("$300 diarios", results[0])
+
+    @patch("app.rag.has_vector_column", new_callable=AsyncMock)
+    async def test_amount_shaped_text_chunk_beats_earlier_generic_chunks_without_vectors(
+        self,
+        mock_has_vector,
+    ):
+        mock_has_vector.return_value = False
+        conn = AsyncMock()
+        conn.fetch.return_value = [
+            {
+                "knowledge_id": 10,
+                "chunk_index": 0,
+                "title": "10_Politica_de_Gastos_de_Viaje.md",
+                "content": "Introducción general.",
+                "rank": 0.0,
+                "content_keyword_hits": 0,
+                "answer_shape": 0,
+            },
+            {
+                "knowledge_id": 10,
+                "chunk_index": 1,
+                "title": "10_Politica_de_Gastos_de_Viaje.md",
+                "content": "Responsabilidades generales.",
+                "rank": 0.0,
+                "content_keyword_hits": 0,
+                "answer_shape": 0,
+            },
+            {
+                "knowledge_id": 10,
+                "chunk_index": 27,
+                "title": "10_Politica_de_Gastos_de_Viaje.md",
+                "content": "Para alimentos se autorizan hasta $300 por día.",
+                "rank": 0.0,
+                "content_keyword_hits": 0,
+                "answer_shape": 1,
+            },
+        ]
+
+        results = await rag.search_knowledge(
+            conn,
+            170,
+            "Quiero saber cuánto puedo gastar de viaje",
+            limit=2,
+        )
+
+        self.assertIn("$300 por día", "\n".join(results))
+        sql = conn.fetch.await_args.args[0]
+        self.assertIn("answer_shape", sql)
+        self.assertIn("content_keyword_hits", sql)
+        self.assertIs(conn.fetch.await_args.args[5], True)
+
+    @patch("app.rag.has_vector_column", new_callable=AsyncMock)
+    async def test_policy_query_can_return_more_than_two_relevant_sections(
+        self,
+        mock_has_vector,
+    ):
+        mock_has_vector.return_value = False
+        conn = AsyncMock()
+        conn.fetch.return_value = [
+            {
+                "knowledge_id": 10,
+                "chunk_index": index,
+                "title": "10_Politica_de_Gastos_de_Viaje.md",
+                "content": f"Monto autorizado {index}: ${100 + index} por día.",
+                "rank": 0.5,
+                "content_keyword_hits": 1,
+                "answer_shape": 1,
+            }
+            for index in range(6)
+        ]
+
+        with patch.object(config, "RAG_MAX_CHUNKS_PER_DOCUMENT", 4):
+            results = await rag.search_knowledge(
+                conn,
+                170,
+                "¿Cuánto puedo gastar de viaje?",
+                limit=8,
+            )
+
+        self.assertEqual(len(results), 4)
 
 
 class IndexingStateTests(unittest.IsolatedAsyncioTestCase):

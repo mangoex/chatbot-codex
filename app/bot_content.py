@@ -46,10 +46,18 @@ def build_retrieval_query(user_message: str, history: list[dict]) -> str:
     normalized = unicodedata.normalize("NFKD", current.lower())
     normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
     normalized = re.sub(r"^[^a-z0-9]+", "", normalized)
-    is_followup = bool(re.match(
+    starts_as_followup = bool(re.match(
         r"^(?:y\s+para|y\s+en|y\s+si|tambien|cual(?:es)?\s+de\s+(?:esos|esas)|en\s+ese\s+caso|eso\b|esa\b)",
         normalized,
-    )) and len(current) <= 240
+    ))
+    # Users commonly repair a failed policy answer with deictic wording such
+    # as "ahí viene" or "ahí dice". It is contextual even when the marker is
+    # not the first word of the message.
+    has_deictic_reference = bool(re.search(
+        r"\b(?:ahi|aqui|alli)\b|\b(?:eso|esa)\s+(?:dice|indica|menciona|viene)\b",
+        normalized,
+    ))
+    is_followup = (starts_as_followup or has_deictic_reference) and len(current) <= 240
     lines = []
     if is_followup:
         recent_users = [
@@ -142,6 +150,7 @@ async def system_prompt_for_bot(
         
         # RAG Semantic search solo si se provee consulta y la base de conocimiento es grande
         rag_chunks = []
+        retrieval_diagnostics: list[dict] = []
         uses_rag = total_chars > config.RAG_FULL_CONTEXT_MAX_CHARS
         if uses_rag and (query or "").strip():
             from app import rag
@@ -152,6 +161,7 @@ async def system_prompt_for_bot(
                     query,
                     lexical_query=lexical_query,
                     limit=config.RAG_FINAL_CHUNKS,
+                    diagnostics=retrieval_diagnostics,
                 )
         
         if uses_rag and rag_chunks:
@@ -180,7 +190,18 @@ async def system_prompt_for_bot(
     if 'uses_rag' in locals() and uses_rag and not rag_chunks:
         base_prompt += (
             "\n\nNo se encontró evidencia recuperada para esta consulta. "
-            "No inventes información de la base de conocimiento."
+            "No inventes información de la base de conocimiento. "
+            "No afirmes que la información no existe o que no está documentada: "
+            "indica únicamente que no pudiste localizar el apartado exacto en este momento "
+            "y pide al usuario precisar el concepto o consultar a Capital Humano."
+        )
+
+    if 'retrieval_diagnostics' in locals() and retrieval_diagnostics:
+        log.info(
+            "RAG retrieval selected metadata. bot_id=%s selected=%d diagnostics=%s",
+            bot_id,
+            len(retrieval_diagnostics),
+            retrieval_diagnostics,
         )
 
     log.info(

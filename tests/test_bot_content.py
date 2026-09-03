@@ -203,9 +203,24 @@ class BotContentTests(unittest.IsolatedAsyncioTestCase):
             return [{"title": "LargeDoc", "content": large_content, "status": "active"}]
 
         called_rag = False
-        async def fake_search(conn, bot_id, query, limit=8, lexical_query=None):
+        async def fake_search(
+            conn,
+            bot_id,
+            query,
+            limit=8,
+            lexical_query=None,
+            diagnostics=None,
+        ):
             nonlocal called_rag
             called_rag = True
+            if diagnostics is not None:
+                diagnostics.append({
+                    "knowledge_id": 1,
+                    "chunk_index": 0,
+                    "title": "LargeDoc",
+                    "score": 1.0,
+                    "retrieval_sources": ["text"],
+                })
             return ["RAG Chunk 1", "RAG Chunk 2"]
 
         import types
