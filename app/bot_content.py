@@ -58,6 +58,22 @@ def build_retrieval_query(user_message: str, history: list[dict]) -> str:
         normalized,
     ))
     is_followup = (starts_as_followup or has_deictic_reference) and len(current) <= 240
+    # "Cuando puedo gastar" is a frequent typo for "Cuánto puedo gastar".
+    # Keep the original text but add a semantic hint unless explicit temporal
+    # markers make the literal "cuándo" interpretation more likely.
+    has_amount_verb = bool(re.search(
+        r"\b(?:gastar|gasto|pagar|pago|costar|cuesta|costo)\b",
+        normalized,
+    ))
+    has_temporal_marker = bool(re.search(
+        r"\b(?:antes|despues|fecha|momento|hora|autorizacion|iniciar|inicio|terminar|regresar)\b",
+        normalized,
+    ))
+    likely_amount_typo = (
+        "cuando" in normalized.split()
+        and has_amount_verb
+        and not has_temporal_marker
+    )
     lines = []
     if is_followup:
         recent_users = [
@@ -67,6 +83,8 @@ def build_retrieval_query(user_message: str, history: list[dict]) -> str:
         ]
         for item in recent_users[-2:]:
             lines.append(f"Contexto de usuario: {item}")
+    if likely_amount_typo:
+        lines.append("Intención probable: consulta de monto o límite (cuánto).")
     lines.append(f"Pregunta actual: {current}")
     rendered = "\n".join(lines)
     if len(rendered) <= config.RETRIEVAL_QUERY_MAX_CHARS:
@@ -187,14 +205,22 @@ async def system_prompt_for_bot(
             log.error("Bot tenant sin prompt activo; respuesta de IA bloqueada. bot_id=%s", bot_id)
             raise BotPromptUnavailable(bot_id, "no active prompt")
 
-    if 'uses_rag' in locals() and uses_rag and not rag_chunks:
-        base_prompt += (
-            "\n\nNo se encontró evidencia recuperada para esta consulta. "
-            "No inventes información de la base de conocimiento. "
-            "No afirmes que la información no existe o que no está documentada: "
-            "indica únicamente que no pudiste localizar el apartado exacto en este momento "
-            "y pide al usuario precisar el concepto o consultar a Capital Humano."
-        )
+    if 'uses_rag' in locals() and uses_rag:
+        if rag_chunks:
+            base_prompt += (
+                "\n\nLos fragmentos recuperados son candidatos de búsqueda. "
+                "Si no contienen la respuesta exacta solicitada, eso no demuestra que el dato esté ausente "
+                "de las políticas. No afirmes que no existe o que no está documentado; indica que no pudiste "
+                "localizar el apartado exacto, pide una precisión útil y ofrece consultar a Capital Humano."
+            )
+        else:
+            base_prompt += (
+                "\n\nNo se encontró evidencia recuperada para esta consulta. "
+                "No inventes información de la base de conocimiento. "
+                "No afirmes que la información no existe o que no está documentada: "
+                "indica únicamente que no pudiste localizar el apartado exacto en este momento "
+                "y pide al usuario precisar el concepto o consultar a Capital Humano."
+            )
 
     if 'retrieval_diagnostics' in locals() and retrieval_diagnostics:
         log.info(

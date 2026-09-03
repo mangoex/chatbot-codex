@@ -1,6 +1,6 @@
 # 03 — Suite de Pruebas de Mobibot (Test Suite)
 
-**Versión:** 1.2.0
+**Versión:** 1.2.1
 **Fecha:** 2026-09-03
 **Estado:** UPDATED  
 **Trazabilidad:** Cobertura de CON-001 a CON-010 (`01-constitution.md`) y SPEC-001 a SPEC-007 (`02-behavior-specs.md`).
@@ -247,4 +247,18 @@ WHEN Mobibot prepara su respuesta
 THEN indica que no pudo localizar el apartado exacto en ese momento
   AND solicita precisar el concepto o propone consultar a Capital Humano.
 AND MUST NOT afirmar categóricamente que el dato no existe o no está documentado.
+```
+
+---
+
+### TEST-018: Tolerancia a “cuando” por “cuánto” y evidencia candidata insuficiente
+- **Trazabilidad:** US-008, SPEC-007, CON-010.
+- **Estado:** AUTOMATED / REGRESSION.
+```text
+GIVEN que la política de viaje contiene montos oficiales
+WHEN el usuario escribe: "Cuando puedo gastar de viaje"
+THEN la consulta conserva el mensaje original y agrega la intención probable de monto o límite
+  AND prioriza evidencia monetaria
+  AND, si los fragmentos candidatos no contienen la respuesta exacta, informa que no pudo localizar el apartado o pide una aclaración breve.
+AND MUST NOT afirmar que la información no está contemplada sólo porque los candidatos recuperados sean insuficientes.
 ```

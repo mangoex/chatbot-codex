@@ -162,6 +162,23 @@ class RetrievalQueryTests(unittest.TestCase):
         self.assertIn("comida diario", query.lower())
         self.assertNotIn("RESPUESTA_NO_CONFIABLE", query)
 
+    def test_likely_cuando_cuanto_typo_adds_amount_intent_without_rewriting_user_text(self):
+        query = bot_content.build_retrieval_query(
+            "Cuando puedo gastar de viaje",
+            [],
+        )
+
+        self.assertIn("Pregunta actual: Cuando puedo gastar de viaje", query)
+        self.assertIn("consulta de monto o límite", query.lower())
+
+    def test_explicit_temporal_question_does_not_add_amount_typo_hint(self):
+        query = bot_content.build_retrieval_query(
+            "¿Cuándo puedo gastar después de recibir la autorización?",
+            [],
+        )
+
+        self.assertNotIn("consulta de monto o límite", query.lower())
+
 
 class BoundedKnowledgeFallbackTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_retrieval_never_injects_every_large_document(self):
@@ -250,6 +267,47 @@ class BoundedKnowledgeFallbackTests(unittest.IsolatedAsyncioTestCase):
             system = await bot_content.system_prompt_for_bot(170, query="   ")
 
         self.assertNotIn("MARCADOR_QUERY_VACIA", system)
+
+    async def test_nonempty_candidate_retrieval_still_forbids_false_absence_claims(self):
+        documents = [{
+            "id": 1,
+            "title": "Política extensa",
+            "content": "x" * 16000,
+            "status": "active",
+        }]
+
+        class Acquire:
+            async def __aenter__(self):
+                return AsyncMock()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        class Pool:
+            def acquire(self):
+                return Acquire()
+
+        with patch.object(
+            db,
+            "get_active_bot_prompt",
+            AsyncMock(return_value={"content": "Prompt base"}),
+        ), patch.object(
+            db,
+            "list_bot_knowledge",
+            AsyncMock(return_value=documents),
+        ), patch.object(db, "_pool", Pool()), patch.object(
+            rag,
+            "search_knowledge",
+            AsyncMock(return_value=["Fragmento candidato sin la respuesta exacta"]),
+        ):
+            system = await bot_content.system_prompt_for_bot(
+                170,
+                query="Pregunta actual: Cuando puedo gastar de viaje",
+                lexical_query="Cuando puedo gastar de viaje",
+            )
+
+        self.assertIn("Fragmento candidato sin la respuesta exacta", system)
+        self.assertIn("no demuestra que el dato esté ausente", system.lower())
 
 
 class SafeRetrievalDiagnosticsTests(unittest.IsolatedAsyncioTestCase):

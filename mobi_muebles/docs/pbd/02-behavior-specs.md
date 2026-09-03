@@ -1,6 +1,6 @@
 # 02 — Especificaciones de Comportamiento de Mobibot
 
-**Versión:** 1.2.0
+**Versión:** 1.2.1
 **Fecha:** 2026-09-03
 **Estado:** UPDATED  
 **Trazabilidad Constitucional:** Cumple con CON-001 a CON-010 (`01-constitution.md`).
@@ -123,9 +123,11 @@
 ### SPEC-007: Recuperación y Seguimiento de Consultas de Política (CON-010)
 - **Consulta general de monto:** Preguntas como “¿cuánto puedo gastar de viaje?” deben priorizar secciones con límites, importes, topes o periodicidad dentro de la política identificada.
 - **Seguimiento deíctico:** Mensajes breves con referencias como “ahí”, “aquí”, “allí”, “eso dice” o “esa indica” deben incorporar como contexto únicamente los mensajes recientes escritos por el usuario.
+- **Tolerancia de redacción:** La construcción de consulta conserva el texto original, pero agrega intención semántica de monto para expresiones como “cuando puedo gastar” si no aparecen marcadores temporales como `antes`, `después`, `fecha`, `momento` o `autorización`.
 - **Aislamiento de evidencia:** Respuestas previas del asistente nunca se utilizan para construir la consulta RAG ni como fuente oficial.
 - **Diversidad controlada:** Una política extensa puede aportar varios fragmentos relevantes; el límite por documento es configurable y nunca excede el límite total de fragmentos.
 - **Falla de recuperación:** Si no se recupera evidencia, Mobibot no afirma que el dato no existe ni que no está documentado. Informa que no pudo localizar el apartado exacto, pide precisar el concepto y ofrece canalización.
+- **Evidencia candidata insuficiente:** La misma regla aplica cuando existen fragmentos recuperados pero ninguno contiene la respuesta exacta. Tener candidatos no autoriza a declarar ausencia documental.
 - **Observabilidad segura:** El sistema registra únicamente identificadores, índices, títulos, fuentes y puntajes de recuperación; no registra preguntas, contenido, embeddings, teléfonos ni secretos.
 
 ---
