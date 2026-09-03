@@ -48,6 +48,10 @@ Una recuperación vacía no puede generar la afirmación “no está documentado
 
 La respuesta sigue limitada al contenido recuperado. La mejora de ranking no autoriza inferencias ni la inyección completa de bases grandes.
 
+### RF-RPR-006 — Tolerancia a ambigüedad ortográfica
+
+La expresión `cuando puedo gastar` se trata como probable consulta de monto cuando no contiene marcadores temporales explícitos. El texto original se conserva y la consulta semántica recibe una expansión controlada. Una pregunta con `antes`, `después`, `fecha`, `momento`, `hora` o `autorización` conserva la interpretación temporal.
+
 ## 5. Diseño técnico
 
 ### 5.1 Construcción de consulta
@@ -141,6 +145,18 @@ No se registra contenido del fragmento, consulta, embedding, teléfono, respuest
 **CUANDO** se acceda a documentos o fragmentos
 **ENTONCES** toda operación conserva `bot_id`, excluye directorios privados y no amplía el contenido registrado en logs.
 
+### AC-RPR-009 — “Cuando” como probable error de “cuánto”
+
+**DADO** el mensaje “Cuando puedo gastar de viaje” sin marcadores temporales
+**CUANDO** se construya la consulta RAG
+**ENTONCES** se conserva el texto original y se agrega una intención probable de monto o límite.
+
+### AC-RPR-010 — Candidatos insuficientes
+
+**DADO** que la recuperación devuelve fragmentos pero no contienen la respuesta exacta
+**CUANDO** se construya el prompt del bot
+**ENTONCES** se prohíbe concluir que el dato no existe o no está documentado.
+
 ## 7. Pruebas
 
 | Criterio | Prueba automatizada |
@@ -152,6 +168,8 @@ No se registra contenido del fragmento, consulta, embedding, teléfono, respuest
 | AC-RPR-005/006 | `RetrievalQueryTests.test_deictic_amount_followup_keeps_recent_user_context_only` |
 | AC-RPR-007 | `BoundedKnowledgeFallbackTests.test_empty_retrieval_never_injects_every_large_document` |
 | AC-RPR-008 | Regresiones existentes de aislamiento, privacidad y diagnóstico seguro |
+| AC-RPR-009 | `RetrievalQueryTests.test_likely_cuando_cuanto_typo_adds_amount_intent_without_rewriting_user_text` y caso temporal complementario |
+| AC-RPR-010 | `BoundedKnowledgeFallbackTests.test_nonempty_candidate_retrieval_still_forbids_false_absence_claims` |
 
 ## 8. Despliegue y rollback
 

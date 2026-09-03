@@ -61,3 +61,13 @@
 - [ ] Ejecutar prueba conversacional end-to-end y revisar diagnóstico seguro.
 
 Las tareas pendientes requieren el entorno de despliegue y acceso operativo; no se ejecutan como parte del cambio local.
+
+## Tarea 9 — Regresión posterior al primer redeploy
+
+- [x] Reproducir el caso “Cuando puedo gastar de viaje”.
+- [x] Confirmar que `gastar` ya activa la señal monetaria.
+- [x] Añadir expansión semántica controlada para el probable error `cuando`/`cuánto`.
+- [x] Preservar preguntas realmente temporales mediante marcadores explícitos.
+- [x] Aplicar el guardrail de falso negativo también con candidatos no vacíos.
+- [x] Añadir TEST-018 y compilar Master Prompt 1.2.1.
+- [ ] Repetir el caso en producción después del siguiente redeploy y la publicación del prompt.
