@@ -1,6 +1,7 @@
 from __future__ import annotations
 """Final cleanup and safety checks for WhatsApp replies."""
 import re
+from decimal import Decimal, InvalidOperation
 
 _REINTRO_RE = re.compile(
     r"^\s*hola\s*,?\s*soy\s+(?:el\s+asistente\s+integrado\s+de\s+)?asistto(?:\s+de\s+humanio)?[.!:,]?\s*",
@@ -24,6 +25,173 @@ _FALLBACK_REPLY = (
     "El asistente responde dudas, captura prospectos y puede ayudar a agendar citas cuando la integración está activa.\n"
     "¿Qué tipo de negocio quieres automatizar?"
 )
+
+_KNOWLEDGE_MARKER = "--- knowledge_base ---"
+_RAG_GROUNDING_MARKER = "--- rag_grounding_required ---"
+_RUNTIME_MARKER = "--- contexto_runtime ---"
+_UNGROUNDED_AMOUNT_REPLY = (
+    "No pude validar ese monto contra la información oficial recuperada y, para no darte "
+    "una cifra incorrecta, prefiero no indicarlo. Por favor dime qué concepto necesitas "
+    "consultar y volveré a buscar el apartado exacto; también puedes confirmarlo con "
+    "Capital Humano."
+)
+_NUMBER_TOKEN = r"\d(?:[\d.,\s]*\d)?"
+_EXPLICIT_MONEY_RE = re.compile(
+    rf"(?:\b(?:MXN|USD)\s*)?\$\s*(?P<prefix>{_NUMBER_TOKEN})"
+    rf"|(?P<suffix>{_NUMBER_TOKEN})\s*(?:pesos?|MXN|USD|d[oó]lares?)\b",
+    re.IGNORECASE,
+)
+_CONTEXTUAL_MONEY_RE = re.compile(
+    rf"\b(?:hasta|tope(?:\s+(?:de|diario|máximo|maximo))?|"
+    rf"l[ií]mite(?:\s+(?:de|diario))?|monto(?:\s+(?:de|máximo|maximo))?)"
+    rf"\s*(?:es|son|de|:)?\s*\$?\s*(?P<amount>{_NUMBER_TOKEN})"
+    rf"|(?P<daily>{_NUMBER_TOKEN})\s*(?:diarios?|por\s+d[ií]a)\b",
+    re.IGNORECASE,
+)
+_MONEY_TOPIC_RE = re.compile(
+    r"\b(?:gastar|gasto(?:s)?|vi[aá]ticos?|precio|costo|alimentos?|comidas?|"
+    r"alimentaci[oó]n|hospedaje|hotel|alojamiento|traslados?|transportes?|taxi)\b",
+    re.IGNORECASE,
+)
+_MONEY_CONCEPTS = {
+    "food": re.compile(r"\b(?:alimentos?|comidas?|alimentaci[oó]n)\b", re.IGNORECASE),
+    "lodging": re.compile(r"\b(?:hospedaje|hotel|alojamiento)\b", re.IGNORECASE),
+    "transport": re.compile(r"\b(?:traslados?|transportes?|taxi)\b", re.IGNORECASE),
+}
+
+
+def _visible_reply(reply: str) -> str:
+    """Return only the customer-visible XML payload when one is present."""
+    clean = reply or ""
+    lowered = clean.lower()
+    start = lowered.find("<respuesta>")
+    if start == -1:
+        return clean
+    start += len("<respuesta>")
+    end = lowered.find("</respuesta>", start)
+    return clean[start:] if end == -1 else clean[start:end]
+
+
+def knowledge_evidence(system_prompt: str) -> str | None:
+    """Extract retrieved tenant knowledge, excluding prompts and runtime context."""
+    if _KNOWLEDGE_MARKER not in (system_prompt or ""):
+        return None
+    evidence = system_prompt.split(_KNOWLEDGE_MARKER, 1)[1]
+    if _RUNTIME_MARKER in evidence:
+        evidence = evidence.split(_RUNTIME_MARKER, 1)[0]
+    return evidence.strip()
+
+
+def _normalize_amount(raw: str) -> str | None:
+    value = re.sub(r"\s+", "", raw or "")
+    if not value:
+        return None
+
+    comma = value.rfind(",")
+    dot = value.rfind(".")
+    if comma >= 0 and dot >= 0:
+        decimal_sep = "," if comma > dot else "."
+        thousands_sep = "." if decimal_sep == "," else ","
+        value = value.replace(thousands_sep, "")
+        value = value.replace(decimal_sep, ".")
+    else:
+        separator = "," if comma >= 0 else "." if dot >= 0 else None
+        if separator:
+            groups = value.split(separator)
+            if len(groups) > 2:
+                if len(groups[-1]) <= 2:
+                    value = "".join(groups[:-1]) + "." + groups[-1]
+                else:
+                    value = "".join(groups)
+            elif len(groups[-1]) == 3:
+                value = "".join(groups)
+            else:
+                value = ".".join(groups)
+
+    try:
+        normalized = Decimal(value).normalize()
+    except InvalidOperation:
+        return None
+    return format(normalized, "f")
+
+
+def _claim_segment(text: str, start: int, end: int) -> str:
+    left = max(text.rfind(separator, 0, start) for separator in ("\n", ";", "!", "?"))
+    right_candidates = [
+        index for separator in ("\n", ";", "!", "?")
+        if (index := text.find(separator, end)) >= 0
+    ]
+    right = min(right_candidates) if right_candidates else len(text)
+    return text[left + 1:right]
+
+
+def _monetary_claims(text: str) -> list[tuple[str, str]]:
+    claims: list[tuple[str, str]] = []
+    seen_spans: set[tuple[int, int]] = set()
+    for pattern in (_EXPLICIT_MONEY_RE, _CONTEXTUAL_MONEY_RE):
+        for match in pattern.finditer(text or ""):
+            span = match.span()
+            if span in seen_spans:
+                continue
+            segment = _claim_segment(text or "", *span)
+            if pattern is _CONTEXTUAL_MONEY_RE and not _MONEY_TOPIC_RE.search(segment):
+                continue
+            raw = next((group for group in match.groups() if group is not None), None)
+            normalized = _normalize_amount(raw or "")
+            if normalized is not None:
+                claims.append((normalized, segment))
+                seen_spans.add(span)
+    return claims
+
+
+def monetary_amounts(text: str) -> set[str]:
+    """Return normalized amounts that are expressed as monetary claims."""
+    return {amount for amount, _segment in _monetary_claims(text)}
+
+
+def _monetary_concept_pairs(text: str) -> set[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = set()
+    for amount, segment in _monetary_claims(text):
+        for concept, pattern in _MONEY_CONCEPTS.items():
+            if pattern.search(segment):
+                pairs.add((concept, amount))
+    return pairs
+
+
+def unsupported_monetary_amounts(reply: str, system_prompt: str) -> set[str]:
+    """Return customer-visible monetary claims absent from official evidence."""
+    if _RAG_GROUNDING_MARKER not in (system_prompt or ""):
+        return set()
+    evidence = knowledge_evidence(system_prompt)
+    if evidence is None:
+        return set()
+    visible = _visible_reply(reply)
+    unsupported_amounts = monetary_amounts(visible) - monetary_amounts(evidence)
+    unsupported_pairs = _monetary_concept_pairs(visible) - _monetary_concept_pairs(evidence)
+    return unsupported_amounts | {amount for _concept, amount in unsupported_pairs}
+
+
+def remove_ungrounded_assistant_history(
+    history: list[dict],
+    system_prompt: str,
+) -> list[dict]:
+    """Discard stale assistant amounts that conflict with current official evidence."""
+    if _RAG_GROUNDING_MARKER not in (system_prompt or ""):
+        return list(history)
+    return [
+        item
+        for item in history
+        if item.get("role") != "assistant"
+        or not unsupported_monetary_amounts(str(item.get("content") or ""), system_prompt)
+    ]
+
+
+def enforce_grounded_monetary_claims(reply: str, system_prompt: str) -> tuple[str, set[str]]:
+    """Fail closed when the model produces a monetary amount not in official evidence."""
+    unsupported = unsupported_monetary_amounts(reply, system_prompt)
+    if unsupported:
+        return _UNGROUNDED_AMOUNT_REPLY, unsupported
+    return reply, set()
 
 
 def _is_emoji(ch: str) -> bool:

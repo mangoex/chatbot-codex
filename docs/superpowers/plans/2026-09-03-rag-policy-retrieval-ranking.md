@@ -71,3 +71,15 @@ Las tareas pendientes requieren el entorno de despliegue y acceso operativo; no 
 - [x] Aplicar el guardrail de falso negativo también con candidatos no vacíos.
 - [x] Añadir TEST-018 y compilar Master Prompt 1.2.1.
 - [ ] Repetir el caso en producción después del siguiente redeploy y la publicación del prompt.
+
+## Tarea 10 — Barrera determinista contra montos inventados
+
+- [x] Corregir el dato ficticio `$300` en especificaciones y pruebas; el límite oficial observado para alimentos es `$1,000`.
+- [x] Delimitar explícitamente la evidencia incluso cuando una recuperación RAG quede vacía.
+- [x] Excluir respuestas históricas del asistente con montos no respaldados por la evidencia vigente.
+- [x] Normalizar formatos monetarios equivalentes antes de comparar.
+- [x] Bloquear antes del envío cualquier respuesta con cifras monetarias ausentes de la Base de Conocimiento del turno.
+- [x] Registrar sólo el `bot_id` y la cantidad de montos bloqueados.
+- [x] Añadir pruebas unitarias e integrales de regresión.
+- [x] Compilar el Master Prompt 1.3.0 con CON-011, US-009, SPEC-008 y TEST-019.
+- [ ] Validar en producción que alimentos responda `$1,000`, hospedaje `$2,500` y traslados `$1,000` desde el documento oficial vigente.

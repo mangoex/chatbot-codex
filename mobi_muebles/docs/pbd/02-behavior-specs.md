@@ -1,9 +1,9 @@
 # 02 — Especificaciones de Comportamiento de Mobibot
 
-**Versión:** 1.2.1
+**Versión:** 1.3.0
 **Fecha:** 2026-09-03
 **Estado:** UPDATED  
-**Trazabilidad Constitucional:** Cumple con CON-001 a CON-010 (`01-constitution.md`).
+**Trazabilidad Constitucional:** Cumple con CON-001 a CON-011 (`01-constitution.md`).
 
 ---
 
@@ -59,6 +59,11 @@
 - **Como:** Colaborador que formula una duda general y después la precisa con expresiones como “ahí dice”.
 - **Quiero:** Que el bot mantenga el tema de mis mensajes y localice el apartado pertinente de la política.
 - **Para:** Obtener el dato oficial sin que una búsqueda incompleta se confunda con información inexistente.
+
+### US-009: Montos Verificados Antes del Envío
+- **Como:** Colaborador que consulta topes, precios o importes de una política.
+- **Quiero:** Que toda cifra sea verificada contra el fragmento oficial del turno antes de recibirla.
+- **Para:** No recibir montos inventados o repetidos desde una respuesta anterior incorrecta.
 
 ---
 
@@ -130,6 +135,13 @@
 - **Evidencia candidata insuficiente:** La misma regla aplica cuando existen fragmentos recuperados pero ninguno contiene la respuesta exacta. Tener candidatos no autoriza a declarar ausencia documental.
 - **Observabilidad segura:** El sistema registra únicamente identificadores, índices, títulos, fuentes y puntajes de recuperación; no registra preguntas, contenido, embeddings, teléfonos ni secretos.
 
+### SPEC-008: Grounding Monetario de Salida (CON-001, CON-011)
+- **Delimitación de evidencia:** En consultas RAG estrictas, el runtime agrega un marcador interno de grounding y la sección `knowledge_base` del turno es la única fuente válida para verificar cifras monetarias de las políticas. Una recuperación vacía conserva un límite explícito de evidencia sin contenido oficial.
+- **Limpieza del historial:** Antes de llamar al modelo, las respuestas anteriores del asistente con montos ausentes de la evidencia actual se excluyen; los mensajes del usuario permanecen para conservar la intención.
+- **Normalización:** La comparación reconoce formatos monetarios equivalentes con separadores de miles y decimales.
+- **Validación previa al envío:** Si la respuesta generada contiene un monto que no aparece en la evidencia oficial normalizada, la plataforma no envía esa respuesta y usa un fallback sin cifras.
+- **Compatibilidad:** Cuando no existe el marcador interno de RAG estricto, esta barrera no reinterpreta precios provenientes de contexto completo u otros flujos transaccionales; los pedidos con cálculo determinista conservan sus validaciones existentes.
+
 ---
 
 ## 4. Matriz de Estados Conversacionales — FLOW-001
@@ -137,7 +149,7 @@
 | Estado | Descripción | Disparador / Entrada | Acción / Respuesta |
 | :--- | :--- | :--- | :--- |
 | `IDLE / GREETING` | Inicio de conversación o saludo | Mensaje entrante ("Hola", "Buen día") | Normaliza teléfono, busca en `Colaboradores.csv`, saluda por nombre o general y ofrece apoyo. |
-| `POLICY_QUERY` | Pregunta sobre una política específica o seguimiento contextual | "¿Cómo compruebo viáticos?", "¿Cuánto puedo gastar de viaje?", "Ahí dice cuánto de comida" | Conserva el tema aportado por el usuario, prioriza el fragmento que contiene la forma de respuesta solicitada, responde con cero inferencia y cita la política correspondiente. |
+| `POLICY_QUERY` | Pregunta sobre una política específica o seguimiento contextual | "¿Cómo compruebo viáticos?", "¿Cuánto puedo gastar de viaje?", "Ahí dice cuánto de comida" | Conserva el tema aportado por el usuario, prioriza el fragmento que contiene la forma de respuesta solicitada, valida cualquier monto contra esa evidencia, responde con cero inferencia y cita la política correspondiente. |
 | `POLICY_LIST` | Solicitud de catálogo de políticas | "¿Qué políticas puedo consultar?" | Despliega el resumen amigable de políticas y normativas vigentes. |
 | `PSYCHOLOGY_FLOW` | Solicitud de cita psicológica | "Quiero una cita con la psicóloga", "Necesito apoyo emocional" | Muestra empatía, asegura confidencialidad, solicita turno/preferencia y gestiona canalización. |
 | `HOURS_QUERY` | Pregunta sobre horarios o descansos | "¿Cuál es el horario de oficina?", "¿Qué dice la ley silla?" | Explica jornada y descansos según RAG; aclara turnos especiales si aplica. |

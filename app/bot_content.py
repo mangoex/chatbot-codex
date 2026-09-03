@@ -230,6 +230,11 @@ async def system_prompt_for_bot(
             retrieval_diagnostics,
         )
 
+    if 'uses_rag' in locals() and uses_rag:
+        # Machine-readable scope for deterministic output grounding. This is
+        # intentionally separate from the tenant-authored prompt.
+        base_prompt += "\n\n--- rag_grounding_required ---"
+
     log.info(
         "Cargando prompt para bot_id=%s. ¿Se encontró row activo?: %s, Documentos de conocimiento: %d, RAG usado: %s",
         bot_id,
@@ -237,4 +242,9 @@ async def system_prompt_for_bot(
         len(knowledge_docs),
         bool(query and rag_chunks),
     )
-    return combine_prompt(base_prompt, knowledge_docs)
+    combined = combine_prompt(base_prompt, knowledge_docs)
+    if 'uses_rag' in locals() and uses_rag and not rag_chunks:
+        # Preserve an explicit, empty evidence boundary so downstream safety
+        # checks can reject amounts copied from stale assistant history.
+        combined += "\n\n--- knowledge_base ---\n\n[Sin evidencia oficial recuperada para esta consulta.]"
+    return combined

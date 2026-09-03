@@ -4,6 +4,120 @@ from app import reply_safety
 
 
 class ReplySafetyTests(unittest.TestCase):
+    def test_blocks_amount_absent_from_official_knowledge(self):
+        system = (
+            "Prompt del bot\n\n--- rag_grounding_required ---\n\n--- knowledge_base ---\n"
+            "Alimentos hasta $1,000 pesos por día.\n\n"
+            "--- contexto_runtime ---\nFecha actual: 2026-09-03"
+        )
+
+        reply, unsupported = reply_safety.enforce_grounded_monetary_claims(
+            "En alimentos puedes gastar hasta $300 diarios.",
+            system,
+        )
+
+        self.assertNotIn("$300", reply)
+        self.assertIn("no pude validar", reply.lower())
+        self.assertEqual(unsupported, {"300"})
+
+    def test_allows_official_amount_with_equivalent_formatting(self):
+        system = (
+            "Prompt\n\n--- rag_grounding_required ---\n\n--- knowledge_base ---\n"
+            "Alimentos hasta $1,000 pesos por día.\n\n"
+            "--- contexto_runtime ---\nContexto"
+        )
+        expected = "El límite de alimentos es de $1000.00 por día."
+
+        reply, unsupported = reply_safety.enforce_grounded_monetary_claims(
+            expected,
+            system,
+        )
+
+        self.assertEqual(reply, expected)
+        self.assertEqual(unsupported, set())
+
+    def test_blocks_amount_when_retrieval_has_explicit_empty_evidence(self):
+        system = (
+            "Prompt\n\n--- rag_grounding_required ---\n\n--- knowledge_base ---\n"
+            "[Sin evidencia oficial recuperada para esta consulta.]\n\n"
+            "--- contexto_runtime ---\nContexto"
+        )
+
+        reply, unsupported = reply_safety.enforce_grounded_monetary_claims(
+            "El tope de alimentos es 300 diarios.",
+            system,
+        )
+
+        self.assertNotIn("300", reply)
+        self.assertEqual(unsupported, {"300"})
+
+    def test_blocks_amount_attached_to_the_wrong_policy_concept(self):
+        system = (
+            "Prompt\n\n--- rag_grounding_required ---\n\n--- knowledge_base ---\n"
+            "Alimentos hasta $1,000 pesos por día.\n"
+            "Hospedaje hasta $2,500 pesos por día."
+        )
+
+        reply, unsupported = reply_safety.enforce_grounded_monetary_claims(
+            "En alimentos puedes gastar hasta $2,500 pesos por día.",
+            system,
+        )
+
+        self.assertNotIn("$2,500", reply)
+        self.assertEqual(unsupported, {"2500"})
+
+    def test_does_not_treat_a_nonmonetary_duration_as_money(self):
+        system = (
+            "Prompt\n\n--- rag_grounding_required ---\n\n--- knowledge_base ---\n"
+            "El permiso se registra con la jefatura."
+        )
+        expected = "El permiso puede durar hasta 3 días."
+
+        reply, unsupported = reply_safety.enforce_grounded_monetary_claims(
+            expected,
+            system,
+        )
+
+        self.assertEqual(reply, expected)
+        self.assertEqual(unsupported, set())
+
+    def test_removes_stale_assistant_amount_but_keeps_user_context(self):
+        history = [
+            {"role": "user", "content": "¿Cuánto puedo gastar en alimentos?"},
+            {"role": "assistant", "content": "Puedes gastar $300 diarios."},
+        ]
+        system = (
+            "Prompt\n\n--- rag_grounding_required ---\n\n--- knowledge_base ---\n"
+            "Alimentos hasta $1,000 pesos por día."
+        )
+
+        filtered = reply_safety.remove_ungrounded_assistant_history(history, system)
+
+        self.assertEqual(filtered, [history[0]])
+
+    def test_does_not_apply_knowledge_guard_without_evidence_boundary(self):
+        expected = "El producto cuesta $115."
+
+        reply, unsupported = reply_safety.enforce_grounded_monetary_claims(
+            expected,
+            "Prompt comercial sin base de conocimiento recuperada.",
+        )
+
+        self.assertEqual(reply, expected)
+        self.assertEqual(unsupported, set())
+
+    def test_does_not_apply_guard_to_full_context_knowledge_without_rag_scope(self):
+        expected = "El total calculado es $230."
+        system = "Prompt\n\n--- knowledge_base ---\nCada unidad cuesta $115."
+
+        reply, unsupported = reply_safety.enforce_grounded_monetary_claims(
+            expected,
+            system,
+        )
+
+        self.assertEqual(reply, expected)
+        self.assertEqual(unsupported, set())
+
     def test_adds_missing_space_after_comma(self):
         self.assertEqual(
             reply_safety.polish("Hola,soy Asistto.", []),

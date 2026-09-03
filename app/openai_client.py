@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import tiktoken
 from openai import AsyncOpenAI
-from app import bot_content, config, db, external_actions, order_payments
+from app import bot_content, config, db, external_actions, order_payments, reply_safety
 
 _client: AsyncOpenAI | None = None
 
@@ -241,7 +241,13 @@ async def complete(
         lead_info=lead_info,
         wa_id=wa_id,
     )
-    fitted = fit_history(system, history, user_message, config.MAX_PROMPT_TOKENS)
+    payment_flow_enabled = order_payments.enabled_config_from_prompt(system) is not None
+    grounded_history = (
+        list(history)
+        if payment_flow_enabled
+        else reply_safety.remove_ungrounded_assistant_history(history, system)
+    )
+    fitted = fit_history(system, grounded_history, user_message, config.MAX_PROMPT_TOKENS)
     messages = (
         [{"role": "system", "content": system}]
         + fitted
@@ -256,7 +262,20 @@ async def complete(
         len(system),
         len(fitted),
     )
-    return await _chat(messages, model=openai_model)
+    reply = await _chat(messages, model=openai_model)
+    unsupported_amounts: set[str] = set()
+    if not payment_flow_enabled:
+        reply, unsupported_amounts = reply_safety.enforce_grounded_monetary_claims(
+            reply,
+            system,
+        )
+    if unsupported_amounts:
+        logger.warning(
+            "Respuesta monetaria bloqueada por falta de evidencia oficial. bot_id=%s, montos_bloqueados=%d",
+            bot_id,
+            len(unsupported_amounts),
+        )
+    return reply
 
 
 async def diagnostics() -> dict:

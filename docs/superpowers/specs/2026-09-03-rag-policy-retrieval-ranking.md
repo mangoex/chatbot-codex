@@ -8,7 +8,7 @@
 
 Una consulta general como “Quiero saber cuánto puedo gastar de viaje” puede recuperar los primeros fragmentos de `10_Politica_de_Gastos_de_Viaje.md` en lugar de la sección que contiene los montos. La coincidencia del término “viaje” en el título se aplica a todos los fragmentos; el ranking anterior favorece la posición de la coincidencia léxica y limita el documento a dos fragmentos. Los seguimientos “ahí viene” y “ahí dice” tampoco se clasifican como contextuales.
 
-El resultado observado es un falso negativo: el bot afirma que la información no está documentada aunque el dato existe y aparece cuando el usuario agrega “comida diario”.
+El primer resultado observado fue un falso negativo: el bot afirmó que la información no estaba documentada aunque el dato existía. Después del primer ajuste, una respuesta anterior incorrecta del asistente (`$300`) contaminó la generación y el bot la repitió aunque la política oficial mostrada por el usuario establece alimentos hasta `$1,000`. La recuperación por sí sola no garantiza que la salida final esté respaldada.
 
 ## 2. Objetivos
 
@@ -18,6 +18,8 @@ El resultado observado es un falso negativo: el bot afirma que la información n
 4. Conservar contexto exclusivamente escrito por el usuario ante referencias deícticas breves.
 5. Diferenciar una falla de recuperación de una ausencia documental confirmada.
 6. Producir diagnóstico operativo sin registrar contenido, consultas, embeddings, teléfonos o secretos.
+7. Impedir determinísticamente que una cifra monetaria ausente de la evidencia oficial llegue al usuario.
+8. Evitar que montos inventados por respuestas anteriores del asistente contaminen turnos posteriores.
 
 ## 3. Fuera de alcance
 
@@ -51,6 +53,14 @@ La respuesta sigue limitada al contenido recuperado. La mejora de ranking no aut
 ### RF-RPR-006 — Tolerancia a ambigüedad ortográfica
 
 La expresión `cuando puedo gastar` se trata como probable consulta de monto cuando no contiene marcadores temporales explícitos. El texto original se conserva y la consulta semántica recibe una expansión controlada. Una pregunta con `antes`, `después`, `fecha`, `momento`, `hora` o `autorización` conserva la interpretación temporal.
+
+### RF-RPR-007 — Validación monetaria determinista
+
+Cuando el runtime marca una consulta como RAG estricta y contiene una sección `knowledge_base`, toda cifra monetaria visible en la respuesta debe existir en esa sección después de normalizar separadores de miles y decimales. El historial del asistente y el contexto operativo quedan fuera de la evidencia. Si una cifra no coincide, la respuesta generada se reemplaza por un fallback sin montos. Los flujos transaccionales con cálculo determinista quedan fuera de esta barrera.
+
+### RF-RPR-008 — Descontaminación del historial
+
+Antes de generar una respuesta con evidencia delimitada, se eliminan del contexto las respuestas anteriores del asistente que contengan montos no respaldados por la evidencia vigente. Los mensajes del usuario no se eliminan.
 
 ## 5. Diseño técnico
 
@@ -93,6 +103,12 @@ El runtime entrega un colector de diagnósticos a `search_knowledge` y registra 
 
 No se registra contenido del fragmento, consulta, embedding, teléfono, respuesta del modelo ni error crudo del proveedor.
 
+### 5.6 Grounding monetario de salida
+
+`reply_safety` extrae únicamente la parte de la respuesta visible para el cliente, reconoce expresiones monetarias explícitas (`$`, `pesos`, `MXN`, `USD`) y formas contextuales como `hasta`, `tope`, `límite` o `por día`. Los importes se normalizan sin usar números de respuestas anteriores como fuente.
+
+El flujo de `openai_client.complete` filtra primero el historial contaminado, genera la respuesta y finalmente aplica el validador. Un incumplimiento produce un único fallback seguro y un log con `bot_id` y cantidad de montos bloqueados, nunca con contenido ni cifras.
+
 ## 6. Criterios de aceptación
 
 ### AC-RPR-001 — Preservación semántica
@@ -104,7 +120,7 @@ No se registra contenido del fragmento, consulta, embedding, teléfono, respuest
 ### AC-RPR-002 — Fallback textual de monto
 
 **DADO** que no hay búsqueda vectorial
-**Y** existe un fragmento con `$300 por día` después de fragmentos introductorios
+**Y** existe un fragmento con `$1,000 por día` después de fragmentos introductorios
 **CUANDO** la pregunta solicite cuánto se puede gastar
 **ENTONCES** el fragmento monetario debe quedar seleccionado.
 
@@ -157,6 +173,32 @@ No se registra contenido del fragmento, consulta, embedding, teléfono, respuest
 **CUANDO** se construya el prompt del bot
 **ENTONCES** se prohíbe concluir que el dato no existe o no está documentado.
 
+### AC-RPR-011 — Monto inventado bloqueado
+
+**DADO** que la evidencia oficial contiene `$1,000` para alimentos
+**Y** el modelo genera `$300`
+**CUANDO** se valida la salida
+**ENTONCES** la respuesta con `$300` no se envía y se sustituye por un fallback sin cifras.
+
+### AC-RPR-012 — Formatos equivalentes permitidos
+
+**DADO** que la evidencia oficial contiene `$1,000`
+**CUANDO** la respuesta expresa `$1000.00` o `1000 pesos`
+**ENTONCES** el monto se reconoce como respaldado.
+
+### AC-RPR-013 — Historial del bot no es evidencia
+
+**DADO** que una respuesta anterior del asistente contiene `$300`
+**Y** la evidencia vigente sólo contiene `$1,000`
+**CUANDO** se prepara el siguiente turno
+**ENTONCES** la respuesta anterior se excluye del contexto, conservando los mensajes del usuario.
+
+### AC-RPR-014 — Recuperación vacía falla cerrada
+
+**DADO** un turno RAG sin fragmentos recuperados
+**CUANDO** el modelo intenta emitir cualquier monto
+**ENTONCES** el delimitador explícito de evidencia vacía permite bloquearlo antes del envío.
+
 ## 7. Pruebas
 
 | Criterio | Prueba automatizada |
@@ -170,6 +212,8 @@ No se registra contenido del fragmento, consulta, embedding, teléfono, respuest
 | AC-RPR-008 | Regresiones existentes de aislamiento, privacidad y diagnóstico seguro |
 | AC-RPR-009 | `RetrievalQueryTests.test_likely_cuando_cuanto_typo_adds_amount_intent_without_rewriting_user_text` y caso temporal complementario |
 | AC-RPR-010 | `BoundedKnowledgeFallbackTests.test_nonempty_candidate_retrieval_still_forbids_false_absence_claims` |
+| AC-RPR-011/012/014 | Pruebas unitarias de `reply_safety.enforce_grounded_monetary_claims` |
+| AC-RPR-013 | `ReplySafetyTests.test_removes_stale_assistant_amount_but_keeps_user_context` y prueba integral de `openai_client.complete` |
 
 ## 8. Despliegue y rollback
 

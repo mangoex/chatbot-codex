@@ -20,6 +20,12 @@ sys.modules.setdefault(
     "openai",
     types.SimpleNamespace(AsyncOpenAI=type("AsyncOpenAI", (), {})),
 )
+sys.modules.setdefault("httpx", types.SimpleNamespace())
+_fernet_stub = types.ModuleType("cryptography.fernet")
+_fernet_stub.Fernet = type("Fernet", (), {})
+_fernet_stub.InvalidToken = type("InvalidToken", (Exception,), {})
+sys.modules.setdefault("cryptography", types.ModuleType("cryptography"))
+sys.modules.setdefault("cryptography.fernet", _fernet_stub)
 
 from app import bot_content, config, db, openai_client, rag
 
@@ -232,6 +238,8 @@ class BoundedKnowledgeFallbackTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Prompt exclusivo de Mobi", system)
         self.assertNotIn("MARCADOR_DOC_A", system)
         self.assertNotIn("MARCADOR_DOC_B", system)
+        self.assertIn("--- rag_grounding_required ---", system)
+        self.assertIn("--- knowledge_base ---", system)
         self.assertIn("No afirmes que la información no existe", system)
         self.assertLess(len(system), 2000)
 
@@ -414,7 +422,7 @@ class PolicyRetrievalRankingTests(unittest.IsolatedAsyncioTestCase):
             "knowledge_id": 10,
             "chunk_index": 27,
             "title": "10_Politica_de_Gastos_de_Viaje.md",
-            "content": "El límite autorizado para alimentos es de $300 diarios.",
+            "content": "El límite autorizado para alimentos es de $1,000 diarios.",
             "distance": 0.12,
         }
         generic_rows = [
@@ -439,8 +447,8 @@ class PolicyRetrievalRankingTests(unittest.IsolatedAsyncioTestCase):
             limit=2,
         )
 
-        self.assertIn("$300 diarios", "\n".join(results))
-        self.assertIn("$300 diarios", results[0])
+        self.assertIn("$1,000 diarios", "\n".join(results))
+        self.assertIn("$1,000 diarios", results[0])
 
     @patch("app.rag.has_vector_column", new_callable=AsyncMock)
     async def test_amount_shaped_text_chunk_beats_earlier_generic_chunks_without_vectors(
@@ -472,7 +480,7 @@ class PolicyRetrievalRankingTests(unittest.IsolatedAsyncioTestCase):
                 "knowledge_id": 10,
                 "chunk_index": 27,
                 "title": "10_Politica_de_Gastos_de_Viaje.md",
-                "content": "Para alimentos se autorizan hasta $300 por día.",
+                "content": "Para alimentos se autorizan hasta $1,000 por día.",
                 "rank": 0.0,
                 "content_keyword_hits": 0,
                 "answer_shape": 1,
@@ -486,7 +494,7 @@ class PolicyRetrievalRankingTests(unittest.IsolatedAsyncioTestCase):
             limit=2,
         )
 
-        self.assertIn("$300 por día", "\n".join(results))
+        self.assertIn("$1,000 por día", "\n".join(results))
         sql = conn.fetch.await_args.args[0]
         self.assertIn("answer_shape", sql)
         self.assertIn("content_keyword_hits", sql)
@@ -521,6 +529,103 @@ class PolicyRetrievalRankingTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(len(results), 4)
+
+
+class MonetaryGroundingPipelineTests(unittest.IsolatedAsyncioTestCase):
+    async def test_complete_discards_stale_amount_and_blocks_repeated_hallucination(self):
+        system = (
+            "Prompt oficial\n\n--- rag_grounding_required ---\n\n--- knowledge_base ---\n"
+            "## Política de Gastos de Viaje\n"
+            "Alimentos hasta $1,000 pesos por día.\n"
+            "Hospedaje hasta $2,500 pesos por día.\n\n"
+            "--- contexto_runtime ---\nFecha actual: 2026-09-03"
+        )
+        history = [
+            {"role": "user", "content": "¿Cuánto puedo gastar en alimentos?"},
+            {"role": "assistant", "content": "Puedes gastar $300 diarios."},
+        ]
+        chat = AsyncMock(return_value="<respuesta>El límite es $300 diarios.</respuesta>")
+
+        with patch.object(
+            openai_client,
+            "_system_prompt",
+            AsyncMock(return_value=system),
+        ), patch.object(openai_client, "_chat", chat), patch.object(
+            openai_client,
+            "count_tokens",
+            return_value=1,
+        ):
+            reply = await openai_client.complete(
+                "Perdón, ¿cuánto?",
+                history,
+                bot_id=170,
+            )
+
+        sent_messages = chat.await_args.args[0]
+        self.assertNotIn(
+            "$300",
+            "\n".join(
+                item["content"]
+                for item in sent_messages
+                if item["role"] == "assistant"
+            ),
+        )
+        self.assertNotIn("$300", reply)
+        self.assertIn("no pude validar", reply.lower())
+
+    async def test_complete_allows_amount_present_in_official_evidence(self):
+        system = (
+            "Prompt oficial\n\n--- rag_grounding_required ---\n\n--- knowledge_base ---\n"
+            "Alimentos hasta $1,000 pesos por día.\n\n"
+            "--- contexto_runtime ---\nFecha actual: 2026-09-03"
+        )
+        expected = "<respuesta>El límite de alimentos es $1,000 por día.</respuesta>"
+
+        with patch.object(
+            openai_client,
+            "_system_prompt",
+            AsyncMock(return_value=system),
+        ), patch.object(
+            openai_client,
+            "_chat",
+            AsyncMock(return_value=expected),
+        ), patch.object(openai_client, "count_tokens", return_value=1):
+            reply = await openai_client.complete(
+                "¿Cuánto puedo gastar en alimentos?",
+                [],
+                bot_id=170,
+            )
+
+        self.assertEqual(reply, expected)
+
+    async def test_complete_does_not_preempt_deterministic_order_payment_flow(self):
+        system = (
+            '<order_payments_config>{"enabled":true}</order_payments_config>\n\n'
+            "--- rag_grounding_required ---\n\n--- knowledge_base ---\n"
+            "Cada unidad cuesta $115.\n\n"
+            "--- contexto_runtime ---\nContexto"
+        )
+        expected = (
+            '<respuesta>Total: $230.</respuesta> '
+            '[[MARONA_QUOTE:{"day":"sabado","items":[]}]]'
+        )
+
+        with patch.object(
+            openai_client,
+            "_system_prompt",
+            AsyncMock(return_value=system),
+        ), patch.object(
+            openai_client,
+            "_chat",
+            AsyncMock(return_value=expected),
+        ), patch.object(openai_client, "count_tokens", return_value=1):
+            reply = await openai_client.complete(
+                "Quiero dos unidades",
+                [],
+                bot_id=7,
+            )
+
+        self.assertEqual(reply, expected)
 
 
 class IndexingStateTests(unittest.IsolatedAsyncioTestCase):

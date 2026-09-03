@@ -1,9 +1,9 @@
 # 03 — Suite de Pruebas de Mobibot (Test Suite)
 
-**Versión:** 1.2.1
+**Versión:** 1.3.0
 **Fecha:** 2026-09-03
 **Estado:** UPDATED  
-**Trazabilidad:** Cobertura de CON-001 a CON-010 (`01-constitution.md`) y SPEC-001 a SPEC-007 (`02-behavior-specs.md`).
+**Trazabilidad:** Cobertura de CON-001 a CON-011 (`01-constitution.md`) y SPEC-001 a SPEC-008 (`02-behavior-specs.md`).
 
 ---
 
@@ -199,7 +199,7 @@ AND MUST NOT conceder permisos por deducción ni asumir beneficios no plasmados 
 - **Estado:** AUTOMATED / STATICALLY REVIEWED.
 ```text
 GIVEN que "10_Politica_de_Gastos_de_Viaje.md" está indexada
-  AND contiene el límite diario de alimentos de $300
+  AND contiene el límite diario oficial de alimentos de $1,000
 WHEN el usuario pregunta: "Quiero saber cuánto puedo gastar de viaje"
 THEN la recuperación prioriza fragmentos con montos y límites de la política de viaje
   AND conserva el mejor fragmento semántico aunque existan coincidencias genéricas por el título
@@ -229,7 +229,7 @@ AND MUST NOT incorporar las respuestas anteriores del asistente como evidencia.
 - **Estado:** AUTOMATED / STATICALLY REVIEWED.
 ```text
 GIVEN que la búsqueda vectorial no está disponible
-  AND la política contiene fragmentos generales y un fragmento con "$300 por día"
+  AND la política contiene fragmentos generales y un fragmento con "$1,000 por día"
 WHEN el usuario pregunta cuánto puede gastar
 THEN el ranking textual prioriza el fragmento con forma de respuesta monetaria
   AND puede recuperar hasta el límite configurable de secciones del mismo documento.
@@ -261,4 +261,19 @@ THEN la consulta conserva el mensaje original y agrega la intención probable de
   AND prioriza evidencia monetaria
   AND, si los fragmentos candidatos no contienen la respuesta exacta, informa que no pudo localizar el apartado o pide una aclaración breve.
 AND MUST NOT afirmar que la información no está contemplada sólo porque los candidatos recuperados sean insuficientes.
+```
+
+---
+
+### TEST-019: Bloqueo determinista de monto inventado y descontaminación del historial
+- **Trazabilidad:** US-002, US-009, SPEC-002, SPEC-008, CON-001, CON-011.
+- **Estado:** AUTOMATED / REGRESSION.
+```text
+GIVEN que la evidencia oficial recuperada indica "Alimentos hasta $1,000 pesos por día"
+  AND una respuesta anterior del asistente afirmó incorrectamente "$300 diarios"
+WHEN el usuario pregunta de nuevo cuánto puede gastar
+THEN la respuesta anterior con $300 se excluye del contexto enviado al modelo
+  AND una nueva respuesta que repita $300 se bloquea antes de enviarse
+  AND $1,000, $1000.00 y 1000 pesos se reconocen como el mismo monto oficial.
+AND MUST NOT usar el historial del asistente, el prompt base ni el contexto operativo como prueba de que un monto es oficial.
 ```
