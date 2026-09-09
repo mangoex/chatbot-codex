@@ -618,17 +618,6 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         log.info("Relevo humano activo para bot %s y %s; IA en silencio absoluto.", bot.id, wa_id)
         return
 
-    # 2. Comprobar regla estricta: Escalar cuando yo inicio o intervengo en la conversación
-    if await _human_handoff_enabled(bot.id) and await db.is_conversation_initiated_by_agent(bot.id, wa_id, timeout_hours=timeout_hours):
-        saved_user_msg = user_text or (f"[envió un archivo de tipo {media_type}]" if media_type else "[Mensaje del usuario]")
-        await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
-        await db.set_conversation_handoff_active(bot.id, wa_id)
-        await escalations.record_agent_initiated_escalation(
-            wa_id, saved_user_msg, [], bot_id=bot.id, media_type=media_type
-        )
-        log.info("Escalado estricto por inicio de asesor para bot %s y %s; IA en silencio absoluto.", bot.id, wa_id)
-        return
-
     history = await db.get_history(wa_id, config.HISTORY_WINDOW, bot_id=bot.id)
 
     # Caso A: media entrante (audios se transcriben; imágenes/comprobantes u otros se delegan).

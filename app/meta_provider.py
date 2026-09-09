@@ -401,6 +401,29 @@ async def diagnose_bot_connection(bot_id: int) -> dict[str, Any]:
         "webhook_field_verification": "manual_required",
         "error": "",
     }
+    # WABA subscribed_apps does not report the app-level webhook fields.
+    # A healthy messages connection alone cannot detect native human activity.
+    app_id = _clean(bot.get("meta_app_id") or config.META_APP_ID)
+    if app_id == _clean(config.META_APP_ID) and app_id and config.META_APP_SECRET:
+        try:
+            subscriptions = await graph_get(
+                f"{app_id}/subscriptions", f"{app_id}|{config.META_APP_SECRET}"
+            )
+            subscription = next(
+                (s for s in subscriptions.get("data", [])
+                 if s.get("object") == "whatsapp_business_account"), {}
+            )
+            fields = {field.get("name") for field in subscription.get("fields", [])}
+            verified = bool(subscription.get("active")) and "smb_message_echoes" in fields
+            result["webhook_field_verification"] = "verified" if verified else "missing"
+            result["app_webhook_callback_uri"] = subscription.get("callback_url", "")
+            result["app_webhook_fields"] = sorted(field for field in fields if field)
+            if not verified:
+                result["ok"] = False
+                result["error"] = "Falta activar smb_message_echoes en la suscripción de la app de Meta para detectar al asesor desde WhatsApp Business."
+        except Exception:
+            # Unknown is distinct from missing: never claim verification on failure.
+            result["webhook_field_verification"] = "unavailable"
     if not token:
         return result
     try:

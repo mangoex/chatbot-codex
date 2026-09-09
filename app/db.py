@@ -758,43 +758,13 @@ async def get_history(wa_id: str, limit: int, *, bot_id: int) -> list[dict]:
 
 
 async def is_conversation_initiated_by_agent(bot_id: int, wa_id: str, timeout_hours: int | None = None) -> bool:
-    """
-    Devuelve True si el primer mensaje registrado en el hilo de conversación
-    fue enviado por el asesor/asistente (role = 'assistant') y, si se especifica timeout_hours,
-    el último mensaje no supera timeout_hours de antigüedad.
+    """Compatibility check: only durable handoff is evidence of human control.
+
+    Assistant history includes AI replies and must never renew an expired mute.
     """
     if not bot_id or bot_id < 1:
         raise ValueError("bot_id requerido para comprobar inicio de conversacion")
-    if not wa_id or _pool is None:
-        return False
-    try:
-        async with _pool.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT
-                    (SELECT role FROM conversations
-                     WHERE wa_id = $1 AND bot_id = $2
-                     ORDER BY created_at ASC, id ASC LIMIT 1) AS first_role,
-                    (SELECT created_at FROM conversations
-                     WHERE wa_id = $1 AND bot_id = $2
-                     ORDER BY created_at DESC, id DESC LIMIT 1) AS last_created_at
-                """,
-                wa_id, bot_id,
-            )
-            if not row or row["first_role"] != "assistant":
-                return False
-            if timeout_hours and timeout_hours > 0 and row["last_created_at"]:
-                check_row = await conn.fetchrow(
-                    "SELECT 1 WHERE $1::timestamptz >= now() - ($2 || ' hours')::interval",
-                    row["last_created_at"],
-                    str(timeout_hours),
-                )
-                if not check_row:
-                    return False
-            return True
-        return False
-    except Exception:
-        return False
+    return await is_conversation_handoff_active(bot_id, wa_id, timeout_hours)
 
 
 async def list_conversation_threads(
@@ -2390,6 +2360,20 @@ async def release_chatwoot_webhook_event(integration_id: int, event_key: str) ->
         )
 
 
+def _handoff_recipient_ids(wa_id: str) -> list[str]:
+    """Match explicit international MX variants without guessing a country."""
+    raw = wa_id.strip()
+    digits = raw.translate(str.maketrans('', '', '+ -()'))
+    if not digits.isascii() or not digits.isdigit():
+        return [raw]
+    variants = [raw, digits]
+    if digits.startswith('521') and len(digits) == 13:
+        variants.append('52' + digits[3:])
+    elif digits.startswith('52') and len(digits) == 12:
+        variants.append('521' + digits[2:])
+    return list(dict.fromkeys(variants))
+
+
 async def set_chatwoot_handoff_active(bot_id: int, wa_id: str) -> None:
     if not wa_id or _pool is None:
         return
@@ -2412,43 +2396,38 @@ async def clear_chatwoot_handoff(bot_id: int, wa_id: str) -> None:
         return
     async with _pool.acquire() as conn:
         await conn.execute(
-            "DELETE FROM chatwoot_handoffs WHERE bot_id=$1 AND wa_id=$2",
+            "DELETE FROM chatwoot_handoffs WHERE bot_id=$1 AND wa_id=ANY($2::text[])",
             bot_id,
-            wa_id,
+            _handoff_recipient_ids(wa_id),
         )
 
 
 async def is_chatwoot_handoff_active(bot_id: int, wa_id: str, timeout_hours: int | None = None) -> bool:
     if not wa_id or _pool is None:
         return False
+    if timeout_hours is None:
+        # All callers (follow-ups, media, campaigns) must apply the same window,
+        # even before a customer message has checked expiration.
+        skill = await get_bot_skill(bot_id, "escalation")
+        configured = (skill or {}).get("config") or {}
+        try:
+            timeout_hours = int(configured.get("handoff_expiration_hours", 24))
+        except (TypeError, ValueError):
+            timeout_hours = 24
     async with _pool.acquire() as conn:
-        if timeout_hours and timeout_hours > 0:
-            row = await conn.fetchrow(
-                """
-                SELECT 1 FROM chatwoot_handoffs
-                WHERE bot_id = $1 AND wa_id = $2
-                  AND updated_at >= now() - ($3 || ' hours')::interval
-                """,
-                bot_id,
-                wa_id,
-                str(timeout_hours),
-            )
-            if row is None:
-                # Limpiar registro huérfano expirado
-                await conn.execute(
-                    "DELETE FROM chatwoot_handoffs WHERE bot_id = $1 AND wa_id = $2",
-                    bot_id,
-                    wa_id,
-                )
-                return False
-            return True
-        else:
-            row = await conn.fetchrow(
-                "SELECT 1 FROM chatwoot_handoffs WHERE bot_id=$1 AND wa_id=$2",
-                bot_id,
-                wa_id,
-            )
-            return row is not None
+        row = await conn.fetchrow(
+            """
+            SELECT 1 FROM chatwoot_handoffs
+            WHERE bot_id=$1 AND wa_id=ANY($2::text[])
+              AND ($3::integer IS NULL OR updated_at >= now() - $3 * interval '1 hour')
+            LIMIT 1
+            """,
+            bot_id,
+            _handoff_recipient_ids(wa_id),
+            timeout_hours if timeout_hours and timeout_hours > 0 else None,
+        )
+    # Read-only: deleting after a stale SELECT could erase a concurrent echo.
+    return row is not None
 
 
 # Unified aliases for conversation-level handoffs (Chatwoot, Admin Panel, Escalations)

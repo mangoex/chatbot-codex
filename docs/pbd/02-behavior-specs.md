@@ -130,3 +130,12 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
 ## Out-of-Scope Rules
 - No procesar cobros de enganches ni contratos de compraventa directos en el chat sin validación humana.
 - No evaluar créditos hipotecarios formalmente (solo referenciar asesoría).
+
+## SPEC-008: Silencio por inicio o intervención desde WhatsApp Business (CON-012)
+
+- Con la regla habilitada, cada mensaje humano recibido por `smb_message_echoes` activa o renueva el relevo exclusivamente para ese bot y destinatario, incluso sin historial previo.
+- La ventana se cuenta desde la última intervención humana persistida. Los mensajes del cliente y el historial `assistant` no la reinician ni reactivan un relevo vencido.
+- Reconocer las variantes internacionales mexicanas `52` y `521` del mismo destinatario; no comparar solo los últimos dígitos ni inferir país desde números locales.
+- Consultar el vencimiento sin borrar registros: un eco concurrente no debe perderse durante la comprobación. La resolución manual elimina las variantes del mismo contacto.
+- Un evento saliente nunca ingresa como mensaje de cliente, incluso con la regla deshabilitada.
+- Verificar `smb_message_echoes` en la suscripción de la app de Meta; la suscripción WABA y el campo `messages` por sí solos no prueban disponibilidad del relevo desde el celular.

@@ -147,10 +147,15 @@ def _changes(payload: dict):
 def extract_messages(payload: dict) -> list[dict]:
     """Extract every customer inbound message from standard ``messages`` changes."""
     out = []
+    outgoing_ids = {item["message_id"] for item in extract_human_message_echoes(payload)}
     for change in _changes(payload):
+        if change.get("field", "messages") != "messages":
+            continue
         value = change.get("value") or {}
         metadata = value.get("metadata", {}) or {}
         for msg in value.get("messages") or []:
+            if msg.get("id") in outgoing_ids or msg.get("is_echo"):
+                continue
             details = _message_details(msg, metadata)
             if details and details["wa_id"]:
                 out.append(details)

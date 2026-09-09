@@ -231,3 +231,26 @@ Estado de ejecución de las pruebas: `DEFINED` / `STATICALLY REVIEWED`.
   ENTONCES solo se eliminan filas cuyo bot_id es A.
   Y las filas de Bot B permanecen sin cambios.
   ```
+
+## Regresiones de relevo nativo (SPEC-008, CON-012)
+
+### TEST-020 / AC-020: Inicio e intervención del humano
+- GIVEN la regla activa y una ventana de 12 horas, con o sin historial previo.
+- WHEN llega un eco del asesor y después responde el cliente.
+- THEN persistir el relevo antes de confirmar el webhook y bloquear respuestas automáticas para ese bot/contacto.
+- AND MUST NOT requerir que el humano haya sido el primer autor del historial.
+- Cobertura: `tests/test_human_echo_handoff.py`.
+
+### TEST-021 / AC-021: Identidad, vencimiento y concurrencia
+- GIVEN un relevo del destinatario internacional mexicano `52` o `521`.
+- WHEN se consulta con la otra variante o vence la ventana configurada.
+- THEN reconocer el mismo contacto y respetar el vencimiento sin borrar intervenciones concurrentes.
+- AND MUST NOT reactivar por historial `assistant`, afectar otro tenant ni procesar ecos como clientes.
+- Cobertura: `tests/test_handoff_regressions.py`; cuatro fallos reproducidos antes de corregir el código.
+
+### TEST-022 / AC-022: Suscripción incompleta de Meta
+- GIVEN una app suscrita únicamente a `messages`.
+- WHEN se diagnostica la conexión.
+- THEN informar que falta `smb_message_echoes`; al existir y estar activa, informar `verified`.
+- AND MUST NOT asumir que `subscribed_apps` de WABA demuestra recepción de ecos.
+- Cobertura: `tests/test_handoff_regressions.py`.
