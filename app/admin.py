@@ -1862,6 +1862,19 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
       <div class="panel">
         <h2>Embedded Signup</h2>
         <p class="sub">Usa este flujo cuando el cliente conecta su propio WABA/numero. El token se guarda cifrado como integracion <span class="code">whatsapp_cloud</span>.</p>
+        <div style="margin-top:14px; display:flex; flex-direction:column; gap:8px;">
+          <label style="font-size:12.5px; font-weight:600;">Modalidad de conexión:</label>
+          <div style="display:flex; flex-direction:column; gap:6px; font-size:13px;">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="radio" name="adminSignupMode" value="standard" checked>
+              <span><strong>Número Nuevo / Directo Cloud API</strong> (Verificación SMS/Voz sin app móvil)</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+              <input type="radio" name="adminSignupMode" value="coexistence">
+              <span><strong>Vincular App Móvil WhatsApp Business</strong> (Coexistencia con código QR)</span>
+            </label>
+          </div>
+        </div>
         <div class="actions" style="margin-top:14px">
           <button class="btn whatsapp" type="button" id="launchSignup" {"disabled" if not settings["ready"] else ""}>Abrir Embedded Signup</button>
           <a class="btn secondary" href="/admin/bots/{bot_id}/whatsapp/diagnostics">Diagnostico</a>
@@ -1906,15 +1919,37 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
           if (!event.origin.endsWith("facebook.com")) return;
           let data = event.data;
           try {{ if (typeof data === "string") data = JSON.parse(data); }} catch (_) {{ return; }}
-          const payload = data?.data || data;
-          if (payload?.phone_number_id) document.getElementById("phoneNumberId").value = payload.phone_number_id;
-          if (payload?.waba_id) document.getElementById("wabaId").value = payload.waba_id;
-          if (payload?.business_id) document.getElementById("businessId").value = payload.business_id;
-          if (payload?.display_phone_number) document.getElementById("displayPhoneNumber").value = payload.display_phone_number;
-          if (payload?.phone_number_id || payload?.waba_id) setStatus("Datos recibidos de Embedded Signup. Revisa y guarda.", "ok");
+          
+          if (data && data.type === "WA_EMBEDDED_SIGNUP") {{
+            if (data.event === "FINISH") {{
+              const payload = data.data || {{}};
+              if (payload.phone_number_id) document.getElementById("phoneNumberId").value = payload.phone_number_id;
+              if (payload.waba_id) document.getElementById("wabaId").value = payload.waba_id;
+              if (payload.business_id) document.getElementById("businessId").value = payload.business_id;
+              if (payload.display_phone_number) document.getElementById("displayPhoneNumber").value = payload.display_phone_number;
+              setStatus("Datos recibidos de Embedded Signup. Revisa los IDs y guarda.", "ok");
+            }} else if (data.event === "CANCEL") {{
+              setStatus("Onboarding cancelado por el usuario en paso: " + (data.data?.current_step || "inicial"), "err");
+            }} else if (data.event === "ERROR") {{
+              setStatus("Error en Meta Embedded Signup: " + (data.data?.error_message || "Error desconocido"), "err");
+            }}
+          }} else {{
+            const payload = data?.data || data;
+            if (payload?.phone_number_id) document.getElementById("phoneNumberId").value = payload.phone_number_id;
+            if (payload?.waba_id) document.getElementById("wabaId").value = payload.waba_id;
+            if (payload?.business_id) document.getElementById("businessId").value = payload.business_id;
+            if (payload?.display_phone_number) document.getElementById("displayPhoneNumber").value = payload.display_phone_number;
+            if (payload?.phone_number_id || payload?.waba_id) setStatus("Datos recibidos de Embedded Signup. Revisa y guarda.", "ok");
+          }}
         }});
         document.getElementById("launchSignup")?.addEventListener("click", () => {{
           if (!window.FB) return setStatus("Facebook SDK no esta listo todavia.", "err");
+          const mode = document.querySelector('input[name="adminSignupMode"]:checked')?.value || "standard";
+          const extras = mode === "coexistence"
+            ? {{ featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3", setup: {{}} }}
+            : {{ setup: {{}} }};
+
+          setStatus("Abriendo Embedded Signup (" + (mode === "coexistence" ? "Coexistencia QR" : "Número Nuevo / Directo") + ")...", "sub");
           FB.login((response) => {{
             const code = response?.authResponse?.code;
             if (code) {{
@@ -1927,7 +1962,7 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
             config_id: settings.config_id,
             response_type: "code",
             override_default_response_type: true,
-            extras: {{ featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3", setup: {{}} }}
+            extras: extras
           }});
         }});
       }})();

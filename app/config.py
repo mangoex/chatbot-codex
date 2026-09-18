@@ -44,7 +44,7 @@ VERIFY_TOKEN = _env("VERIFY_TOKEN", "WHATSAPP_VERIFY_TOKEN")
 META_APP_SECRET = os.getenv("META_APP_SECRET", "")
 META_APP_ID = os.getenv("META_APP_ID", "")
 META_CONFIG_ID = os.getenv("META_CONFIG_ID", "")
-META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v25.0").strip().lstrip("/")
+META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v21.0").strip().lstrip("/")
 META_REDIRECT_URI = _env(
     "META_REDIRECT_URI",
     default=f"{WEBHOOK_DOMAIN.rstrip('/')}/admin/meta/oauth/callback" if WEBHOOK_DOMAIN else "",

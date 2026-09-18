@@ -193,7 +193,66 @@ class MetaProviderTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_default_graph_version_is_v21(self):
+        with patch("app.meta_provider.config.META_GRAPH_API_VERSION", ""):
+            version = meta_provider.graph_version()
+        self.assertEqual(version, "v21.0")
+
+    def test_register_phone_number_calls_graph_api(self):
+        async def run():
+            called = {}
+            async def fake_graph_post(path, token, payload):
+                called["path"] = path
+                called["token"] = token
+                called["payload"] = payload
+                return {"success": True}
+
+            with patch("app.meta_provider.graph_post", fake_graph_post):
+                res = await meta_provider.register_phone_number("phone-123", "tok-abc", pin="654321")
+
+            self.assertEqual(called["path"], "phone-123/register")
+            self.assertEqual(called["token"], "tok-abc")
+            self.assertEqual(called["payload"]["messaging_product"], "whatsapp")
+            self.assertEqual(called["payload"]["pin"], "654321")
+            self.assertTrue(res.get("success"))
+
+        asyncio.run(run())
+
+    def test_connect_bot_attempts_phone_number_registration(self):
+        async def run():
+            registered = {}
+            async def fake_register(phone_id, token, pin="123456"):
+                registered["phone_id"] = phone_id
+                registered["token"] = token
+                return {"success": True}
+
+            with patch("app.meta_provider.config.META_APP_ID", "app-123"), \
+                 patch("app.meta_provider.config.META_CONFIG_ID", "config-123"), \
+                 patch("app.meta_provider.db.upsert_bot_whatsapp_connection", AsyncMock(return_value=4)), \
+                 patch("app.meta_provider.db.get_active_bot_integration", AsyncMock(return_value=None)), \
+                 patch("app.meta_provider.db.create_bot_integration", AsyncMock(return_value=8)), \
+                 patch("app.meta_provider.db.upsert_integration_secret", AsyncMock()), \
+                 patch("app.meta_provider.secure_store.encrypt_secret", return_value="encrypted-token"), \
+                 patch("app.meta_provider.subscribe_app_to_waba", AsyncMock()), \
+                 patch("app.meta_provider.register_phone_number", fake_register):
+                result = await meta_provider.connect_bot_from_embedded_signup(
+                    meta_provider.MetaConnectionInput(
+                        bot_id=7,
+                        phone_number_id="pnid-7",
+                        display_phone_number="+52667",
+                        waba_id="waba-7",
+                        business_id="biz-7",
+                        access_token="plain-token",
+                    )
+                )
+
+            self.assertEqual(registered["phone_id"], "pnid-7")
+            self.assertEqual(registered["token"], "plain-token")
+            self.assertTrue(result["token_saved"])
+
+        asyncio.run(run())
 
 
 if __name__ == "__main__":
     unittest.main()
+

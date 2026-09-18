@@ -32,7 +32,7 @@ def _clean(value: str | None) -> str:
 
 
 def graph_version() -> str:
-    version = _clean(config.META_GRAPH_API_VERSION) or "v25.0"
+    version = _clean(config.META_GRAPH_API_VERSION) or "v21.0"
     return version if version.startswith("v") else f"v{version}"
 
 
@@ -172,6 +172,14 @@ async def connect_bot_from_embedded_signup(data: MetaConnectionInput) -> dict[st
         log.info(f"Auto-subscribed app to WABA {data.waba_id} for bot {data.bot_id}")
     except Exception as exc:
         log.error(f"Failed to auto-subscribe app to WABA during setup: {exc}")
+
+    # Registrar el numero en Cloud API para activarlo
+    try:
+        await register_phone_number(phone_number_id, token)
+        log.info(f"Auto-registered phone number {phone_number_id} on Cloud API for bot {data.bot_id}")
+    except Exception as exc:
+        log.warning(f"Notice during phone number {phone_number_id} registration: {exc}")
+
     return {
         "bot_id": data.bot_id,
         "integration_id": integration_id,
@@ -272,6 +280,23 @@ async def graph_post(path: str, access_token: str, json_data: dict[str, Any]) ->
                     raise e
                 response.raise_for_status()
         return response.json()
+
+
+async def register_phone_number(
+    phone_number_id: str,
+    access_token: str,
+    pin: str = "123456",
+) -> dict[str, Any]:
+    clean_phone_id = _clean(phone_number_id)
+    if not clean_phone_id:
+        raise ValueError("Falta phone_number_id para registrar el número.")
+    if not access_token:
+        raise ValueError("Falta access_token para registrar el número.")
+    payload = {
+        "messaging_product": "whatsapp",
+        "pin": _clean(pin) or "123456",
+    }
+    return await graph_post(f"{clean_phone_id}/register", access_token, payload)
 
 
 def build_test_message_payload(

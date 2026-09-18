@@ -2906,7 +2906,21 @@ async def client_app(
               </ol>
             </div>
             
-            <div style="margin-top:20px;">
+            <div style="margin:16px 0; display:flex; flex-direction:column; gap:8px;">
+              <span class="bold-text" style="font-size:12.5px; color:var(--text-main);">Modalidad de alta:</span>
+              <div style="display:flex; flex-direction:column; gap:6px; font-size:13px;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="radio" name="clientSignupMode" value="standard" checked>
+                  <span><strong>Número Nuevo / Directo Cloud API</strong> (Verificación SMS/Voz sin app móvil)</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                  <input type="radio" name="clientSignupMode" value="coexistence">
+                  <span><strong>Vincular App Móvil WhatsApp Business</strong> (Coexistencia con código QR)</span>
+                </label>
+              </div>
+            </div>
+
+            <div style="margin-top:16px;">
               <button class="btn whatsapp-btn" type="button" id="launchMetaSignup">Abrir Embedded Signup de Meta</button>
             </div>
             <div id="metaSignupStatus" class="sync-status">Esperando inicio de vinculación...</div>
@@ -2971,23 +2985,40 @@ async def client_app(
         (() => {{
           const app_id = "{config.META_APP_ID or ""}";
           const config_id = "{config.META_CONFIG_ID or ""}";
+          const graph_ver = "{meta_provider.graph_version()}";
           const status = document.getElementById("metaSignupStatus");
           
           window.fbAsyncInit = function() {{
             if (!app_id) return;
-            FB.init({{ appId: app_id, cookie: true, xfbml: true, version: 'v19.0' }});
+            FB.init({{ appId: app_id, cookie: true, xfbml: true, version: graph_ver }});
           }};
           
           window.addEventListener("message", (event) => {{
             if (!event.origin.endsWith("facebook.com")) return;
             let data = event.data;
             try {{ if (typeof data === "string") data = JSON.parse(data); }} catch (_) {{ return; }}
-            const payload = data?.data || data;
-            if (payload?.phone_number_id) document.getElementById("metaPhoneId").value = payload.phone_number_id;
-            if (payload?.waba_id) document.getElementById("metaWabaId").value = payload.waba_id;
-            if (payload?.business_id) document.getElementById("metaBusinessId").value = payload.business_id;
-            if (payload?.display_phone_number) document.getElementById("metaDisplayPhone").value = payload.display_phone_number;
-            if (payload?.phone_number_id) status.innerHTML = "<span class='sync-status ok'>Datos recibidos de Meta. Revisa y pulsa 'Guardar conexión'.</span>";
+            
+            if (data && data.type === "WA_EMBEDDED_SIGNUP") {{
+              if (data.event === "FINISH") {{
+                const payload = data.data || {{}};
+                if (payload.phone_number_id) document.getElementById("metaPhoneId").value = payload.phone_number_id;
+                if (payload.waba_id) document.getElementById("metaWabaId").value = payload.waba_id;
+                if (payload.business_id) document.getElementById("metaBusinessId").value = payload.business_id;
+                if (payload.display_phone_number) document.getElementById("metaDisplayPhone").value = payload.display_phone_number;
+                status.innerHTML = "<span class='sync-status ok'>Datos recibidos de Meta. Revisa los IDs y guarda la conexión.</span>";
+              }} else if (data.event === "CANCEL") {{
+                status.innerHTML = "<span class='sync-status err'>Vinculación cancelada por el usuario en paso: " + (data.data?.current_step || "inicial") + "</span>";
+              }} else if (data.event === "ERROR") {{
+                status.innerHTML = "<span class='sync-status err'>Error en Meta Embedded Signup: " + (data.data?.error_message || "Error desconocido") + "</span>";
+              }}
+            }} else {{
+              const payload = data?.data || data;
+              if (payload?.phone_number_id) document.getElementById("metaPhoneId").value = payload.phone_number_id;
+              if (payload?.waba_id) document.getElementById("metaWabaId").value = payload.waba_id;
+              if (payload?.business_id) document.getElementById("metaBusinessId").value = payload.business_id;
+              if (payload?.display_phone_number) document.getElementById("metaDisplayPhone").value = payload.display_phone_number;
+              if (payload?.phone_number_id) status.innerHTML = "<span class='sync-status ok'>Datos recibidos de Meta. Revisa y pulsa 'Guardar conexión'.</span>";
+            }}
           }});
           
           document.getElementById("launchMetaSignup")?.addEventListener("click", () => {{
@@ -2995,23 +3026,25 @@ async def client_app(
               status.innerHTML = "<span class='sync-status err'>Meta SDK no está listo todavía. Inténtalo en un momento.</span>";
               return;
             }}
+            const mode = document.querySelector('input[name="clientSignupMode"]:checked')?.value || "standard";
+            const extras = mode === "coexistence"
+              ? {{ featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3", setup: {{}} }}
+              : {{ setup: {{}} }};
+
+            status.innerHTML = "<span class='sync-status'>Abriendo Embedded Signup (" + (mode === "coexistence" ? "Coexistencia QR" : "Número Nuevo / Directo") + ")...</span>";
             FB.login((response) => {{
               const code = response?.authResponse?.code;
               if (code) {{
                 document.getElementById("metaAuthCode").value = code;
                 status.innerHTML = "<span class='sync-status ok'>Vínculo inicial exitoso. Completa y guarda.</span>";
               }} else {{
-                status.innerHTML = "<span class='sync-status err'>Meta canceló el flujo o no regresó código.</span>";
+                status.innerHTML = "<span class='sync-status err'>Meta canceló el flujo o no regresó código. Revisa permisos o configuración.</span>";
               }}
             }}, {{
               config_id: config_id,
               response_type: "code",
               override_default_response_type: true,
-              extras: {{ 
-                featureType: "whatsapp_business_app_onboarding",
-                sessionInfoVersion: "3",
-                setup: {{}}
-              }}
+              extras: extras
             }});
           }});
         }})();
