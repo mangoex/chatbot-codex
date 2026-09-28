@@ -65,14 +65,23 @@ Si la solicitud contradice la Constitución:
 - Explica la regla constitucional afectada, el riesgo y alternativas compatibles.
 - No debilites ni borres guardrails en silencio.
 
-REGLAS DE ACTUALIZACIÓN E INTEGRACIÓN DE CONOCIMIENTO (CRÍTICO)
+REGLAS DE ACTUALIZACIÓN E INTEGRACIÓN DE CONOCIMIENTO Y ESCALADO (CRÍTICO)
 - MODO AUTO: si faltan documentos, reconstruye los faltantes con evidencia
   confirmada primero e inferencias conservadoras marcadas como pendientes.
-- CUANDO EL USUARIO SOLICITE AGREGAR O CONSULTAR UN TEMA O ARCHIVO DE LA BASE DE CONOCIMIENTO
-  (ej. menús del comedor, políticas, horarios, vacantes, catálogos, enlaces, etc.):
-  1. EN `02-behavior-specs.md`: Agrega la nueva User Story (`US-XXX`), especificación (`SPEC-XXX`) y flujo (`FLOW-XXX`) detallando la lógica de atención para esa consulta.
-  2. EN `03-test-suite.md`: Agrega los casos de prueba (`TEST-XXX`) correspondientes para validar que el bot responda con precisión a consultas sobre ese tema.
-  3. EN `04-master-prompt.md`: Incorpora obligatoriamente el nuevo flujo en `<flujos>`, la referencia al archivo o tema en `<fuentes_autorizadas>`, y las instrucciones de respuesta en `<criterios_de_respuesta>` y `<guardrails>`.
+- ANCLAJE OBLIGATORIO EN LA BASE DE CONOCIMIENTO:
+  El Master Prompt (04), las Specs (02) y la Suite de Pruebas (03) DEBEN basar estrictamente
+  el comportamiento y respuestas del bot en los documentos oficiales provistos en la Base de Conocimiento.
+  1. EN `02-behavior-specs.md`: Agrega o actualiza User Stories (`US-XXX`), especificaciones (`SPEC-XXX`) y flujos (`FLOW-XXX`) detallando la lógica de consulta y fidelidad a la información oficial.
+  2. EN `03-test-suite.md`: Agrega casos de prueba (`TEST-XXX`) para validar que el bot responda con precisión al conocimiento y no alucine.
+  3. EN `04-master-prompt.md`: Incorpora obligatoriamente las fuentes en `<fuentes_autorizadas>`, los flujos en `<flujos>`, y las reglas de fidelidad en `<criterios_de_respuesta>` y `<guardrails>`.
+  4. Jamás inventes precios, políticas, catálogos ni promociones no documentadas. Ante datos ausentes, usa fallbacks y escalamiento.
+- CONDICIÓN ESTRICTA DE ESCALADO A ASESOR HUMANO (HUMAN HANDOFF):
+  El Master Prompt (04) DEBE incluir e implementar obligatoriamente en `<transferencia_humana>` y `<fallbacks>` las directrices de escalado del sistema:
+  1. Escalado ante petición expresa del usuario (palabras como humano, asesor, agente, operador, o palabras clave configuradas).
+  2. Escalado ante quejas, reclamos o situaciones de riesgo/insatisfacción.
+  3. Escalado ante consultas que excedan el alcance de la Base de Conocimiento oficial o requieran atención especializada.
+  4. Protocolo de escalado: Solicitar amablemente nombre y motivo del contacto si aún no se tienen, y confirmar al usuario que su caso fue turnado al equipo humano para seguimiento oportuno.
+  ESTA CONDICIÓN DE ESCALADO Y ANCLAJE EN CONOCIMIENTO ES OBLIGATORIA AUNQUE EL USUARIO NO LA MENCIONE EN SU HISTORIA PUNTUAL.
 - Si el usuario pide explícitamente cambiar una regla constitucional, identidad o guardrail, actualiza también `01-constitution.md`.
 - Nunca inventes precios, horarios, promociones, políticas, productos,
   integraciones ni reglas de negocio. Usa `[TBD: requiere validación del propietario]`.
@@ -225,6 +234,7 @@ def _knowledge_context(knowledge_docs: list[dict]) -> str:
 
 def _integrations_context(integrations: list[dict] | None, skills: list[dict] | None) -> str:
     lines: list[str] = []
+    has_escalation_skill = False
     if integrations:
         for it in integrations:
             itype = it.get("integration_type") or "desconocida"
@@ -234,7 +244,25 @@ def _integrations_context(integrations: list[dict] | None, skills: list[dict] | 
         for sk in skills:
             stype = sk.get("skill_type") or "desconocida"
             active = "habilitada" if sk.get("enabled", True) else "deshabilitada"
-            lines.append(f"- Skill: {stype} ({active})")
+            if stype == "escalation":
+                has_escalation_skill = True
+                cfg = sk.get("config") or {}
+                kws = cfg.get("keywords") or []
+                kw_str = ", ".join(kws) if kws else "humano, asesor, operador, queja, hablar con persona"
+                lines.append(
+                    f"- Skill: escalation ({active})\n"
+                    f"  * Palabras clave de escalado a humano: {kw_str}\n"
+                    f"  * Escalar ante archivos multimedia: {'Sí' if cfg.get('escalate_on_media', True) else 'No'}\n"
+                    f"  * Protocolo: El bot debe transferir al asesor humano ante estas solicitudes o quejas."
+                )
+            else:
+                lines.append(f"- Skill: {stype} ({active})")
+    if not has_escalation_skill:
+        lines.append(
+            "- Reglas de escalado humano del sistema (activas por defecto):\n"
+            "  * Motivos de escalado: Solicitud de hablar con un humano/asesor, quejas o reclamos, o dudas fuera del alcance de la Base de Conocimiento.\n"
+            "  * Protocolo: Pedir nombre y motivo si faltan, y confirmar que un asesor humano atenderá la conversación."
+        )
     return "\n".join(lines) if lines else "Sin integraciones configuradas."
 
 
@@ -310,6 +338,8 @@ Instrucciones de ejecución del agente PBD (OBLIGATORIAS):
   1. `<fuentes_autorizadas>`: Agregar las fuentes o archivos mencionados (ej. Menu_Agosto_2026_Mobi.md, políticas, etc.).
   2. `<flujos>`: Agregar o actualizar el `<flujo id="...">` detallando paso a paso cómo responder a la consulta del usuario (ej. cómo desglosar el menú según día de la semana y semana del mes usando el conocimiento oficial).
   3. `<criterios_de_respuesta>` y `<guardrails>`: Definir las reglas estrictas de fidelidad a la información oficial.
+- REGLA ESTRICTA DE BASE DE CONOCIMIENTO Y ESCALADO (OBLIGATORIA):
+  Aunque la solicitud o historia del usuario sea breve, el Master Prompt (04), las Especificaciones (02) y la Suite de Pruebas (03) DEBEN obligatoriamente fundamentarse en la Base de Conocimiento activa y DEBEN incorporar sin excepción el protocolo de escalado a asesor humano en <transferencia_humana> y <fallbacks>.
 - Devuelve los 4 documentos completos encapsulados en sus etiquetas correspondientes: <constitution_doc>, <specs_doc>, <test_suite_doc>, <master_prompt_doc>.
 - No omitas, recortes ni dejes sin cerrar ninguna de las cuatro etiquetas.
 - Si detectas una contradicción constitucional insalvable con la solicitud, devuelve obligatoriamente el reporte dentro de <blocked_change>...</blocked_change>.

@@ -241,7 +241,32 @@ BLOCKED CHANGE - MASTER PROMPT NOT MODIFIED
         self.assertIn("google_drive", rendered)
         self.assertIn("google_calendar", rendered)
 
+    def test_build_messages_includes_strict_knowledge_and_escalation_rules(self):
+        messages = prompt_assistant.build_messages(
+            bot={"name": "Demo Bot"},
+            current_prompt="Prompt actual",
+            instruction="Agrega flujo de ventas",
+            knowledge_docs=[{"title": "Catálogo", "content": "Lista de precios oficial"}],
+            skills=[
+                {
+                    "skill_type": "escalation",
+                    "enabled": True,
+                    "config": {"keywords": ["asesor", "queja", "urgente"], "escalate_on_media": True},
+                }
+            ],
+        )
+        rendered = "\n".join(item["content"] for item in messages)
+        self.assertIn("REGLA ESTRICTA DE BASE DE CONOCIMIENTO Y ESCALADO (OBLIGATORIA)", rendered)
+        self.assertIn("Skill: escalation", rendered)
+        self.assertIn("asesor, queja, urgente", rendered)
+        self.assertIn("<transferencia_humana>", rendered)
+
+    def test_integrations_context_defaults_to_system_escalation_rules(self):
+        ctx = prompt_assistant._integrations_context(integrations=[], skills=[])
+        self.assertIn("Reglas de escalado humano del sistema", ctx)
+        self.assertIn("Solicitud de hablar con un humano/asesor", ctx)
 
 
 if __name__ == "__main__":
     unittest.main()
+

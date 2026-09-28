@@ -42,7 +42,7 @@ class ConfigAliasTests(unittest.TestCase):
             config.META_REDIRECT_URI,
             "https://bot.humanio.digital/admin/meta/oauth/callback",
         )
-        self.assertEqual(config.META_GRAPH_API_VERSION, "v25.0")
+        self.assertEqual(config.META_GRAPH_API_VERSION, "v21.0")
         self.assertEqual(config.validate(), ["WHATSAPP_PHONE_NUMBER_ID", "INTEGRATION_SECRET_KEY"])
 
     def test_existing_variable_names_still_take_precedence(self):

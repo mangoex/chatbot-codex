@@ -2618,6 +2618,8 @@ async def assist_bot_prompt_page(
     bot = await _require_bot_editor(session, bot_id)
     try:
         knowledge_docs = await db.list_bot_knowledge(bot_id, active_only=True)
+        integrations = await db.list_bot_integrations(bot_id)
+        skills = await db.list_bot_skills(bot_id)
         result = await prompt_assistant.assist_prompt(
             bot=bot,
             current_prompt=current_prompt,
@@ -2626,6 +2628,8 @@ async def assist_bot_prompt_page(
             pbd_test_suite=pbd_test_suite,
             instruction=instruction,
             knowledge_docs=knowledge_docs,
+            integrations=integrations,
+            skills=skills,
             provider=provider,
             api_key=api_key,
             base_url=base_url,

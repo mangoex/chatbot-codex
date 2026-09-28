@@ -3057,24 +3057,28 @@ async def client_app(
       <form id="behaviorForm" method="post" action="/client/bots/{bot_id}/prompt/save?csrf_token={html.escape(csrf_token)}">
         <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
 
-        <div class="prompt-workspace">
-          <div class="card">
-            <div class="card-header" style="display:flex; justify-content:space-between; align-items:flex-start;">
+        <div class="prompt-workspace" style="display:block; max-width:960px; margin:0 auto;">
+          <div class="card" style="box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-radius: 8px;">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
               <div>
-                <h2>Agente PBD con IA (Prompt Behavior Design)</h2>
-                <p>Describe las reglas de tu bot en WhatsApp. La IA generará un borrador de los 4 documentos PBD, lo validará y esperará tu revisión antes de publicar.</p>
+                <h2 style="font-size:18px; margin:0 0 6px 0;">Agente PBD con IA (Prompt Behavior Design)</h2>
+                <p style="color:var(--text-muted); font-size:13.5px; margin:0; line-height:1.5;">
+                  Define en lenguaje natural cómo debe comportarse tu bot mediante historias y requerimientos. El sistema desarrolla internamente los 4 documentos PBD (Constitución, Especificaciones, Pruebas y Master Prompt) respetando estrictamente tu Base de Conocimiento y las reglas de escalado humano.
+                </p>
               </div>
-              <a href="/client/bots/{bot_id}/prompt/pbd/export" class="btn secondary" style="font-size:12px; padding:6px 12px; text-decoration:none; display:inline-flex; align-items:center; gap:6px;" title="Descargar paquete completo de documentación .md">
+              <a href="/client/bots/{bot_id}/prompt/pbd/export" class="btn secondary" style="font-size:12px; padding:6px 12px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; flex-shrink:0;" title="Descargar paquete completo de documentación .md">
                 📥 Descargar PBD (.zip)
               </a>
             </div>
             
-            <div style="margin-bottom:14px;">
-              <label for="aiPromptInstruction">Describe el comportamiento que buscas o el cambio que necesitas</label>
-              <textarea id="aiPromptInstruction" style="min-height: 110px;" placeholder="Ej. Actualiza el bot para que cuando pregunten por citas agende usando Google Calendar, solicite nombre y teléfono, y si el usuario cancela o reagenda aplique el protocolo de confirmación respetando los horarios comerciales..."></textarea>
+            <div style="margin-bottom:16px;">
+              <label for="aiPromptInstruction" style="font-size:14px; font-weight:700; margin-bottom:8px; display:block;">
+                ¿Cómo quieres que se comporte tu bot o qué cambios necesitas?
+              </label>
+              <textarea id="aiPromptInstruction" style="min-height: 130px; width:100%; border:1.5px solid var(--border-color); border-radius:8px; padding:14px; font-size:13.5px; line-height:1.6; box-sizing:border-box;" placeholder="Ej. Quiero que atiendas dudas sobre nuestros servicios basándote en la base de conocimiento oficial. Si un cliente solicita agendar cita o tiene una queja, pide su nombre y teléfono y canalízalo de inmediato con un asesor humano..."></textarea>
             </div>
             
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:14px; background:#f8fafc; padding:12px; border-radius:6px; border:1px solid var(--border-color);">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:18px; background:#f8fafc; padding:12px; border-radius:6px; border:1px solid var(--border-color);">
               <div>
                 <label for="aiPbdMode" style="font-size:12px; font-weight:600; margin-bottom:4px; display:block;">Modo de Operación PBD</label>
                 <select id="aiPbdMode" style="width:100%; padding:6px 10px; font-size:12.5px; border-radius:4px; border:1px solid var(--border-color); background:#fff;">
@@ -3094,9 +3098,9 @@ async def client_app(
               </div>
             </div>
 
-            <div style="display:flex; align-items:center; gap:12px;">
-              <button class="btn primary-btn" type="button" id="btnAssistPrompt" onclick="requestAIPrompt()">
-                ✨ Diseñar / Actualizar Comportamiento con PBD
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+              <button class="btn primary-btn" type="button" id="btnAssistPrompt" onclick="requestAIPrompt()" style="font-size:13.5px; font-weight:700; padding:10px 20px;">
+                ✨ Desarrollar y Validar Comportamiento con PBD
               </button>
               <span id="aiAssistLoader" role="status" aria-live="polite" style="display:none; font-size:13px; color:var(--primary); font-weight:600;">
                 🧠 Ejecutando PBD WhatsApp Maintainer...
@@ -3112,58 +3116,72 @@ async def client_app(
               <p id="pbdBlockedText" style="font-size:12.5px; color:#881337; margin:0; line-height:1.5; white-space:pre-wrap;"></p>
             </div>
 
-            <!-- VISTA PREVIA Y RESULTADOS -->
-            <div id="promptPreviewBlock" style="margin-top:20px; display:none; background:#f0fdf4; border:1px solid #bbf7d0; padding:16px; border-radius:8px;">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+            <!-- RESULTADO Y VALIDACIÓN PBD -->
+            <div id="promptPreviewBlock" style="margin-top:20px; display:none; background:#f0fdf4; border:1px solid #bbf7d0; padding:18px; border-radius:8px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
                 <div>
-                  <span class="bold-text" style="font-size:13.5px; color:#166534;" id="pbdPreviewTitle">✅ Borrador PBD validado; todavía no publicado</span>
-                </div>
-                <div style="display:flex; gap:6px;">
-                  <button class="btn secondary" type="button" style="padding:4px 10px; font-size:11px;" onclick="applyGeneratedPrompt()">Sincronizar Editores</button>
+                  <span class="bold-text" style="font-size:14px; color:#166534;" id="pbdPreviewTitle">✅ Comportamiento PBD Validado y Listo</span>
                 </div>
               </div>
-              <p id="pbdValidationReport" role="status" aria-live="polite" style="font-size:12px; color:#166534; margin:0 0 10px;"></p>
+              <div id="pbdValidationReport" role="status" aria-live="polite" style="font-size:12.5px; color:#15803d; line-height:1.5; margin:0 0 14px;"></div>
               
-              <label for="aiConstitutionPreview" style="color:#166534; font-size:12px; font-weight:600;">01 - Constitución (Preview)</label>
-              <textarea id="aiConstitutionPreview" style="min-height: 100px; background:#fff; font-family:monospace; font-size:12px; border-color:#86efac; margin-bottom: 10px;" readonly></textarea>
-              
-              <label for="aiSpecsPreview" style="color:#166534; font-size:12px; font-weight:600;">02 - Especificaciones (Preview)</label>
-              <textarea id="aiSpecsPreview" style="min-height: 100px; background:#fff; font-family:monospace; font-size:12px; border-color:#86efac; margin-bottom: 10px;" readonly></textarea>
-              
-              <label for="aiTestSuitePreview" style="color:#166534; font-size:12px; font-weight:600;">03 - Suite de Pruebas (Preview)</label>
-              <textarea id="aiTestSuitePreview" style="min-height: 100px; background:#fff; font-family:monospace; font-size:12px; border-color:#86efac; margin-bottom: 10px;" readonly></textarea>
+              <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:10px; margin-bottom:14px; font-size:12px;">
+                <div style="background:#fff; padding:10px; border-radius:6px; border:1px solid #bbf7d0;">
+                  <span style="font-weight:700; color:#166534;">📚 Base de Conocimiento</span>
+                  <div style="color:#14532d; margin-top:2px;">Respuestas estrictamente fundamentadas en fuentes oficiales.</div>
+                </div>
+                <div style="background:#fff; padding:10px; border-radius:6px; border:1px solid #bbf7d0;">
+                  <span style="font-weight:700; color:#166534;">🚨 Escalado Humano</span>
+                  <div style="color:#14532d; margin-top:2px;">Reglas de transferencia ante quejas o dudas complejas.</div>
+                </div>
+                <div style="background:#fff; padding:10px; border-radius:6px; border:1px solid #bbf7d0;">
+                  <span style="font-weight:700; color:#166534;">🧪 Suite de Pruebas</span>
+                  <div style="color:#14532d; margin-top:2px;">Casos de prueba Gherkin validados sin regresiones.</div>
+                </div>
+              </div>
 
-              <label for="aiPromptPreview" style="color:#166534; font-size:12px; font-weight:600;">04 - Master Prompt (Preview)</label>
-              <textarea id="aiPromptPreview" style="min-height: 180px; background:#fff; font-family:monospace; font-size:12px; border-color:#86efac;" readonly></textarea>
+              <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+                <button class="btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""} style="background:#16a34a; color:#fff; font-weight:700; font-size:14px; padding:10px 22px; border-radius:6px; cursor:pointer;">
+                  🚀 Validar y publicar comportamiento en WhatsApp
+                </button>
+              </div>
             </div>
-            
-            <div style="margin-top:24px; border-top: 1px solid var(--border-color); padding-top: 20px;">
-              <h3 style="margin-bottom: 12px; font-size: 14px;">Documentos de Referencia PBD (Editables)</h3>
-              
-              <label for="activeConstitutionEditor">01 - Constitución (Verdad Absoluta)</label>
-              <textarea id="activeConstitutionEditor" name="pbd_constitution" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 16px;">{html.escape(current_constitution)}</textarea>
-  
-              <label for="activeSpecsEditor">02 - Especificaciones (Flujos y Datos)</label>
-              <textarea id="activeSpecsEditor" name="pbd_specs" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 16px;">{html.escape(current_specs)}</textarea>
-  
-              <label for="activeTestSuiteEditor">03 - Suite de Pruebas (Casos de uso)</label>
-              <textarea id="activeTestSuiteEditor" name="pbd_test_suite" style="min-height: 120px; width: 100%; font-family:monospace; font-size:12px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 16px;">{html.escape(current_test_suite)}</textarea>
-            </div>
-          </div>
-          
-          <div class="card">
-            <div class="card-header">
-              <h2>Estructura del Comportamiento (PBD)</h2>
-              <p>Puedes editar el comportamiento manualmente o usar el Asistente PBD con IA a la izquierda.</p>
-            </div>
-            
-            <label for="activePromptEditor">04 - Master Prompt (Código del Bot)</label>
-            <textarea id="activePromptEditor" name="prompt" style="min-height: 520px; width: 100%; font-family:monospace; font-size:12.5px; line-height:1.5; padding: 12px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box;" placeholder="System prompt...">{html.escape(current_prompt_content)}</textarea>
-            
-            <div style="margin-top:16px; display:flex; gap:10px; align-items:center;">
-              <button class="btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""} style="font-weight:700;">Validar y publicar comportamiento</button>
-              <a href="/client/bots/{bot_id}/prompt/pbd/export" class="btn secondary" style="text-decoration:none;" title="Descargar paquete completo de documentación">📥 Descargar .zip</a>
-            </div>
+
+            <!-- MODO AVANZADO / PRIVADO PBD (DOCUMENTOS TÉCNICOS COLAPSABLES) -->
+            <details id="pbdTechDetails" style="margin-top:28px; border:1px solid var(--border-color); border-radius:8px; padding:14px; background:#f8fafc;">
+              <summary style="font-weight:600; font-size:13px; color:var(--text-muted); cursor:pointer;">
+                🛠️ Modo Avanzado: Documentación Técnica PBD (01 Constitución, 02 Specs, 03 Tests, 04 Master Prompt)
+              </summary>
+              <div style="margin-top:14px;">
+                <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">
+                  El motor PBD gestiona estos 4 archivos internamente para auditar y prevenir regresiones en el Master Prompt ejecutable. Puedes revisarlos o modificarlos manualmente si requieres ajustes finos.
+                </p>
+
+                <label for="activeConstitutionEditor" style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">01 - Constitución (Verdad Absoluta)</label>
+                <textarea id="activeConstitutionEditor" name="pbd_constitution" style="min-height: 100px; width: 100%; font-family:monospace; font-size:11.5px; line-height:1.4; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 12px;">{html.escape(current_constitution)}</textarea>
+
+                <label for="activeSpecsEditor" style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">02 - Especificaciones (Flujos y Datos)</label>
+                <textarea id="activeSpecsEditor" name="pbd_specs" style="min-height: 100px; width: 100%; font-family:monospace; font-size:11.5px; line-height:1.4; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 12px;">{html.escape(current_specs)}</textarea>
+
+                <label for="activeTestSuiteEditor" style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">03 - Suite de Pruebas (Casos de uso)</label>
+                <textarea id="activeTestSuiteEditor" name="pbd_test_suite" style="min-height: 100px; width: 100%; font-family:monospace; font-size:11.5px; line-height:1.4; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 12px;">{html.escape(current_test_suite)}</textarea>
+
+                <label for="activePromptEditor" style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">04 - Master Prompt (Código del Bot en Producción)</label>
+                <textarea id="activePromptEditor" name="prompt" style="min-height: 220px; width: 100%; font-family:monospace; font-size:11.5px; line-height:1.4; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 12px;" placeholder="System prompt...">{html.escape(current_prompt_content)}</textarea>
+
+                <!-- Hidden preview elements for DOM compatibility -->
+                <textarea id="aiConstitutionPreview" style="display:none;"></textarea>
+                <textarea id="aiSpecsPreview" style="display:none;"></textarea>
+                <textarea id="aiTestSuitePreview" style="display:none;"></textarea>
+                <textarea id="aiPromptPreview" style="display:none;"></textarea>
+
+                <div style="margin-top:8px;">
+                  <button class="btn secondary" type="submit" {"disabled" if session["role"] == "client_viewer" else ""} style="font-size:12px;">
+                    Guardar cambios manuales en PBD
+                  </button>
+                </div>
+              </div>
+            </details>
           </div>
         </div>
       </form>
@@ -3173,17 +3191,16 @@ async def client_app(
           if (window.promptEditor?.codemirror) {{
             window.promptEditor.codemirror.save();
           }}
-          if (!window.confirm("¿Publicar estos cuatro documentos PBD como comportamiento activo del bot?")) {{
+          if (!window.confirm("¿Publicar estos cuatro documentos PBD como comportamiento activo del bot en WhatsApp?")) {{
             event.preventDefault();
           }}
         }});
-
 
         async function requestAIPrompt() {{
           const instruction = document.getElementById("aiPromptInstruction").value.trim();
           const current = window.promptEditor ? window.promptEditor.value() : document.getElementById("activePromptEditor").value;
           if (!instruction) {{
-            alert("Por favor escribe una descripción para el comportamiento del bot.");
+            alert("Por favor escribe una descripción o historia para el comportamiento del bot.");
             return;
           }}
           
@@ -3197,8 +3214,9 @@ async def client_app(
           const specsPreview = document.getElementById("aiSpecsPreview");
           const testPreview = document.getElementById("aiTestSuitePreview");
           const validationReport = document.getElementById("pbdValidationReport");
+          const pbdPreviewTitle = document.getElementById("pbdPreviewTitle");
           
-          loader.innerHTML = '<span style="display:inline-block; width:12px; height:12px; border:2px solid #2563eb; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:6px;"></span> 🤖 Compilando arquitectura PBD (01 Constitución, 02 Specs, 03 Pruebas, 04 Master Prompt)... (~30-50s)';
+          loader.innerHTML = '<span style="display:inline-block; width:12px; height:12px; border:2px solid #2563eb; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:6px;"></span> 🤖 Desarrollando arquitectura PBD (01 Constitución, 02 Specs, 03 Pruebas, 04 Master Prompt)... (~30-50s)';
           loader.style.display = "inline-block";
           btn.disabled = true;
           blockedAlert.style.display = "none";
@@ -3248,47 +3266,35 @@ async def client_app(
               throw new Error(data.error || "Error generando el prompt");
             }}
 
-            previewArea.value = data.prompt || "";
-            constPreview.value = data.pbd_constitution || "";
-            specsPreview.value = data.pbd_specs || "";
-            testPreview.value = data.pbd_test_suite || "";
+            // Sincronizar automáticamente los editores activos internos
+            document.getElementById("activePromptEditor").value = data.prompt || "";
+            document.getElementById("activeConstitutionEditor").value = data.pbd_constitution || "";
+            document.getElementById("activeSpecsEditor").value = data.pbd_specs || "";
+            document.getElementById("activeTestSuiteEditor").value = data.pbd_test_suite || "";
+
+            if (window.promptEditor) {{
+              window.promptEditor.value(data.prompt || "");
+              if (window.promptEditor.codemirror) {{
+                window.promptEditor.codemirror.save();
+              }}
+            }}
+
+            if (previewArea) previewArea.value = data.prompt || "";
+            if (constPreview) constPreview.value = data.pbd_constitution || "";
+            if (specsPreview) specsPreview.value = data.pbd_specs || "";
+            if (testPreview) testPreview.value = data.pbd_test_suite || "";
             
-            pbdPreviewTitle.textContent = "✅ Borrador PBD validado; todavía no publicado";
+            pbdPreviewTitle.textContent = "✅ Comportamiento PBD Validado y Listo para Publicar";
             const warnings = data.validation?.warnings || [];
-            validationReport.textContent = warnings.length
-              ? `Validación estructural correcta. Advertencias: ${{warnings.join(" ")}}`
-              : "Validación estructural correcta. Revisa el contenido y sincronízalo antes de publicar.";
+            validationReport.innerHTML = `<strong>Base de Conocimiento y Escalado Humano integrados.</strong> Se actualizaron las especificaciones y la suite de pruebas sin regresiones. Haz clic en el botón verde abajo para activar el comportamiento en WhatsApp.${{warnings.length ? `<br><small style="color:#b45309;">Nota: ${{warnings.join(" ")}}</small>` : ""}}`;
 
             previewBlock.style.display = "block";
-            previewBlock.scrollIntoView({{ behavior: "smooth", block: "start" }});
+            previewBlock.scrollIntoView({{ behavior: "smooth", block: "nearest" }});
           }} catch (e) {{
             alert(e.message);
           }} finally {{
             loader.style.display = "none";
             btn.disabled = false;
-          }}
-
-        }}
-        
-        function applyGeneratedPrompt(showAlert = true) {{
-          const generated = document.getElementById("aiPromptPreview").value;
-          const generatedConst = document.getElementById("aiConstitutionPreview").value;
-          const generatedSpecs = document.getElementById("aiSpecsPreview").value;
-          const generatedTest = document.getElementById("aiTestSuitePreview").value;
-
-          if (window.promptEditor) {{
-            window.promptEditor.value(generated);
-            if (window.promptEditor.codemirror) {{
-              window.promptEditor.codemirror.save();
-            }}
-          }}
-          document.getElementById("activePromptEditor").value = generated;
-          document.getElementById("activeConstitutionEditor").value = generatedConst;
-          document.getElementById("activeSpecsEditor").value = generatedSpecs;
-          document.getElementById("activeTestSuiteEditor").value = generatedTest;
-
-          if (showAlert) {{
-            alert("Documentos sincronizados. Revisa los cuatro y usa 'Validar y publicar comportamiento' para activarlos.");
           }}
         }}
 
