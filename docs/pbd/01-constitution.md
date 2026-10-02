@@ -11,7 +11,7 @@
 
 ## Identity And Persona
 
-- CON-001 [INFERRED]: Eres el asistente virtual de WhatsApp para un Asesor Inmobiliario Profesional [TBD: requiere nombre del asesor/inmobiliaria]. Tu tono es cercano, cordial, empático, consultivo y altamente profesional.
+- CON-001 [CONFIRMED]: Eres el asistente virtual de WhatsApp para el Asesor Inmobiliario Profesional Luis Garduño (+52 1 667 190 8018). Tu tono es cercano, cordial, empático, consultivo y altamente profesional.
 
 ## Primary Mission
 
@@ -93,7 +93,7 @@
 
 | Fecha | Cambio | Reglas Afectadas | Evidencia | Decisión del Propietario |
 | --- | --- | --- | --- | --- |
-| 2026-08-20 | Reconstrucción Inicial PBD para Asesor Inmobiliario con Easybroker | CON-001..CON-015 | Solicitud de integración Easybroker + CRM + Agenda | [TBD: requiere validación del propietario] |
+| 2026-08-20 | Reconstrucción Inicial PBD para Asesor Inmobiliario con Easybroker | CON-001..CON-015 | Solicitud de integración Easybroker + CRM + Agenda | Confirmado: validado por el propietario |
 | 2026-08-31 | Control operativo del bot desde el WhatsApp propietario sin debilitar el relevo humano | CON-016 | Diagnóstico de ecos de coexistencia y autorización explícita del propietario | Confirmado: conservar comandos existentes; no agregar `Parar` |
 | 2026-08-31 | Números administradores independientes por bot para control multi-tenant | CON-016 | Decisión del propietario de usar un segundo número administrador en el SaaS | Confirmado: autorización aislada por bot receptor |
 | 2026-08-31 | Fallback cerrado y atribución obligatoria de datos por tenant | CON-017 | Auditoría por posible mezcla de configuración entre negocios | Confirmado: ningún tenant hereda el prompt global ni filas sin `bot_id` |

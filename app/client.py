@@ -1290,6 +1290,20 @@ async def client_app(
         and chatwoot_token_saved
         and chatwoot_webhook_secret_saved
     )
+
+    # Grok Bot integration
+    grok_integration = await db.get_bot_integration_by_type(bot_id, "grok_bot")
+    grok_config = {}
+    grok_enabled = False
+    grok_auth_saved = False
+    grok_webhook_secret_saved = False
+    if grok_integration:
+        grok_config = grok_integration.get("config") or {}
+        grok_enabled = grok_integration.get("enabled", False)
+        enc_secrets = await db.get_integration_secret_values(int(grok_integration["id"]))
+        grok_auth_saved = bool(enc_secrets.get("auth_header"))
+        grok_webhook_secret_saved = bool(enc_secrets.get("webhook_secret"))
+    grok_ready = grok_enabled and bool(grok_config.get("webhook_url")) and grok_webhook_secret_saved
         
     # Routing Rules integration
     routing_integration = await db.get_bot_integration_by_type(bot_id, "routing_rules")
@@ -3558,6 +3572,56 @@ async def client_app(
 
         <div class="card">
           <div class="card-header">
+            <h2>Grok Bot</h2>
+            <p>Conecta un bot dedicado de Grok para procesar mensajes y generar propuestas.</p>
+          </div>
+          
+          <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <span class="bold-text">Estado de Integración</span>
+            <span class="badge {"success" if grok_ready else ("warning" if grok_enabled else "secondary")}">
+              {"Conectado" if grok_ready else ("Configuración incompleta" if grok_enabled else "Desconectado")}
+            </span>
+          </div>
+          
+          <form method="post" action="/client/bots/{bot_id}/integrations/grok">
+            <div class="checkbox-group">
+              <input type="checkbox" name="enabled" id="grokToggle" {"checked" if grok_enabled else ""}>
+              <label for="grokToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar integración con Grok Bot</label>
+            </div>
+            
+            <label>URL del Webhook (Grok Bot)</label>
+            <input name="webhook_url" placeholder="https://api.grok.ejemplo/webhook" value="{html.escape(grok_config.get("webhook_url") or "")}">
+            
+            <label>Encabezado Authorization</label>
+            <div class="password-wrapper">
+              <input type="password" name="auth_header" placeholder="Ej. Bearer tu-token" autocomplete="new-password" value="{"********" if grok_auth_saved else ""}">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Se enviará como encabezado Authorization en cada POST hacia Grok.</span>
+
+            <label>URL de Regreso</label>
+            <input name="return_url" placeholder="{html.escape((config.WEBHOOK_DOMAIN or "https://TU-DOMINIO").rstrip("/") + f"/webhooks/grok/{bot_id}")}" value="{html.escape(grok_config.get("return_url") or "")}">
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Grok nos va a llamar a esta URL con la respuesta: <code>{html.escape((config.WEBHOOK_DOMAIN or "https://TU-DOMINIO").rstrip("/") + f"/webhooks/grok/{bot_id}")}</code></span>
+
+            <label>Secreto de Validación</label>
+            <div class="password-wrapper">
+              <input type="password" name="webhook_secret" placeholder="Copia aquí el secreto" autocomplete="new-password" value="{"********" if grok_webhook_secret_saved else ""}">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Secreto que Grok debe enviar para autorizar la respuesta hacia WhatsApp.</span>
+            
+            <div style="margin-top:20px; display:flex; gap:10px;">
+              <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar Grok Bot</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
             <h2>Agenda (Google Calendar)</h2>
             <p>Conecta la cuenta de Google Calendar de tu negocio para agendar de forma autónoma.</p>
           </div>
@@ -4659,6 +4723,70 @@ async def client_chatwoot_save(
     saved_param = "1" if candidate_webhook_secret else "chatwoot_api_only"
     return RedirectResponse(
         f"/client/app?bot_id={bot_id}&tab=integrations&saved={saved_param}",
+        status_code=302,
+    )
+
+
+@router.post("/bots/{bot_id}/integrations/grok")
+async def client_grok_save(
+    request: Request,
+    bot_id: int,
+    enabled: str | None = Form(None),
+    webhook_url: str = Form(""),
+    auth_header: str = Form(""),
+    return_url: str = Form(""),
+    webhook_secret: str = Form(""),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+
+    clean_webhook_url = webhook_url.strip()
+    clean_return_url = return_url.strip()
+    clean_auth_header = auth_header.strip()
+    clean_webhook_secret = webhook_secret.strip()
+
+    is_enabled = (enabled == "on" or enabled == "true")
+
+    integration = await db.get_bot_integration_by_type(bot_id, "grok_bot")
+
+    config_data = {
+        "webhook_url": clean_webhook_url,
+        "return_url": clean_return_url,
+    }
+
+    if integration:
+        integration_id = int(integration["id"])
+        await db.update_bot_integration(
+            bot_id=bot_id,
+            integration_id=integration_id,
+            integration_type="grok_bot",
+            name="Grok Bot",
+            config_data=config_data,
+            enabled=is_enabled,
+        )
+    else:
+        integration_id = await db.create_bot_integration(
+            bot_id=bot_id,
+            integration_type="grok_bot",
+            name="Grok Bot",
+            config_data=config_data,
+            enabled=is_enabled,
+        )
+
+    if clean_auth_header and not re.match(r"^\*+$", clean_auth_header):
+        encrypted_auth = secure_store.encrypt_secret(clean_auth_header)
+        await db.upsert_integration_secret(integration_id, "auth_header", encrypted_auth)
+    elif clean_auth_header == "":
+        await db.delete_integration_secret(integration_id, "auth_header")
+
+    if clean_webhook_secret and not re.match(r"^\*+$", clean_webhook_secret):
+        encrypted_secret = secure_store.encrypt_secret(clean_webhook_secret)
+        await db.upsert_integration_secret(integration_id, "webhook_secret", encrypted_secret)
+    elif clean_webhook_secret == "":
+        await db.delete_integration_secret(integration_id, "webhook_secret")
+
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=integrations&saved=1",
         status_code=302,
     )
 

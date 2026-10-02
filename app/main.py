@@ -32,6 +32,7 @@ from app import (
     escalations,
     external_actions,
     follow_ups,
+    grok_client,
     leads,
     openai_client,
     order_payments,
@@ -289,6 +290,101 @@ async def receive_chatwoot_webhook(request: Request, bot_id: int):
         raise HTTPException(status_code=502, detail="WhatsApp delivery failed")
         
     return {"status": "sent"}
+
+
+@app.post("/webhooks/grok/{bot_id}")
+@app.post("/webhooks/grok")
+async def receive_grok_webhook(request: Request, bot_id: int | None = None):
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body) if raw_body else {}
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    target_bot_id = bot_id or payload.get("bot_id") or request.query_params.get("bot_id")
+    if not target_bot_id:
+        raise HTTPException(status_code=400, detail="Missing bot_id")
+    try:
+        target_bot_id = int(target_bot_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid bot_id")
+
+    integration = await db.get_active_bot_integration(target_bot_id, "grok_bot")
+    if not integration:
+        raise HTTPException(status_code=404, detail="Grok Bot integration not active")
+
+    enc_secrets = await db.get_integration_secret_values(int(integration["id"]))
+    stored_secret = secure_store.decrypt_secret(enc_secrets.get("webhook_secret", ""))
+    if not stored_secret:
+        raise HTTPException(status_code=503, detail="Grok webhook secret not configured")
+
+    headers_dict = dict(request.headers)
+    query_dict = dict(request.query_params)
+    received_secret = grok_client.extract_secret_from_request(
+        headers=headers_dict,
+        payload=payload,
+        query_params=query_dict,
+    )
+    if not grok_client.validate_grok_secret(received_secret, stored_secret):
+        raise HTTPException(status_code=401, detail="Invalid Grok secret")
+
+    recipient = (
+        payload.get("to")
+        or payload.get("from")
+        or payload.get("wa_id")
+        or payload.get("phone_number")
+        or payload.get("recipient_id")
+    )
+    reply_text = (
+        payload.get("text")
+        or payload.get("message")
+        or payload.get("response")
+        or payload.get("content")
+        or payload.get("body")
+    )
+    if not recipient or not reply_text:
+        raise HTTPException(status_code=400, detail="Missing recipient ('to'/'from'/'wa_id') or 'text'")
+
+    wa_id = str(recipient).lstrip("+").strip().replace(" ", "").replace("-", "")
+    reply_text = str(reply_text).strip()
+    if not wa_id or not reply_text:
+        raise HTTPException(status_code=400, detail="Invalid recipient or text")
+
+    # Regla: enviar solo como respuesta dentro de las 24 horas. No iniciar conversación ni usar plantilla.
+    if not await db.is_within_24h_window(target_bot_id, wa_id):
+        log.warning(
+            "Respuesta de Grok rechazada para bot %s y %s: ventana de 24h expirada. No se inicia plantilla.",
+            target_bot_id,
+            wa_id,
+        )
+        return {
+            "status": "window_expired",
+            "detail": "24-hour messaging window expired; cannot reply without template",
+        }
+
+    bot = await bots.resolve_by_bot_id(target_bot_id)
+    if not bot or not bot.whatsapp_phone_number_id or not bot.whatsapp_access_token:
+        log.error("Grok webhook blocked for bot %s: missing WhatsApp credentials", target_bot_id)
+        raise HTTPException(status_code=502, detail="Bot missing WhatsApp credentials")
+
+    try:
+        res = await whatsapp_client.send_text(
+            to_wa_id=wa_id,
+            body=reply_text,
+            phone_number_id=bot.whatsapp_phone_number_id,
+            access_token=bot.whatsapp_access_token,
+        )
+        await db.save_message(wa_id, "assistant", reply_text, bot_id=target_bot_id)
+        if isinstance(res, dict) and res.get("messages"):
+            for m in res["messages"]:
+                if m.get("id"):
+                    await db.record_bot_sent_message(m["id"], target_bot_id)
+    except Exception as exc:
+        log.error("Error al enviar respuesta de Grok a WhatsApp (%s): %s", wa_id, exc)
+        raise HTTPException(status_code=502, detail="WhatsApp delivery failed")
+
+    return {"status": "sent"}
+
 
 
 
@@ -731,7 +827,44 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         log.info("Bot %s esta pausado. Mensaje de %s guardado, no se responde.", bot.id, wa_id)
         return
 
-        
+    # Comprobar si Grok Bot está activo para este bot
+    grok_integration = await db.get_active_bot_integration(bot.id, "grok_bot")
+    if grok_integration:
+        grok_config = grok_integration.get("config") or {}
+        grok_webhook_url = (grok_config.get("webhook_url") or "").strip()
+        if grok_webhook_url:
+            secrets = await db.get_integration_secret_values(int(grok_integration["id"]))
+            auth_header = ""
+            if secrets.get("auth_header"):
+                auth_header = secure_store.decrypt_secret(secrets["auth_header"]) or ""
+
+            contact_name = msg.get("name") or ""
+            if not contact_name:
+                contact = await db.get_contact_by_wa_id(bot.id, wa_id)
+                if contact and contact.get("name"):
+                    contact_name = contact["name"]
+
+            grok_payload = {
+                "bot_id": bot.id,
+                "from": wa_id,
+                "name": contact_name,
+                "text": user_text,
+                "message_id": msg["message_id"],
+            }
+            await grok_client.forward_to_grok(
+                grok_webhook_url,
+                grok_payload,
+                auth_header=auth_header,
+            )
+            log.info(
+                "Mensaje %s de %s enviado a Grok Bot (bot_id=%s, url=%s). Asistto en silencio local.",
+                msg["message_id"],
+                wa_id,
+                bot.id,
+                grok_webhook_url,
+            )
+            return
+
     current_history = history + [{"role": "user", "content": user_text}]
 
     if bot.id == 1:

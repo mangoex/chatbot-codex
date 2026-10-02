@@ -2798,6 +2798,7 @@ INTEGRATION_TYPES = (
     ("github_repository", "GitHub"),
     ("external_api", "API externa"),
     ("webhook", "Webhook"),
+    ("grok_bot", "Grok Bot"),
     ("crm", "CRM"),
     ("custom", "Personalizada"),
 )

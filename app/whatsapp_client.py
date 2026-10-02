@@ -112,6 +112,7 @@ def _message_details(msg: dict, metadata: dict, *, recipient_id: str | None = No
         "text": "",
         "media_id": None,
         "media_mime": None,
+        "name": "",
         "phone_number_id": metadata.get("phone_number_id", ""),
         "display_phone_number": metadata.get("display_phone_number", ""),
     }
@@ -153,11 +154,21 @@ def extract_messages(payload: dict) -> list[dict]:
             continue
         value = change.get("value") or {}
         metadata = value.get("metadata", {}) or {}
+        contacts = value.get("contacts") or []
+        contacts_by_wa = {
+            str(c.get("wa_id")): (c.get("profile") or {}).get("name", "")
+            for c in contacts if isinstance(c, dict) and c.get("wa_id")
+        }
         for msg in value.get("messages") or []:
             if msg.get("id") in outgoing_ids or msg.get("is_echo"):
                 continue
             details = _message_details(msg, metadata)
             if details and details["wa_id"]:
+                c_name = contacts_by_wa.get(str(details["wa_id"])) or (
+                    (contacts[0].get("profile") or {}).get("name", "") if contacts else ""
+                )
+                if c_name:
+                    details["name"] = c_name
                 out.append(details)
     return out
 

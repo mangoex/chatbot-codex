@@ -3283,3 +3283,25 @@ async def get_inactive_conversations_for_trigger(
             limit,
         )
         return [dict(r) for r in rows]
+
+
+async def is_within_24h_window(bot_id: int, wa_id: str) -> bool:
+    """Verifica si el usuario envió un mensaje en las últimas 24 horas para permitir respuestas de sesión de WhatsApp."""
+    if not wa_id or _pool is None:
+        return False
+    variants = _handoff_recipient_ids(wa_id)
+    async with _pool.acquire() as conn:
+        row = await conn.fetchval(
+            """
+            SELECT MAX(created_at)
+            FROM conversations
+            WHERE bot_id = $1 AND wa_id = ANY($2::text[]) AND role = 'user'
+            """,
+            bot_id,
+            variants,
+        )
+        if not row:
+            return False
+        diff = datetime.now(timezone.utc) - row.astimezone(timezone.utc)
+        return diff.total_seconds() <= 24 * 3600
+
