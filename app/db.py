@@ -1,6 +1,7 @@
 from __future__ import annotations
 """Acceso a Postgres: pool, schema idempotente, lectura/escritura de historial."""
 import json
+from datetime import datetime, timezone
 
 import asyncpg
 from app import config
@@ -3302,6 +3303,13 @@ async def is_within_24h_window(bot_id: int, wa_id: str) -> bool:
         )
         if not row:
             return False
+        if isinstance(row, str):
+            try:
+                row = datetime.fromisoformat(row.replace("Z", "+00:00"))
+            except Exception:
+                return False
+        if getattr(row, "tzinfo", None) is None:
+            row = row.replace(tzinfo=timezone.utc)
         diff = datetime.now(timezone.utc) - row.astimezone(timezone.utc)
         return diff.total_seconds() <= 24 * 3600
 

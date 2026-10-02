@@ -390,6 +390,45 @@ class GrokReturnWebhookTests(unittest.IsolatedAsyncioTestCase):
         )
         record_sent.assert_awaited_once_with("wamid.out1", 147)
 
+    async def test_is_within_24h_window_direct(self):
+        from datetime import datetime, timezone, timedelta
+        from app import db
+
+        now = datetime.now(timezone.utc)
+        recent_time = now - timedelta(hours=2)
+        old_time = now - timedelta(hours=25)
+
+        mock_conn = AsyncMock()
+        mock_pool = MagicMock()
+        mock_pool.acquire.return_value.__aenter__.return_value = mock_conn
+
+        # 1. Recent timestamp -> True
+        mock_conn.fetchval = AsyncMock(return_value=recent_time)
+        with patch.object(db, "_pool", mock_pool):
+            self.assertTrue(await db.is_within_24h_window(147, "5215551234567"))
+
+        # 2. Expired timestamp (>24h) -> False
+        mock_conn.fetchval = AsyncMock(return_value=old_time)
+        with patch.object(db, "_pool", mock_pool):
+            self.assertFalse(await db.is_within_24h_window(147, "5215551234567"))
+
+        # 3. No records found (None) -> False
+        mock_conn.fetchval = AsyncMock(return_value=None)
+        with patch.object(db, "_pool", mock_pool):
+            self.assertFalse(await db.is_within_24h_window(147, "5215551234567"))
+
+        # 4. Naive datetime -> handled correctly without error
+        naive_recent = datetime.now() - timedelta(minutes=30)
+        mock_conn.fetchval = AsyncMock(return_value=naive_recent)
+        with patch.object(db, "_pool", mock_pool):
+            self.assertTrue(await db.is_within_24h_window(147, "5215551234567"))
+
+        # 5. String ISO timestamp -> parsed and handled correctly
+        iso_recent = (now - timedelta(hours=1)).isoformat()
+        mock_conn.fetchval = AsyncMock(return_value=iso_recent)
+        with patch.object(db, "_pool", mock_pool):
+            self.assertTrue(await db.is_within_24h_window(147, "5215551234567"))
+
 
 class GrokBotCardRenderingTests(unittest.IsolatedAsyncioTestCase):
     def _base_mocks(self, bot_id: int):
