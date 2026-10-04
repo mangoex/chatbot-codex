@@ -253,6 +253,48 @@ class MetaProviderTests(unittest.TestCase):
         asyncio.run(run())
 
 
+    def test_connect_bot_auto_resolves_details_from_authorization_code(self):
+        async def run():
+            fake_resolved = {
+                "waba_id": "waba-auto",
+                "phone_number_id": "pnid-auto",
+                "display_phone_number": "+521112223344",
+                "business_id": "biz-auto",
+            }
+
+            with patch("app.meta_provider.config.META_APP_ID", "app-123"), \
+                 patch("app.meta_provider.config.META_CONFIG_ID", "config-123"), \
+                 patch("app.meta_provider.exchange_code_for_token", AsyncMock(return_value="token-exchanged")), \
+                 patch("app.meta_provider.resolve_meta_details_from_token", AsyncMock(return_value=fake_resolved)), \
+                 patch("app.meta_provider.db.upsert_bot_whatsapp_connection", AsyncMock(return_value=4)) as upsert_number, \
+                 patch("app.meta_provider.db.get_active_bot_integration", AsyncMock(return_value=None)), \
+                 patch("app.meta_provider.db.create_bot_integration", AsyncMock(return_value=8)), \
+                 patch("app.meta_provider.db.upsert_integration_secret", AsyncMock()), \
+                 patch("app.meta_provider.secure_store.encrypt_secret", return_value="encrypted-token"), \
+                 patch("app.meta_provider.subscribe_app_to_waba", AsyncMock()), \
+                 patch("app.meta_provider.register_phone_number", AsyncMock(return_value={"success": True})):
+                result = await meta_provider.connect_bot_from_embedded_signup(
+                    meta_provider.MetaConnectionInput(
+                        bot_id=7,
+                        authorization_code="code-123",
+                    )
+                )
+
+            upsert_number.assert_awaited_once_with(
+                7,
+                "pnid-auto",
+                display_phone_number="+521112223344",
+                business_id="biz-auto",
+                waba_id="waba-auto",
+                meta_app_id="app-123",
+                meta_config_id="config-123",
+                sync_status="connected",
+            )
+            self.assertEqual(result["phone_number_id"], "pnid-auto")
+
+        asyncio.run(run())
+
+
 if __name__ == "__main__":
     unittest.main()
 

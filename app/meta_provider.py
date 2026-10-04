@@ -19,7 +19,7 @@ GRAPH_ROOT = "https://graph.facebook.com"
 @dataclass(frozen=True)
 class MetaConnectionInput:
     bot_id: int
-    phone_number_id: str
+    phone_number_id: str = ""
     display_phone_number: str = ""
     waba_id: str = ""
     business_id: str = ""
@@ -123,10 +123,76 @@ async def _upsert_whatsapp_cloud_integration(
     return integration_id
 
 
+async def resolve_meta_details_from_token(token: str) -> dict[str, str]:
+    details: dict[str, str] = {
+        "waba_id": "",
+        "phone_number_id": "",
+        "display_phone_number": "",
+        "business_id": "",
+    }
+    cleaned_token = _clean(token)
+    if not cleaned_token or not config.META_APP_ID or not config.META_APP_SECRET:
+        return details
+
+    app_token = f"{config.META_APP_ID}|{config.META_APP_SECRET}"
+
+    # 1. Intentar obtener WABA ID via debug_token -> granular_scopes
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(
+                graph_url("debug_token"),
+                params={"input_token": cleaned_token, "access_token": app_token},
+            )
+            if resp.status_code == 200:
+                data = resp.json().get("data", {})
+                granular_scopes = data.get("granular_scopes", [])
+                for g in granular_scopes:
+                    if g.get("scope") in ("whatsapp_business_management", "whatsapp_business_messaging"):
+                        target_ids = g.get("target_ids", [])
+                        if target_ids:
+                            details["waba_id"] = str(target_ids[0])
+                            break
+    except Exception as exc:
+        log.warning(f"No se pudo consultar debug_token: {exc}")
+
+    # Fallback: consultar /me/whatsapp_business_accounts si debug_token no trajo target_ids
+    if not details["waba_id"]:
+        try:
+            waba_resp = await graph_get("me/whatsapp_business_accounts", cleaned_token)
+            waba_data = waba_resp.get("data", [])
+            if waba_data and isinstance(waba_data, list) and len(waba_data) > 0:
+                details["waba_id"] = str(waba_data[0].get("id") or "")
+        except Exception as exc:
+            log.warning(f"No se pudo consultar me/whatsapp_business_accounts: {exc}")
+
+    # 2. Si tenemos waba_id, obtener los números de teléfono asociados
+    if details["waba_id"]:
+        try:
+            phones_resp = await graph_get(f"{details['waba_id']}/phone_numbers", cleaned_token)
+            phones = phones_resp.get("data", [])
+            if phones and isinstance(phones, list) and len(phones) > 0:
+                first_phone = phones[0]
+                details["phone_number_id"] = str(first_phone.get("id") or "")
+                details["display_phone_number"] = str(first_phone.get("display_phone_number") or "")
+        except Exception as exc:
+            log.warning(f"No se pudo consultar phone_numbers para waba {details['waba_id']}: {exc}")
+
+        # 3. Obtener business_id de la WABA
+        try:
+            waba_info = await graph_get(
+                f"{details['waba_id']}",
+                cleaned_token,
+                params={"fields": "id,name,owner_business_info"},
+            )
+            owner_info = waba_info.get("owner_business_info") or {}
+            details["business_id"] = str(owner_info.get("id") or "")
+        except Exception as exc:
+            log.warning(f"No se pudo consultar owner_business_info para waba {details['waba_id']}: {exc}")
+
+    return details
+
+
 async def connect_bot_from_embedded_signup(data: MetaConnectionInput) -> dict[str, Any]:
-    phone_number_id = _clean(data.phone_number_id)
-    if not phone_number_id:
-        raise ValueError("Falta phone_number_id de Meta.")
     token = _clean(data.access_token)
     if not token or token == "********":
         if _clean(data.authorization_code):
@@ -139,14 +205,34 @@ async def connect_bot_from_embedded_signup(data: MetaConnectionInput) -> dict[st
                 token = ""
             if not token:
                 raise ValueError("Falta el token de acceso o el código de autorización de Meta.")
+
+    phone_number_id = _clean(data.phone_number_id)
+    waba_id = _clean(data.waba_id)
+    business_id = _clean(data.business_id)
+    display_phone_number = _clean(data.display_phone_number)
+
+    # Si falta phone_number_id o waba_id, resolver automáticamente desde Meta Graph API con el token
+    if not phone_number_id or not waba_id:
+        resolved = await resolve_meta_details_from_token(token)
+        if not phone_number_id and resolved.get("phone_number_id"):
+            phone_number_id = resolved["phone_number_id"]
+        if not waba_id and resolved.get("waba_id"):
+            waba_id = resolved["waba_id"]
+        if not business_id and resolved.get("business_id"):
+            business_id = resolved["business_id"]
+        if not display_phone_number and resolved.get("display_phone_number"):
+            display_phone_number = resolved["display_phone_number"]
+
+    if not phone_number_id:
+        raise ValueError("Falta phone_number_id de Meta.")
     now = datetime.now(timezone.utc).isoformat()
     connection_config = {
         "provider": "meta",
         "source": "embedded_signup",
         "phone_number_id": phone_number_id,
-        "display_phone_number": _clean(data.display_phone_number),
-        "business_id": _clean(data.business_id),
-        "waba_id": _clean(data.waba_id),
+        "display_phone_number": display_phone_number,
+        "business_id": business_id,
+        "waba_id": waba_id,
         "meta_app_id": _clean(config.META_APP_ID),
         "meta_config_id": _clean(config.META_CONFIG_ID),
         "connected_at": now,
@@ -154,9 +240,9 @@ async def connect_bot_from_embedded_signup(data: MetaConnectionInput) -> dict[st
     await db.upsert_bot_whatsapp_connection(
         data.bot_id,
         phone_number_id,
-        display_phone_number=data.display_phone_number,
-        business_id=data.business_id,
-        waba_id=data.waba_id,
+        display_phone_number=display_phone_number,
+        business_id=business_id,
+        waba_id=waba_id,
         meta_app_id=config.META_APP_ID,
         meta_config_id=config.META_CONFIG_ID,
         sync_status="connected",

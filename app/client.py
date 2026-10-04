@@ -2982,7 +2982,7 @@ async def client_app(
               <input id="metaWabaId" name="waba_id" value="{html.escape(wa_info.get("waba_id") or "")}">
               
               <label>Phone Number ID</label>
-              <input id="metaPhoneId" name="phone_number_id" value="{html.escape(wa_info.get("phone_number_id") or "")}" required>
+              <input id="metaPhoneId" name="phone_number_id" value="{html.escape(wa_info.get("phone_number_id") or "")}" placeholder="Llenado automáticamente">
               
               <label>Número de WhatsApp Visible</label>
               <input id="metaDisplayPhone" name="display_phone_number" value="{html.escape(wa_info.get("display_phone_number") or "")}" placeholder="+52...">
@@ -3041,27 +3041,15 @@ async def client_app(
             if (!event.origin.endsWith("facebook.com")) return;
             let data = event.data;
             try {{ if (typeof data === "string") data = JSON.parse(data); }} catch (_) {{ return; }}
+            console.log("Meta postMessage:", data);
             
-            if (data && data.type === "WA_EMBEDDED_SIGNUP") {{
-              if (data.event === "FINISH") {{
-                const payload = data.data || {{}};
-                if (payload.phone_number_id) document.getElementById("metaPhoneId").value = payload.phone_number_id;
-                if (payload.waba_id) document.getElementById("metaWabaId").value = payload.waba_id;
-                if (payload.business_id) document.getElementById("metaBusinessId").value = payload.business_id;
-                if (payload.display_phone_number) document.getElementById("metaDisplayPhone").value = payload.display_phone_number;
-                status.innerHTML = "<span class='sync-status ok'>Datos recibidos de Meta. Revisa los IDs y guarda la conexión.</span>";
-              }} else if (data.event === "CANCEL") {{
-                status.innerHTML = "<span class='sync-status err'>Vinculación cancelada por el usuario en paso: " + (data.data?.current_step || "inicial") + "</span>";
-              }} else if (data.event === "ERROR") {{
-                status.innerHTML = "<span class='sync-status err'>Error en Meta Embedded Signup: " + (data.data?.error_message || "Error desconocido") + "</span>";
-              }}
-            }} else {{
-              const payload = data?.data || data;
-              if (payload?.phone_number_id) document.getElementById("metaPhoneId").value = payload.phone_number_id;
-              if (payload?.waba_id) document.getElementById("metaWabaId").value = payload.waba_id;
-              if (payload?.business_id) document.getElementById("metaBusinessId").value = payload.business_id;
-              if (payload?.display_phone_number) document.getElementById("metaDisplayPhone").value = payload.display_phone_number;
-              if (payload?.phone_number_id) status.innerHTML = "<span class='sync-status ok'>Datos recibidos de Meta. Revisa y pulsa 'Guardar conexión'.</span>";
+            const payload = data?.data || data || {{}};
+            if (payload?.phone_number_id) document.getElementById("metaPhoneId").value = payload.phone_number_id;
+            if (payload?.waba_id) document.getElementById("metaWabaId").value = payload.waba_id;
+            if (payload?.business_id) document.getElementById("metaBusinessId").value = payload.business_id;
+            if (payload?.display_phone_number) document.getElementById("metaDisplayPhone").value = payload.display_phone_number;
+            if (payload?.phone_number_id) {{
+              status.innerHTML = "<span class='sync-status ok'>Datos recibidos de Meta. Haz clic en 'Guardar conexión cifrada'.</span>";
             }}
           }});
           
@@ -3102,7 +3090,30 @@ async def client_app(
                 const code = response?.authResponse?.code;
                 if (code) {{
                   document.getElementById("metaAuthCode").value = code;
-                  status.innerHTML = "<span class='sync-status ok'>Vínculo inicial exitoso. Completa y guarda.</span>";
+                  status.innerHTML = "<span class='sync-status'>Conexión autorizada por Meta. Obteniendo IDs automáticamente...</span>";
+                  
+                  // Auto-resolver los IDs consultando la Graph API a través del backend
+                  fetch(`/client/bots/{bot_id}/whatsapp/resolve-code`, {{
+                    method: "POST",
+                    headers: {{ "Content-Type": "application/json" }},
+                    body: JSON.stringify({{ code: code }})
+                  }})
+                  .then(r => r.json())
+                  .then(res => {{
+                    if (res && res.ok) {{
+                      if (res.phone_number_id) document.getElementById("metaPhoneId").value = res.phone_number_id;
+                      if (res.waba_id) document.getElementById("metaWabaId").value = res.waba_id;
+                      if (res.business_id) document.getElementById("metaBusinessId").value = res.business_id;
+                      if (res.display_phone_number) document.getElementById("metaDisplayPhone").value = res.display_phone_number;
+                      status.innerHTML = "<span class='sync-status ok'>¡IDs obtenidos exitosamente! Haz clic en 'Guardar conexión cifrada' para finalizar.</span>";
+                    }} else {{
+                      status.innerHTML = "<span class='sync-status ok'>Código recibido. Haz clic en 'Guardar conexión cifrada' para sincronizar.</span>";
+                    }}
+                  }})
+                  .catch(err => {{
+                    console.warn("Error en resolve-code:", err);
+                    status.innerHTML = "<span class='sync-status ok'>Código recibido. Haz clic en 'Guardar conexión cifrada'.</span>";
+                  }});
                 }} else {{
                   status.innerHTML = "<span class='sync-status err'>Meta canceló el flujo o no regresó código. Revisa permisos o configuración.</span>";
                 }}
@@ -4104,6 +4115,34 @@ def _render_knowledge_table(docs: list, bot_id: int, role: str) -> str:
 
 # --- POST ENDPOINTS FOR SAVING CLIENT CONFIGURATIONS ---
 
+@router.post("/bots/{bot_id}/whatsapp/resolve-code")
+async def client_whatsapp_resolve_code(
+    request: Request,
+    bot_id: int,
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    try:
+        body = await request.json()
+        code = (body.get("code") or "").strip()
+        if not code:
+            return JSONResponse({"ok": False, "error": "Falta el código de autorización."}, status_code=400)
+
+        token = await meta_provider.exchange_code_for_token(code)
+        details = await meta_provider.resolve_meta_details_from_token(token)
+        return JSONResponse({
+            "ok": True,
+            "access_token": token,
+            "waba_id": details.get("waba_id", ""),
+            "phone_number_id": details.get("phone_number_id", ""),
+            "display_phone_number": details.get("display_phone_number", ""),
+            "business_id": details.get("business_id", ""),
+        })
+    except Exception as exc:
+        log.exception(f"Error resolviendo código de Meta para bot {bot_id}")
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
 @router.post("/bots/{bot_id}/whatsapp/connect")
 async def client_whatsapp_connect(
     request: Request,
@@ -4112,7 +4151,7 @@ async def client_whatsapp_connect(
     access_token: str = Form(""),
     business_id: str = Form(""),
     waba_id: str = Form(""),
-    phone_number_id: str = Form(...),
+    phone_number_id: str = Form(""),
     display_phone_number: str = Form(""),
 ):
     session = _require_client_login(request)

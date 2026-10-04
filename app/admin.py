@@ -1896,7 +1896,7 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
           </div>
           <label>Business ID</label><input id="businessId" name="business_id" value="{html.escape(bot.get("business_id") or "")}">
           <label>WABA ID</label><input id="wabaId" name="waba_id" value="{html.escape(bot.get("waba_id") or "")}">
-          <label>Phone Number ID</label><input id="phoneNumberId" name="phone_number_id" value="{html.escape(bot.get("phone_number_id") or "")}" required>
+          <label>Phone Number ID</label><input id="phoneNumberId" name="phone_number_id" value="{html.escape(bot.get("phone_number_id") or "")}" placeholder="Llenado automáticamente">
           <label>Numero visible</label><input id="displayPhoneNumber" name="display_phone_number" value="{html.escape(bot.get("display_phone_number") or "")}">
           <div class="actions" style="margin-top:14px"><button class="btn" type="submit">Guardar conexion cifrada</button></div>
         </form>
@@ -1985,7 +1985,29 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
               const code = response?.authResponse?.code;
               if (code) {{
                 document.getElementById("authCode").value = code;
-                setStatus("Codigo recibido. Revisa los IDs y guarda.", "ok");
+                setStatus("Conexión autorizada por Meta. Obteniendo IDs automáticamente...", "sub");
+                
+                fetch(`/admin/bots/{bot_id}/whatsapp/resolve-code`, {{
+                  method: "POST",
+                  headers: {{ "Content-Type": "application/json" }},
+                  body: JSON.stringify({{ code: code }})
+                }})
+                .then(r => r.json())
+                .then(res => {{
+                  if (res && res.ok) {{
+                    if (res.phone_number_id) document.getElementById("phoneNumberId").value = res.phone_number_id;
+                    if (res.waba_id) document.getElementById("wabaId").value = res.waba_id;
+                    if (res.business_id) document.getElementById("businessId").value = res.business_id;
+                    if (res.display_phone_number) document.getElementById("displayPhoneNumber").value = res.display_phone_number;
+                    setStatus("¡IDs obtenidos automáticamente! Haz clic en 'Guardar conexion cifrada' para finalizar.", "ok");
+                  }} else {{
+                    setStatus("Codigo recibido. Haz clic en 'Guardar conexion cifrada' para sincronizar.", "ok");
+                  }}
+                }})
+                .catch(err => {{
+                  console.warn("Fallo resolve-code admin:", err);
+                  setStatus("Codigo recibido. Haz clic en 'Guardar conexion cifrada'.", "ok");
+                }});
               }} else {{
                 setStatus("Meta canceló el flujo o no devolvió código. Revisa permisos o configuración.", "err");
               }}
@@ -2009,6 +2031,33 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
     return HTMLResponse(_layout("Conectar WhatsApp", "bots", body, session=session))
 
 
+@router.post("/bots/{bot_id}/whatsapp/resolve-code")
+async def bot_whatsapp_resolve_code(
+    request: Request,
+    bot_id: int,
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    try:
+        body = await request.json()
+        code = (body.get("code") or "").strip()
+        if not code:
+            return JSONResponse({"ok": False, "error": "Falta el código de autorización."}, status_code=400)
+
+        token = await meta_provider.exchange_code_for_token(code)
+        details = await meta_provider.resolve_meta_details_from_token(token)
+        return JSONResponse({
+            "ok": True,
+            "access_token": token,
+            "waba_id": details.get("waba_id", ""),
+            "phone_number_id": details.get("phone_number_id", ""),
+            "display_phone_number": details.get("display_phone_number", ""),
+            "business_id": details.get("business_id", ""),
+        })
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+
 @router.post("/bots/{bot_id}/whatsapp/connect")
 async def bot_whatsapp_connect_submit(
     request: Request,
@@ -2017,7 +2066,7 @@ async def bot_whatsapp_connect_submit(
     access_token: str = Form(""),
     business_id: str = Form(""),
     waba_id: str = Form(""),
-    phone_number_id: str = Form(...),
+    phone_number_id: str = Form(""),
     display_phone_number: str = Form(""),
 ):
     session = _require_login(request)
