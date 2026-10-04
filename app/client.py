@@ -1214,6 +1214,16 @@ async def client_app(
     admin_phone_numbers = [row["phone_number"] for row in admin_phone_rows]
     admin_phone_numbers_text = "\n".join(admin_phone_numbers)
     
+    meta_app_id = (wa_info.get("meta_app_id") or config.META_APP_ID or "").strip()
+    meta_config_id = (wa_info.get("meta_config_id") or config.META_CONFIG_ID or "").strip()
+    meta_missing = []
+    if not meta_app_id:
+        meta_missing.append("META_APP_ID")
+    if not meta_config_id:
+        meta_missing.append("META_CONFIG_ID")
+    meta_ready = len(meta_missing) == 0
+    meta_missing_str = ", ".join(meta_missing)
+    
     # Check if access token is actually saved
     integration = await db.get_active_bot_integration(bot_id, "whatsapp_cloud")
     access_token_val = ""
@@ -2934,10 +2944,16 @@ async def client_app(
               </div>
             </div>
 
+            {f'''<div style="margin:14px 0; padding:12px 14px; background:#fffbeb; border:1px solid #fde68a; border-left:4px solid #f59e0b; border-radius:6px; font-size:13px; color:#92400e; line-height:1.5;">
+              <strong>⚠️ Configuración de Meta pendiente en el servidor ({html.escape(meta_missing_str)}):</strong><br>
+              Para usar el modal automático de Embedded Signup, se deben configurar estas variables en las variables de entorno de producción (Easypanel).<br>
+              <em>Alternativa:</em> Si ya cuentas con tus IDs y Token de Meta Cloud API, puedes ingresarlos y guardarlos directamente en el formulario de la derecha.
+            </div>''' if not meta_ready else ''}
+
             <div style="margin-top:16px;">
-              <button class="btn whatsapp-btn" type="button" id="launchMetaSignup">Abrir Embedded Signup de Meta</button>
+              <button class="btn whatsapp-btn" type="button" id="launchMetaSignup" {'disabled title="Falta configuración de Meta en el servidor"' if not meta_ready else ''}>Abrir Embedded Signup de Meta</button>
             </div>
-            <div id="metaSignupStatus" class="sync-status">Esperando inicio de vinculación...</div>
+            <div id="metaSignupStatus" class="sync-status">{'Falta configuración en el servidor: ' + html.escape(meta_missing_str) if not meta_ready else 'Esperando inicio de vinculación...'}</div>
           </div>
         </div>
         
@@ -2994,18 +3010,32 @@ async def client_app(
         </form>
       </div>
       
-      <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+      <div id="fb-root"></div>
       <script>
         (() => {{
-          const app_id = "{config.META_APP_ID or ""}";
-          const config_id = "{config.META_CONFIG_ID or ""}";
+          const app_id = "{meta_app_id}";
+          const config_id = "{meta_config_id}";
           const graph_ver = "{meta_provider.graph_version()}";
           const status = document.getElementById("metaSignupStatus");
-          
+          let fbInitialized = false;
+
+          function initMetaSdk() {{
+            if (!app_id || !window.FB || fbInitialized) return;
+            try {{
+              FB.init({{ appId: app_id, cookie: true, xfbml: true, version: graph_ver }});
+              fbInitialized = true;
+            }} catch (e) {{
+              console.error("Error al inicializar Meta FB SDK:", e);
+            }}
+          }}
+
           window.fbAsyncInit = function() {{
-            if (!app_id) return;
-            FB.init({{ appId: app_id, cookie: true, xfbml: true, version: graph_ver }});
+            initMetaSdk();
           }};
+
+          if (window.FB) {{
+            initMetaSdk();
+          }}
           
           window.addEventListener("message", (event) => {{
             if (!event.origin.endsWith("facebook.com")) return;
@@ -3036,33 +3066,62 @@ async def client_app(
           }});
           
           document.getElementById("launchMetaSignup")?.addEventListener("click", () => {{
-            if (!window.FB) {{
-              status.innerHTML = "<span class='sync-status err'>Meta SDK no está listo todavía. Inténtalo en un momento.</span>";
+            if (!app_id) {{
+              status.innerHTML = "<span class='sync-status err'>Falta META_APP_ID en la configuración del servidor.</span>";
               return;
             }}
+            if (!config_id) {{
+              status.innerHTML = "<span class='sync-status err'>Falta META_CONFIG_ID (ID de configuración de WhatsApp) en el servidor.</span>";
+              return;
+            }}
+            if (!window.FB) {{
+              status.innerHTML = "<span class='sync-status err'>Meta SDK no ha terminado de cargar. Si tienes un bloqueador de anuncios activo, desactívalo temporalmente y recarga la página.</span>";
+              return;
+            }}
+
+            initMetaSdk();
+
             const mode = document.querySelector('input[name="clientSignupMode"]:checked')?.value || "standard";
             const extras = mode === "coexistence"
               ? {{ featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3", setup: {{}} }}
               : {{ setup: {{}} }};
 
             status.innerHTML = "<span class='sync-status'>Abriendo Embedded Signup (" + (mode === "coexistence" ? "Coexistencia QR" : "Número Nuevo / Directo") + ")...</span>";
-            FB.login((response) => {{
-              const code = response?.authResponse?.code;
-              if (code) {{
-                document.getElementById("metaAuthCode").value = code;
-                status.innerHTML = "<span class='sync-status ok'>Vínculo inicial exitoso. Completa y guarda.</span>";
-              }} else {{
-                status.innerHTML = "<span class='sync-status err'>Meta canceló el flujo o no regresó código. Revisa permisos o configuración.</span>";
+
+            let popupResolved = false;
+            const popupTimeout = setTimeout(() => {{
+              if (!popupResolved) {{
+                status.innerHTML = "<span class='sync-status err'>¿No se abrió la ventana de Meta? Revisa si tu navegador bloqueó ventanas emergentes (Pop-ups) para este sitio y permítelas en la barra de direcciones.</span>";
               }}
-            }}, {{
-              config_id: config_id,
-              response_type: "code",
-              override_default_response_type: true,
-              extras: extras
-            }});
+            }}, 7000);
+
+            try {{
+              FB.login((response) => {{
+                popupResolved = true;
+                clearTimeout(popupTimeout);
+                const code = response?.authResponse?.code;
+                if (code) {{
+                  document.getElementById("metaAuthCode").value = code;
+                  status.innerHTML = "<span class='sync-status ok'>Vínculo inicial exitoso. Completa y guarda.</span>";
+                }} else {{
+                  status.innerHTML = "<span class='sync-status err'>Meta canceló el flujo o no regresó código. Revisa permisos o configuración.</span>";
+                }}
+              }}, {{
+                config_id: config_id,
+                response_type: "code",
+                override_default_response_type: true,
+                extras: extras
+              }});
+            }} catch (err) {{
+              popupResolved = true;
+              clearTimeout(popupTimeout);
+              console.error("Error al ejecutar FB.login:", err);
+              status.innerHTML = "<span class='sync-status err'>Error al abrir Embedded Signup: " + (err?.message || err) + ". Revisa si el navegador bloqueó la ventana emergente.</span>";
+            }}
           }});
         }})();
       </script>
+      <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
     </div>
     
     <!-- 3. TAB PANEL: COMPORTAMIENTO (PROMPT) -->

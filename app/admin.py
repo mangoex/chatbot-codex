@@ -1902,7 +1902,7 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
         </form>
       </div>
     </section>
-    <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
+    <div id="fb-root"></div>
     <script>
       (() => {{
         const settings = {json.dumps(settings)};
@@ -1911,10 +1911,26 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
           status.className = `sync-status ${{cls}}`;
           status.textContent = text;
         }};
+        let fbInitialized = false;
+
+        function initMetaSdk() {{
+          if (!settings.app_id || !window.FB || fbInitialized) return;
+          try {{
+            FB.init({{ appId: settings.app_id, cookie: true, xfbml: true, version: settings.graph_version }});
+            fbInitialized = true;
+          }} catch (e) {{
+            console.error("Error al inicializar Facebook SDK en admin:", e);
+          }}
+        }}
+
         window.fbAsyncInit = function() {{
-          if (!settings.app_id) return;
-          FB.init({{ appId: settings.app_id, cookie: true, xfbml: true, version: settings.graph_version }});
+          initMetaSdk();
         }};
+
+        if (window.FB) {{
+          initMetaSdk();
+        }}
+
         window.addEventListener("message", (event) => {{
           if (!event.origin.endsWith("facebook.com")) return;
           let data = event.data;
@@ -1943,30 +1959,52 @@ async def bot_whatsapp_connect_page(request: Request, bot_id: int, saved: str | 
           }}
         }});
         document.getElementById("launchSignup")?.addEventListener("click", () => {{
-          if (!window.FB) return setStatus("Facebook SDK no esta listo todavia.", "err");
+          if (!settings.app_id) return setStatus("Falta configurar META_APP_ID en el servidor.", "err");
+          if (!settings.config_id) return setStatus("Falta configurar META_CONFIG_ID en el servidor.", "err");
+          if (!window.FB) return setStatus("Facebook SDK no ha terminado de cargar. Si tienes un bloqueador de anuncios activo, desactívalo y recarga.", "err");
+          initMetaSdk();
+
           const mode = document.querySelector('input[name="adminSignupMode"]:checked')?.value || "standard";
           const extras = mode === "coexistence"
             ? {{ featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3", setup: {{}} }}
             : {{ setup: {{}} }};
 
           setStatus("Abriendo Embedded Signup (" + (mode === "coexistence" ? "Coexistencia QR" : "Número Nuevo / Directo") + ")...", "sub");
-          FB.login((response) => {{
-            const code = response?.authResponse?.code;
-            if (code) {{
-              document.getElementById("authCode").value = code;
-              setStatus("Codigo recibido. Revisa los IDs y guarda.", "ok");
-            }} else {{
-              setStatus("Meta no devolvio codigo. Revisa permisos o configuracion.", "err");
+
+          let popupResolved = false;
+          const popupTimeout = setTimeout(() => {{
+            if (!popupResolved) {{
+              setStatus("¿No se abrió la ventana de Meta? Revisa si tu navegador bloqueó ventanas emergentes (Pop-ups) para este sitio y permítelas.", "err");
             }}
-          }}, {{
-            config_id: settings.config_id,
-            response_type: "code",
-            override_default_response_type: true,
-            extras: extras
-          }});
+          }}, 7000);
+
+          try {{
+            FB.login((response) => {{
+              popupResolved = true;
+              clearTimeout(popupTimeout);
+              const code = response?.authResponse?.code;
+              if (code) {{
+                document.getElementById("authCode").value = code;
+                setStatus("Codigo recibido. Revisa los IDs y guarda.", "ok");
+              }} else {{
+                setStatus("Meta canceló el flujo o no devolvió código. Revisa permisos o configuración.", "err");
+              }}
+            }}, {{
+              config_id: settings.config_id,
+              response_type: "code",
+              override_default_response_type: true,
+              extras: extras
+            }});
+          }} catch (err) {{
+            popupResolved = true;
+            clearTimeout(popupTimeout);
+            console.error("Error al ejecutar FB.login en admin:", err);
+            setStatus("Error al abrir ventana de Meta: " + (err?.message || err), "err");
+          }}
         }});
       }})();
     </script>
+    <script async defer crossorigin="anonymous" src="https://connect.facebook.net/en_US/sdk.js"></script>
     """
     return HTMLResponse(_layout("Conectar WhatsApp", "bots", body, session=session))
 
