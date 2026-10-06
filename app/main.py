@@ -18,6 +18,7 @@ from app import (
     admin,
     admin_tools,
     agenda_guard,
+    api,
     audio_transcriber,
     automations,
     bot_content,
@@ -113,6 +114,7 @@ app.include_router(admin.router)
 app.include_router(admin_tools.router)
 app.include_router(client.router)
 app.include_router(public_pages.router)
+app.include_router(api.router)
 
 
 @app.get("/health")

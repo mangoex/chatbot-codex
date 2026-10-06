@@ -3682,8 +3682,19 @@ async def client_app(
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
             </div>
-            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Secreto que Grok debe enviar para autorizar la respuesta hacia WhatsApp.</span>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Secreto que Grok debe enviar para autorizar la respuesta hacia WhatsApp y para consumir la API REST.</span>
             
+            <div style="margin-top:12px; padding:12px; background:var(--bg-card-subtle, #f8fafc); border-radius:8px; border:1px solid var(--border-color, #e2e8f0); font-size:12px;">
+              <strong style="color:var(--text-main, #0f172a);">Endpoints REST para Grok Bot / Prospección Externa:</strong>
+              <p style="margin:4px 0 6px 0; color:var(--muted, #64748b);">Grok puede autenticarse con el Secreto de Validación (enviándolo en el encabezado <code>X-API-Key</code> o <code>Authorization: Bearer</code>) para:</p>
+              <ul style="margin:0 0 0 16px; padding:0; color:var(--muted, #64748b); line-height:1.5;">
+                <li><strong>Cargar prospectos:</strong> <code>POST /api/v1/bots/{bot_id}/contacts/batch</code></li>
+                <li><strong>Lanzar campañas WhatsApp:</strong> <code>POST /api/v1/bots/{bot_id}/campaigns</code></li>
+                <li><strong>Ver plantillas aprobadas:</strong> <code>GET /api/v1/bots/{bot_id}/templates</code></li>
+                <li><strong>Documentación interactiva:</strong> <a href="/docs" target="_blank" style="color:var(--primary, #0284c7); text-decoration:underline;">Explorar Swagger UI (/docs)</a></li>
+              </ul>
+            </div>
+
             <div style="margin-top:20px; display:flex; gap:10px;">
               <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar Grok Bot</button>
             </div>
