@@ -2050,30 +2050,78 @@ async def client_app(
         broadcast_selected_count = len(selected_ids_list)
         selected_wa_ids_str = broadcast_selected
 
+    import base64
     broadcast_rows = ""
     for b in broadcasts:
         b_status = b["status"].upper()
-        badge_class = "success" if b_status == "COMPLETED" else ("warning" if b_status == "RUNNING" else ("danger" if b_status == "FAILED" else "info"))
-        b_status_label = "Completada" if b_status == "COMPLETED" else ("Enviando..." if b_status == "RUNNING" else ("Fallida" if b_status == "FAILED" else b["status"]))
-        
         total = b["total_recipients"] or 0
         sent = b["sent_count"] or 0
         failed = b["failed_count"] or 0
+        last_error = (b.get("last_error") or "").strip()
+        
+        if b_status == "COMPLETED":
+            if failed > 0 and sent == 0:
+                badge_class = "danger"
+                b_status_label = "Rechazada / Con fallos"
+            elif failed > 0 and sent > 0:
+                badge_class = "warning"
+                b_status_label = "Parcialmente enviada"
+            else:
+                badge_class = "success"
+                b_status_label = "Completada"
+        elif b_status == "RUNNING":
+            badge_class = "warning"
+            b_status_label = "Enviando..."
+        elif b_status == "FAILED":
+            badge_class = "danger"
+            b_status_label = "Fallida"
+        else:
+            badge_class = "info"
+            b_status_label = b["status"]
+        
         progress_pct = int(min(100, (sent + failed) * 100 / total)) if total > 0 else 0
         
         scheduled_label = ""
         if b.get("scheduled_at") and b_status == "PENDING":
             scheduled_label = f'<br><small style="color:var(--primary); font-weight:600;">📅 Programada: {_fmt_dt(b.get("scheduled_at"))}</small>'
         
+        # Meta error display
+        error_html = ""
+        if failed > 0 or last_error:
+            display_err = last_error or "Error desconocido al procesar plantilla con Meta WhatsApp API"
+            err_b64 = base64.b64encode(display_err.encode("utf-8")).decode("utf-8")
+            b_name_b64 = base64.b64encode(b["name"].encode("utf-8")).decode("utf-8")
+            b_tpl_b64 = base64.b64encode(b["template_name"].encode("utf-8")).decode("utf-8")
+            error_html = f"""
+            <div style="margin-top:6px; background:#fff1f2; border:1px solid #fecdd3; border-radius:5px; padding:6px 8px; font-size:11px; color:#9f1239; line-height:1.35;">
+              <div style="display:flex; align-items:flex-start; gap:5px;">
+                <span style="font-size:12px; flex-shrink:0;">⚠️</span>
+                <div style="flex:1; word-break:break-word;">
+                  <strong>Error de Meta:</strong> {html.escape(_clip(display_err, 120))}
+                  <button type="button" class="btn" onclick="showCampaignErrorModal('{b["id"]}', '{b_name_b64}', '{b_tpl_b64}', '{err_b64}')" style="background:#fee2e2; border:1px solid #f87171; color:#991b1b; padding:1px 6px; font-size:10.5px; border-radius:4px; font-weight:600; cursor:pointer; margin-top:3px; display:inline-block;">Ver detalle</button>
+                </div>
+              </div>
+            </div>
+            """
+
+        header_badge_html = ""
+        if b.get("header_media_url"):
+            h_type_label = (b.get("header_type") or "imagen").upper()
+            header_badge_html = f'<br><small style="font-size:10.5px; color:#0284c7; font-weight:600; display:inline-flex; align-items:center; gap:3px;">🖼️ Encabezado: {html.escape(h_type_label)}</small>'
+        
         broadcast_rows += f"""
         <tr>
-          <td style="font-weight:600; font-size:13px; color:var(--ink);">{html.escape(b["name"])}</td>
+          <td style="font-weight:600; font-size:13px; color:var(--ink);">
+            {html.escape(b["name"])}
+            {header_badge_html}
+          </td>
           <td><code>{html.escape(b["template_name"])}</code></td>
-          <td style="font-size:12px;"><strong>{sent + failed}</strong> / {total} <span class="muted-text">({progress_pct}%)</span><br>
+          <td style="font-size:12px; min-width:200px;"><strong>{sent + failed}</strong> / {total} <span class="muted-text">({progress_pct}%)</span><br>
             <div style="width:100%; background:#e2e8f0; height:6px; border-radius:3px; overflow:hidden; margin-top:4px;">
-              <div style="width:{progress_pct}%; background:var(--primary); height:100%;"></div>
+              <div style="width:{progress_pct}%; background:{"var(--red)" if (failed > 0 and sent == 0) else "var(--primary)"}; height:100%;"></div>
             </div>
             <small style="color:var(--green); font-weight:600;">{sent} exitosos</small> | <small style="color:var(--red); font-weight:600;">{failed} fallidos</small>
+            {error_html}
           </td>
           <td><span class="badge {badge_class}" style="font-size:11px;">{html.escape(b_status_label)}</span>{scheduled_label}</td>
           <td style="font-size:11.5px; color:var(--muted);">{_fmt_dt(b.get("created_at"))}</td>
@@ -2251,6 +2299,20 @@ async def client_app(
                   {template_options}
                 </select>
                 
+                <!-- Header Media Container -->
+                <div id="campaignHeaderContainer" style="display:none; margin-bottom:18px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:14px;">
+                  <label style="font-weight:700; margin-bottom:4px; display:flex; align-items:center; gap:6px; color:#0369a1;">
+                    <span>🖼️ Encabezado de la Plantilla (HEADER)</span>
+                    <span id="campaignHeaderBadge" class="badge" style="font-size:10px; background:#0284c7; color:#fff;">IMAGEN</span>
+                  </label>
+                  <p id="campaignHeaderDesc" class="muted-text" style="font-size:12px; margin-top:2px; margin-bottom:10px; color:#0c4a6e;">
+                    Esta plantilla requiere una imagen de encabezado para enviarse por WhatsApp. Ingresa la URL pública de la imagen:
+                  </p>
+                  <input type="url" name="header_media_url" id="campaignHeaderMediaUrl" placeholder="https://ejemplo.com/portada.jpg" style="margin-bottom:6px; background:#fff;" oninput="onHeaderMediaChanged('campaign')">
+                  <input type="hidden" name="header_type" id="campaignHeaderType" value="">
+                  <small style="font-size:11px; color:#0369a1; display:block;">💡 Tip: Ingresa un enlace público directo a una imagen JPG o PNG. Esta imagen encabezará el mensaje en WhatsApp.</small>
+                </div>
+                
                 <!-- Dynamic Variables Container -->
                 <div id="campaignVarsContainer" style="display:none; margin-bottom:20px;">
                   <label style="font-weight:700; margin-bottom:8px; display:block;">Mapear Variables Dinámicas</label>
@@ -2276,13 +2338,26 @@ async def client_app(
                 </h3>
               </div>
               <div style="background:#e5ddd5; padding:16px; border-radius:6px; min-height:100px; position:relative; font-family:\'Inter\', sans-serif;">
-                <div style="background:#ffffff; padding:10px 12px; border-radius:6px; max-width:90%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 0.5px rgba(0,0,0,0.13); position:relative;">
-                  <span id="campaignTemplateText" style="word-break: break-word; color:#333;">Selecciona una plantilla para previsualizar el cuerpo...</span>
-                  <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+                <div style="background:#ffffff; border-radius:8px; max-width:92%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 1px rgba(0,0,0,0.13); position:relative; overflow:hidden;">
+                  
+                  <!-- HEADER preview area -->
+                  <div id="campaignPreviewHeader" style="display:none; width:100%; overflow:hidden; border-radius:8px 8px 0 0;"></div>
+                  
+                  <!-- BODY and TEXT HEADER area -->
+                  <div style="padding:10px 12px 6px 12px;">
+                    <div id="campaignPreviewHeaderText" style="display:none; font-weight:700; font-size:14px; color:#111827; margin-bottom:6px;"></div>
+                    <span id="campaignTemplateText" style="word-break: break-word; color:#333;">Selecciona una plantilla para previsualizar el cuerpo...</span>
+                    <div id="campaignPreviewFooter" style="display:none; font-size:11px; color:#667781; margin-top:6px;"></div>
+                    <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+                  </div>
+                  
+                  <!-- BUTTONS preview area -->
+                  <div id="campaignPreviewButtons" style="display:none; border-top:1px solid #f0f2f5;"></div>
+                  
                 </div>
               </div>
               <div style="margin-top:14px; font-size:12px; color:#0369a1;">
-                <strong>Nota:</strong> Los destinatarios recibirán el mensaje reemplazando cada variable con sus datos correspondientes. Si la variable está mapeada al Nombre, se reemplazará por su nombre real guardado en el directorio.
+                <strong>Nota:</strong> Los destinatarios recibirán el mensaje con su encabezado y variables correspondientes. Si la variable está mapeada al Nombre, se reemplazará por su nombre real guardado en el directorio.
               </div>
             </div>
             
@@ -2417,6 +2492,20 @@ async def client_app(
                   {template_options}
                 </select>
 
+                <!-- Header Media Container for Trigger -->
+                <div id="triggerHeaderContainer" style="display:none; margin-bottom:18px; background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:14px;">
+                  <label style="font-weight:700; margin-bottom:4px; display:flex; align-items:center; gap:6px; color:#0369a1;">
+                    <span>🖼️ Encabezado de la Plantilla (HEADER)</span>
+                    <span id="triggerHeaderBadge" class="badge" style="font-size:10px; background:#0284c7; color:#fff;">IMAGEN</span>
+                  </label>
+                  <p id="triggerHeaderDesc" class="muted-text" style="font-size:12px; margin-top:2px; margin-bottom:10px; color:#0c4a6e;">
+                    Esta plantilla requiere una imagen de encabezado para enviarse por WhatsApp. Ingresa la URL pública de la imagen:
+                  </p>
+                  <input type="url" name="header_media_url" id="triggerHeaderMediaUrl" placeholder="https://ejemplo.com/portada.jpg" style="margin-bottom:6px; background:#fff;" oninput="onHeaderMediaChanged('trigger')">
+                  <input type="hidden" name="header_type" id="triggerHeaderType" value="">
+                  <small style="font-size:11px; color:#0369a1; display:block;">💡 Tip: Ingresa un enlace directo a una imagen pública (JPG o PNG).</small>
+                </div>
+
                 <!-- Dynamic Variables Container for Trigger -->
                 <div id="triggerVarsContainer" style="display:none; margin-bottom:20px;">
                   <label style="font-weight:700; margin-bottom:8px; display:block;">Mapear Variables Dinámicas</label>
@@ -2440,9 +2529,22 @@ async def client_app(
                 </h3>
               </div>
               <div style="background:#e5ddd5; padding:16px; border-radius:6px; min-height:100px; position:relative; font-family:\'Inter\', sans-serif;">
-                <div style="background:#ffffff; padding:10px 12px; border-radius:6px; max-width:90%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 0.5px rgba(0,0,0,0.13); position:relative;">
-                  <span id="triggerTemplateText" style="word-break: break-word; color:#333;">Selecciona una plantilla para previsualizar el cuerpo...</span>
-                  <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+                <div style="background:#ffffff; border-radius:8px; max-width:92%; font-size:13px; line-height:1.4; color:#000000; box-shadow:0 1px 1px rgba(0,0,0,0.13); position:relative; overflow:hidden;">
+                  
+                  <!-- HEADER preview area -->
+                  <div id="triggerPreviewHeader" style="display:none; width:100%; overflow:hidden; border-radius:8px 8px 0 0;"></div>
+                  
+                  <!-- BODY and TEXT HEADER area -->
+                  <div style="padding:10px 12px 6px 12px;">
+                    <div id="triggerPreviewHeaderText" style="display:none; font-weight:700; font-size:14px; color:#111827; margin-bottom:6px;"></div>
+                    <span id="triggerTemplateText" style="word-break: break-word; color:#333;">Selecciona una plantilla para previsualizar el cuerpo...</span>
+                    <div id="triggerPreviewFooter" style="display:none; font-size:11px; color:#667781; margin-top:6px;"></div>
+                    <div style="text-align:right; font-size:10px; color:#a0a0a0; margin-top:4px;">12:00 PM</div>
+                  </div>
+                  
+                  <!-- BUTTONS preview area -->
+                  <div id="triggerPreviewButtons" style="display:none; border-top:1px solid #f0f2f5;"></div>
+                  
                 </div>
               </div>
               <div style="margin-top:14px; font-size:12px; color:#0369a1;">
@@ -2572,19 +2674,124 @@ async def client_app(
           const previewText = document.getElementById(`${{prefix}}TemplateText`);
           const langCodeInput = document.getElementById(`${{prefix}}LangCode`);
           const varsCountInput = document.getElementById(`${{prefix}}VarsCountInput`);
+
+          // Header Media elements
+          const headerContainer = document.getElementById(`${{prefix}}HeaderContainer`);
+          const headerBadge = document.getElementById(`${{prefix}}HeaderBadge`);
+          const headerDesc = document.getElementById(`${{prefix}}HeaderDesc`);
+          const headerMediaUrlInput = document.getElementById(`${{prefix}}HeaderMediaUrl`);
+          const headerTypeInput = document.getElementById(`${{prefix}}HeaderType`);
+          const previewHeader = document.getElementById(`${{prefix}}PreviewHeader`);
+          const previewHeaderText = document.getElementById(`${{prefix}}PreviewHeaderText`);
+          const previewFooter = document.getElementById(`${{prefix}}PreviewFooter`);
+          const previewButtons = document.getElementById(`${{prefix}}PreviewButtons`);
           
           if (!selectedTpl) return;
           
           if (langCodeInput) {{
             langCodeInput.value = selectedTpl.language || "es_MX";
           }}
+
+          // 1. HEADER COMPONENT HANDLING
+          const comps = selectedTpl.components || [];
+          const headerComp = comps.find(c => (c.type || '').toUpperCase() === 'HEADER');
+
+          if (headerComp) {{
+            const format = (headerComp.format || 'TEXT').toUpperCase();
+            if (headerTypeInput) headerTypeInput.value = format.toLowerCase();
+
+            if (format === 'IMAGE') {{
+              if (headerContainer) headerContainer.style.display = 'block';
+              if (headerBadge) {{ headerBadge.innerText = 'IMAGEN'; headerBadge.className = 'badge'; headerBadge.style.cssText = 'font-size:10px; background:#0284c7; color:#fff;'; }}
+              if (headerDesc) headerDesc.innerText = 'Esta plantilla requiere una imagen de encabezado (HEADER) para enviarse por WhatsApp. Ingresa la URL pública de la imagen:';
+              if (headerMediaUrlInput) {{
+                headerMediaUrlInput.required = true;
+                if (headerComp.example && headerComp.example.header_url && headerComp.example.header_url[0]) {{
+                  headerMediaUrlInput.value = headerComp.example.header_url[0];
+                }}
+              }}
+              if (previewHeader) {{
+                previewHeader.style.display = 'block';
+                const curVal = headerMediaUrlInput ? headerMediaUrlInput.value.trim() : '';
+                if (curVal) {{
+                  previewHeader.innerHTML = `<img src="${{curVal}}" style="width:100%; max-height:220px; object-fit:cover; display:block;" onerror="this.parentElement.innerHTML='<div style=\\\'background:#fee2e2; color:#991b1b; padding:12px; font-size:11.5px; text-align:center;\\\'>⚠️ No se pudo cargar la imagen desde la URL.</div>'">`;
+                }} else {{
+                  previewHeader.innerHTML = `
+                    <div style="background:#f1f5f9; border-bottom:1px dashed #cbd5e1; padding:22px 14px; text-align:center; color:#64748b; font-size:12px; display:flex; flex-direction:column; align-items:center; gap:6px;">
+                      <svg style="width:28px; height:28px; color:#94a3b8;" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                      <strong>[ Imagen de encabezado requerida ]</strong>
+                      <span style="font-size:11px; color:#94a3b8;">Ingresa la URL en el formulario de la izquierda</span>
+                    </div>
+                  `;
+                }}
+              }}
+              if (previewHeaderText) previewHeaderText.style.display = 'none';
+            }} else if (format === 'VIDEO' || format === 'DOCUMENT') {{
+              if (headerContainer) headerContainer.style.display = 'block';
+              if (headerBadge) {{ headerBadge.innerText = format; headerBadge.className = 'badge'; headerBadge.style.cssText = 'font-size:10px; background:#0284c7; color:#fff;'; }}
+              if (headerDesc) headerDesc.innerText = `Esta plantilla requiere un archivo multimedia (${{format}}) de encabezado para enviarse. Ingresa la URL pública:`;
+              if (headerMediaUrlInput) headerMediaUrlInput.required = true;
+              if (previewHeader) {{
+                previewHeader.style.display = 'block';
+                const icon = format === 'VIDEO' ? '🎥' : '📄';
+                previewHeader.innerHTML = `<div style="background:#f8fafc; border-bottom:1px solid #e2e8f0; padding:16px; text-align:center; font-size:12px; font-weight:600; color:#475569;">${{icon}} [ Encabezado: ${{format}} ]</div>`;
+              }}
+              if (previewHeaderText) previewHeaderText.style.display = 'none';
+            }} else if (format === 'TEXT') {{
+              if (headerContainer) headerContainer.style.display = 'none';
+              if (headerMediaUrlInput) {{ headerMediaUrlInput.required = false; headerMediaUrlInput.value = ''; }}
+              if (previewHeader) {{ previewHeader.style.display = 'none'; previewHeader.innerHTML = ''; }}
+              if (previewHeaderText) {{
+                previewHeaderText.style.display = 'block';
+                previewHeaderText.innerText = headerComp.text || '';
+              }}
+            }}
+          }} else {{
+            if (headerContainer) headerContainer.style.display = 'none';
+            if (headerMediaUrlInput) {{ headerMediaUrlInput.required = false; headerMediaUrlInput.value = ''; }}
+            if (headerTypeInput) headerTypeInput.value = '';
+            if (previewHeader) {{ previewHeader.style.display = 'none'; previewHeader.innerHTML = ''; }}
+            if (previewHeaderText) previewHeaderText.style.display = 'none';
+          }}
           
-          const bodyComp = selectedTpl.components.find(c => c.type === 'BODY');
+          // 2. BODY COMPONENT HANDLING
+          const bodyComp = comps.find(c => (c.type || '').toUpperCase() === 'BODY');
           const bodyText = bodyComp ? bodyComp.text : "";
           if (previewText) {{
             previewText.innerHTML = bodyText.replace(/\\n/g, '<br>');
           }}
+
+          // 3. FOOTER COMPONENT HANDLING
+          const footerComp = comps.find(c => (c.type || '').toUpperCase() === 'FOOTER');
+          if (previewFooter) {{
+            if (footerComp && footerComp.text) {{
+              previewFooter.style.display = 'block';
+              previewFooter.innerText = footerComp.text;
+            }} else {{
+              previewFooter.style.display = 'none';
+              previewFooter.innerText = '';
+            }}
+          }}
+
+          // 4. BUTTONS COMPONENT HANDLING
+          const buttonsComp = comps.find(c => (c.type || '').toUpperCase() === 'BUTTONS');
+          if (previewButtons) {{
+            if (buttonsComp && buttonsComp.buttons && buttonsComp.buttons.length > 0) {{
+              previewButtons.style.display = 'block';
+              previewButtons.innerHTML = buttonsComp.buttons.map(btn => {{
+                const icon = btn.type === 'PHONE_NUMBER' ? '📞' : (btn.type === 'QUICK_REPLY' ? '💬' : '🔗');
+                return `<div style="padding:8px 12px; text-align:center; color:#0284c7; font-weight:600; font-size:12.5px; border-top:1px solid #f1f5f9; display:flex; align-items:center; justify-content:center; gap:6px;">
+                  <span>${{icon}}</span>
+                  <span>${{btn.text || 'Botón'}}</span>
+                </div>`;
+              }}).join('');
+            }} else {{
+              previewButtons.style.display = 'none';
+              previewButtons.innerHTML = '';
+            }}
+          }}
           
+          // 5. BODY DYNAMIC VARIABLES
           const regex = /\\{{\\s*(\\d+)\\s*\\}}/g;
           let match;
           const vars = new Set();
@@ -2619,6 +2826,17 @@ async def client_app(
             }});
           }} else {{
             variablesContainer.style.display = "none";
+          }}
+        }}
+
+        function onHeaderMediaChanged(prefix) {{
+          const input = document.getElementById(`${{prefix}}HeaderMediaUrl`);
+          const previewHeader = document.getElementById(`${{prefix}}PreviewHeader`);
+          if (!input || !previewHeader) return;
+          const url = input.value.trim();
+          if (url) {{
+            previewHeader.style.display = 'block';
+            previewHeader.innerHTML = `<img src="${{url}}" style="width:100%; max-height:220px; object-fit:cover; display:block;" onerror="this.parentElement.innerHTML='<div style=\\\'background:#fee2e2; color:#991b1b; padding:12px; font-size:11.5px; text-align:center;\\\'>⚠️ No se pudo cargar la imagen desde la URL.</div>'">`;
           }}
         }}
         
@@ -2674,7 +2892,7 @@ async def client_app(
                 <line x1="12" y1="8" x2="12.01" y2="8"></line>
               </svg>
               <div style="font-size: 12px; color: #92400e; line-height: 1.4;">
-                <strong>Nota sobre la edición:</strong> De acuerdo con las políticas de Meta, las plantillas aprobadas o en revisión no se pueden modificar directamente para no interrumpir campañas activas. Si necesitas hacer cambios, por favor crea una nueva plantilla en el panel lateral (ej. agregando un sufijo como <code>_v2</code> al nombre).
+                <strong>Nota sobre la edición:</strong> De acuerdo con las políticas de Meta, las plantillas aprobadas no se pueden modificar directamente para no interrumpir campañas activas. Si necesitas cambios, crea una nueva plantilla (ej. con sufijo <code>_v2</code>).
               </div>
             </div>
           </div>
@@ -2684,7 +2902,104 @@ async def client_app(
         </div>
       </div>
 
+      <!-- Modal para ver error de campaña devuelto por Meta -->
+      <div id="campaignErrorModal" class="modal-overlay" onclick="closeCampaignErrorModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()" style="max-width:560px;">
+          <div class="modal-header" style="background:#fff1f2; border-bottom:1px solid #fecdd3;">
+            <h3 id="modalCampaignErrTitle" style="color:#9f1239; margin:0; font-size:16px; display:flex; align-items:center; gap:8px;">
+              <span>⚠️</span> Detalle del Error de Meta WhatsApp API
+            </h3>
+            <button class="modal-close-btn" onclick="closeCampaignErrorModal(event)">&times;</button>
+          </div>
+          <div class="modal-body" style="max-height: 70vh; overflow-y: auto; padding:20px;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom: 16px;">
+              <div>
+                <span class="muted-text" style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--muted); display:block;">Campaña</span>
+                <strong id="modalCampaignErrName" style="font-size:13px; color:var(--ink);">-</strong>
+              </div>
+              <div>
+                <span class="muted-text" style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--muted); display:block;">Plantilla Meta</span>
+                <code id="modalCampaignErrTpl" style="font-size:12px;">-</code>
+              </div>
+            </div>
+            
+            <div style="margin-bottom:16px;">
+              <span class="muted-text" style="font-size:11px; text-transform:uppercase; font-weight:700; color:var(--muted); display:block; margin-bottom:6px;">Mensaje de Error devuelto por Meta</span>
+              <div id="modalCampaignErrRaw" style="background:#0f172a; color:#f87171; padding:12px 14px; border-radius:6px; font-family:monospace; font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-word; max-height:180px; overflow-y:auto; border:1px solid #334155;">-</div>
+            </div>
+
+            <div id="modalCampaignErrHelp" style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; padding:14px; font-size:12.5px; line-height:1.5;">
+              <!-- Guía de resolución inyectada dinámicamente -->
+            </div>
+          </div>
+          <div class="modal-footer" style="padding:12px 20px;">
+            <button class="btn secondary" onclick="closeCampaignErrorModal(event)" style="padding: 6px 16px; font-size:13px;">Cerrar</button>
+          </div>
+        </div>
+      </div>
+
       <script>
+        function showCampaignErrorModal(id, nameB64, tplB64, errB64) {{
+          try {{
+            const name = atob(nameB64);
+            const tpl = atob(tplB64);
+            const err = atob(errB64);
+            document.getElementById('modalCampaignErrName').innerText = name;
+            document.getElementById('modalCampaignErrTpl').innerText = tpl;
+            document.getElementById('modalCampaignErrRaw').innerText = err;
+            
+            const helpEl = document.getElementById('modalCampaignErrHelp');
+            const lowerErr = err.toLowerCase();
+            
+            if (lowerErr.includes('expected image') || (lowerErr.includes('image') && lowerErr.includes('header')) || lowerErr.includes("param template['components']")) {{
+              helpEl.style.background = '#eff6ff';
+              helpEl.style.borderColor = '#bfdbfe';
+              helpEl.style.color = '#1e40af';
+              helpEl.innerHTML = `
+                <div style="font-weight:700; margin-bottom:4px; font-size:13px;">💡 Diagnóstico y Solución: Encabezado de Imagen (HEADER)</div>
+                Esta plantilla (<code>${{tpl}}</code>) fue creada en Meta con un <strong>encabezado multimedia de IMAGEN</strong>.<br><br>
+                Al crear la campaña en Asistto, debes completar el campo <strong>"Encabezado de la Plantilla (HEADER)"</strong> con la URL pública directa de la imagen (JPG/PNG). Si no se proporciona la URL de la imagen, Meta rechaza automáticamente el envío.
+              `;
+            }} else if (lowerErr.includes('oauthexception') || lowerErr.includes('token') || lowerErr.includes('190')) {{
+              helpEl.style.background = '#fefce8';
+              helpEl.style.borderColor = '#fef08a';
+              helpEl.style.color = '#854d0e';
+              helpEl.innerHTML = `
+                <div style="font-weight:700; margin-bottom:4px; font-size:13px;">💡 Diagnóstico y Solución: Token de Meta Expirado</div>
+                El token de acceso a la API de WhatsApp Cloud caducó o no cuenta con los permisos necesarios. Dirígete a la pestaña <strong>Conectar WhatsApp</strong> para refrescar la autenticación.
+              `;
+            }} else if (lowerErr.includes('131026') || lowerErr.includes('undeliverable') || lowerErr.includes('payment')) {{
+              helpEl.style.background = '#fefce8';
+              helpEl.style.borderColor = '#fef08a';
+              helpEl.style.color = '#854d0e';
+              helpEl.innerHTML = `
+                <div style="font-weight:700; margin-bottom:4px; font-size:13px;">💡 Diagnóstico y Solución: Entrega de Mensaje o Facturación</div>
+                Meta no pudo entregar el mensaje o la cuenta de WhatsApp Business requiere verificar el método de pago en el Administrador Comercial de Meta (Business Manager).
+              `;
+            }} else {{
+              helpEl.style.background = '#f8fafc';
+              helpEl.style.borderColor = '#e2e8f0';
+              helpEl.style.color = '#334155';
+              helpEl.innerHTML = `
+                <div style="font-weight:700; margin-bottom:4px; font-size:13px;">💡 Diagnóstico de Meta API</div>
+                Meta reportó el fallo detallado arriba. Verifica los parámetros mapeados y que los números destinatarios sean cuentas activas de WhatsApp.
+              `;
+            }}
+            
+            const modal = document.getElementById('campaignErrorModal');
+            if (modal) modal.classList.add('active');
+          }} catch(e) {{
+            console.error(e);
+            alert('Error al desplegar detalle del error: ' + e);
+          }}
+        }}
+
+        function closeCampaignErrorModal(event) {{
+          if (event) event.preventDefault();
+          const modal = document.getElementById('campaignErrorModal');
+          if (modal) modal.classList.remove('active');
+        }}
+
         function showTemplateDetailsB64(b64Str) {{
           try {{
             const t = JSON.parse(atob(b64Str));
@@ -2716,7 +3031,16 @@ async def client_app(
                 let content = c.text || '';
                 
                 if (type === 'HEADER') {{
-                  label = 'Encabezado';
+                  const fmt = (c.format || 'TEXT').toUpperCase();
+                  label = `Encabezado (${{fmt}})`;
+                  if (fmt === 'IMAGE') {{
+                    content = '[Imagen multimedia obligatoria en WhatsApp]';
+                    if (c.example && c.example.header_handle) {{
+                      content += `\nHandle: ${{c.example.header_handle[0]}}`;
+                    }}
+                  }} else if (fmt === 'VIDEO' || fmt === 'DOCUMENT') {{
+                    content = `[Archivo multimedia ${{fmt}} obligatorio en WhatsApp]`;
+                  }}
                 }} else if (type === 'BODY') {{
                   label = 'Cuerpo';
                 }} else if (type === 'FOOTER') {{
@@ -5540,7 +5864,9 @@ async def process_broadcast_queue(broadcast_id: int, bot_id: int) -> None:
             
         template_name = broadcast["template_name"]
         lang_code = broadcast["language_code"]
-        mappings = json.loads(broadcast["variable_mappings"])
+        mappings = json.loads(broadcast["variable_mappings"]) if isinstance(broadcast.get("variable_mappings"), str) else (broadcast.get("variable_mappings") or [])
+        header_type = broadcast.get("header_type")
+        header_media_url = broadcast.get("header_media_url")
         
         while True:
             # Obtener lote de 50 destinatarios pendientes
@@ -5591,6 +5917,8 @@ async def process_broadcast_queue(broadcast_id: int, bot_id: int) -> None:
                         template_name=template_name,
                         language_code=lang_code,
                         parameters=resolved_params,
+                        header_type=header_type,
+                        header_media_url=header_media_url,
                     )
                     await db.update_broadcast_recipient_status(recipient_id, "sent")
                 except Exception as exc:
@@ -5599,12 +5927,24 @@ async def process_broadcast_queue(broadcast_id: int, bot_id: int) -> None:
                     
                 await asyncio.sleep(0.1)
                 
-        # Finalizar campaña
-        await db.update_broadcast_status(broadcast_id, "completed")
-        log.info(f"Procesamiento de campaña {broadcast_id} completado con éxito.")
+        # Finalizar campaña: verificar si todos fallaron o si hubo envíos exitosos
+        final_b = await db.get_broadcast(broadcast_id, bot_id)
+        if final_b and final_b.get("sent_count", 0) == 0 and final_b.get("failed_count", 0) > 0:
+            await db.update_broadcast_status(broadcast_id, "failed")
+            log.info(f"Procesamiento de campaña {broadcast_id} finalizado con fallos totales (failed_count={final_b.get('failed_count')}).")
+        else:
+            await db.update_broadcast_status(broadcast_id, "completed")
+            log.info(f"Procesamiento de campaña {broadcast_id} completado con éxito.")
     except Exception as exc:
         log.error(f"Error en worker de campaña masiva {broadcast_id}: {exc}")
-        await db.update_broadcast_status(broadcast_id, "failed")
+        await db.update_broadcast_status(broadcast_id, "failed", last_error=str(exc))
+
+
+def _clean_form_str(v: Any, default: str | None = None) -> str | None:
+    if v is None or hasattr(v, "default"):
+        return default
+    s = str(v).strip()
+    return s if s else default
 
 
 @router.post("/bots/{bot_id}/campaigns/create")
@@ -5621,6 +5961,8 @@ async def client_campaigns_create(
     scheduled_at: str = Form(None),
     vars_count: int = Form(0),
     confirm_send: str = Form(""),
+    header_type: str = Form(None),
+    header_media_url: str = Form(None),
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
@@ -5690,6 +6032,10 @@ async def client_campaigns_create(
             log.warning(f"No se pudo parsear scheduled_at '{scheduled_at}': {exc}")
             
     try:
+        clean_header_type = _clean_form_str(header_type)
+        if clean_header_type:
+            clean_header_type = clean_header_type.lower()
+        clean_header_url = _clean_form_str(header_media_url)
         broadcast_kwargs = {
             "bot_id": bot_id,
             "name": campaign_name.strip(),
@@ -5697,6 +6043,8 @@ async def client_campaigns_create(
             "language_code": language_code,
             "variable_mappings": variable_mappings,
             "recipients": recipients_list,
+            "header_type": clean_header_type,
+            "header_media_url": clean_header_url,
         }
         if parsed_scheduled_at is not None:
             broadcast_kwargs["scheduled_at"] = parsed_scheduled_at
@@ -5732,6 +6080,8 @@ async def client_trigger_create(
     audience_type: str = Form("all"),
     audience_val: str = Form(""),
     vars_count: int = Form(0),
+    header_type: str = Form(None),
+    header_media_url: str = Form(None),
 ):
     """Crea una nueva regla de automatización y disparador de plantilla."""
     session = _require_client_login(request)
@@ -5775,9 +6125,17 @@ async def client_trigger_create(
         trigger_config["time_of_day"] = weekly_time_str
         trigger_config["audience_type"] = audience_type_str
         trigger_config["audience_val"] = audience_val_str
+
+    clean_header_type = _clean_form_str(header_type)
+    if clean_header_type:
+        trigger_config["header_type"] = clean_header_type.lower()
+    clean_header_url = _clean_form_str(header_media_url)
+    if clean_header_url:
+        trigger_config["header_media_url"] = clean_header_url
         
     variable_mappings = []
-    for i in range(1, vars_count + 1):
+    vars_count_val = int(_clean_val(vars_count, "0") or 0)
+    for i in range(1, vars_count_val + 1):
         map_type = form_data.get(f"var_map_type_{i}") or "fixed"
         map_value = form_data.get(f"var_map_value_{i}") or ""
         variable_mappings.append({

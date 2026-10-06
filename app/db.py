@@ -336,6 +336,9 @@ CREATE TABLE IF NOT EXISTS broadcasts (
     total_recipients INT DEFAULT 0,
     sent_count INT DEFAULT 0,
     failed_count INT DEFAULT 0,
+    header_type TEXT,
+    header_media_url TEXT,
+    last_error TEXT,
     status TEXT NOT NULL DEFAULT 'pending' 
         CHECK (status IN ('pending', 'running', 'completed', 'paused', 'failed')),
     created_at TIMESTAMPTZ DEFAULT now(),
@@ -498,6 +501,9 @@ async def run_migrations() -> None:
         await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_specs TEXT")
         await conn.execute("ALTER TABLE bot_prompts ADD COLUMN IF NOT EXISTS pbd_test_suite TEXT")
         await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS scheduled_at TIMESTAMPTZ DEFAULT now()")
+        await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS header_type TEXT")
+        await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS header_media_url TEXT")
+        await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS last_error TEXT")
         for column, definition in (
             ("index_status", "TEXT NOT NULL DEFAULT 'pending'"),
             ("index_error", "TEXT"),
@@ -2915,6 +2921,8 @@ async def create_broadcast(
     variable_mappings: list[dict],
     recipients: list[dict],
     scheduled_at: datetime | str | None = None,
+    header_type: str | None = None,
+    header_media_url: str | None = None,
 ) -> int:
     """Crea una campaña de envío masivo y sus destinatarios pendientes."""
     if not recipients:
@@ -2926,8 +2934,8 @@ async def create_broadcast(
             if scheduled_at:
                 broadcast_id = await conn.fetchval(
                     """
-                    INSERT INTO broadcasts (bot_id, name, template_name, language_code, variable_mappings, total_recipients, scheduled_at)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    INSERT INTO broadcasts (bot_id, name, template_name, language_code, variable_mappings, total_recipients, scheduled_at, header_type, header_media_url)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     RETURNING id
                     """,
                     bot_id,
@@ -2937,12 +2945,14 @@ async def create_broadcast(
                     json.dumps(variable_mappings),
                     len(recipients),
                     scheduled_at,
+                    header_type,
+                    header_media_url,
                 )
             else:
                 broadcast_id = await conn.fetchval(
                     """
-                    INSERT INTO broadcasts (bot_id, name, template_name, language_code, variable_mappings, total_recipients)
-                    VALUES ($1, $2, $3, $4, $5, $6)
+                    INSERT INTO broadcasts (bot_id, name, template_name, language_code, variable_mappings, total_recipients, header_type, header_media_url)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                     RETURNING id
                     """,
                     bot_id,
@@ -2951,6 +2961,8 @@ async def create_broadcast(
                     language_code,
                     json.dumps(variable_mappings),
                     len(recipients),
+                    header_type,
+                    header_media_url,
                 )
             
             # Insertar los destinatarios por lotes
@@ -2973,10 +2985,22 @@ async def create_broadcast(
 
 
 async def list_broadcasts(bot_id: int, limit: int = 50) -> list[dict]:
-    """Lista las campañas de un bot ordenadas por fecha de creación descendente."""
+    """Lista las campañas de un bot ordenadas por fecha de creación descendente, incluyendo último error si hubo fallos."""
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM broadcasts WHERE bot_id = $1 ORDER BY created_at DESC LIMIT $2",
+            """
+            SELECT b.*,
+                   COALESCE(b.last_error, (
+                       SELECT br.error_message 
+                       FROM broadcast_recipients br 
+                       WHERE br.broadcast_id = b.id AND br.error_message IS NOT NULL 
+                       ORDER BY br.id DESC LIMIT 1
+                   )) AS last_error
+            FROM broadcasts b
+            WHERE b.bot_id = $1 
+            ORDER BY b.created_at DESC 
+            LIMIT $2
+            """,
             bot_id,
             limit,
         )
@@ -2984,24 +3008,42 @@ async def list_broadcasts(bot_id: int, limit: int = 50) -> list[dict]:
 
 
 async def get_broadcast(broadcast_id: int, bot_id: int) -> dict | None:
-    """Obtiene los detalles de una campaña de envío masivo."""
+    """Obtiene los detalles de una campaña de envío masivo con su último error."""
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT * FROM broadcasts WHERE id = $1 AND bot_id = $2",
+            """
+            SELECT b.*,
+                   COALESCE(b.last_error, (
+                       SELECT br.error_message 
+                       FROM broadcast_recipients br 
+                       WHERE br.broadcast_id = b.id AND br.error_message IS NOT NULL 
+                       ORDER BY br.id DESC LIMIT 1
+                   )) AS last_error
+            FROM broadcasts b
+            WHERE b.id = $1 AND b.bot_id = $2
+            """,
             broadcast_id,
             bot_id,
         )
         return dict(row) if row else None
 
 
-async def update_broadcast_status(broadcast_id: int, status: str) -> None:
-    """Actualiza el estado principal de una campaña."""
+async def update_broadcast_status(broadcast_id: int, status: str, last_error: str | None = None) -> None:
+    """Actualiza el estado principal de una campaña y opcionalmente el último error."""
     async with _pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE broadcasts SET status = $1, updated_at = now() WHERE id = $2",
-            status,
-            broadcast_id,
-        )
+        if last_error:
+            await conn.execute(
+                "UPDATE broadcasts SET status = $1, last_error = $2, updated_at = now() WHERE id = $3",
+                status,
+                last_error,
+                broadcast_id,
+            )
+        else:
+            await conn.execute(
+                "UPDATE broadcasts SET status = $1, updated_at = now() WHERE id = $2",
+                status,
+                broadcast_id,
+            )
 
 
 async def get_due_scheduled_broadcasts(limit: int = 10) -> list[dict]:
@@ -3032,12 +3074,23 @@ async def get_pending_broadcast_recipients(broadcast_id: int, limit: int = 100) 
         return [dict(r) for r in rows]
 
 
+async def list_broadcast_recipients(broadcast_id: int, limit: int = 100) -> list[dict]:
+    """Lista los destinatarios de una campaña con su estado y mensajes de error."""
+    async with _pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM broadcast_recipients WHERE broadcast_id = $1 ORDER BY id ASC LIMIT $2",
+            broadcast_id,
+            limit,
+        )
+        return [dict(r) for r in rows]
+
+
 async def update_broadcast_recipient_status(
     recipient_id: int,
     status: str,
     error_message: str | None = None,
 ) -> None:
-    """Actualiza el estado de entrega de un destinatario individual y actualiza contadores de campaña."""
+    """Actualiza el estado de entrega de un destinatario individual y actualiza contadores y último error de campaña."""
     async with _pool.acquire() as conn:
         async with conn.transaction():
             # Actualizar destinatario
@@ -3063,8 +3116,15 @@ async def update_broadcast_recipient_status(
                     )
                 elif status == "failed":
                     await conn.execute(
-                        "UPDATE broadcasts SET failed_count = failed_count + 1, updated_at = now() WHERE id = $1",
+                        """
+                        UPDATE broadcasts 
+                        SET failed_count = failed_count + 1,
+                            last_error = COALESCE($2, last_error),
+                            updated_at = now() 
+                        WHERE id = $1
+                        """,
                         broadcast_id,
+                        error_message,
                     )
 
 

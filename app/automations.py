@@ -103,8 +103,8 @@ async def evaluate_inactivity_triggers() -> None:
         for t in triggers:
             trigger_id = int(t["id"])
             bot_id = int(t["bot_id"])
-            config_data = t.get("trigger_config") or {}
-            inactivity_hours = int(config_data.get("inactivity_hours") or 24)
+            cfg = t.get("trigger_config") or {}
+            inactivity_hours = int(cfg.get("inactivity_hours") or 24)
             template_name = t["template_name"]
             language_code = t.get("language_code") or "es_MX"
             mappings = t.get("variable_mappings") or []
@@ -144,6 +144,8 @@ async def evaluate_inactivity_triggers() -> None:
                         template_name=template_name,
                         language_code=language_code,
                         parameters=params,
+                        header_type=cfg.get("header_type"),
+                        header_media_url=cfg.get("header_media_url"),
                     )
                     await db.record_trigger_execution(
                         trigger_id=trigger_id,
@@ -262,6 +264,8 @@ async def evaluate_time_based_triggers() -> None:
                             template_name=template_name,
                             language_code=language_code,
                             parameters=params,
+                            header_type=cfg.get("header_type"),
+                            header_media_url=cfg.get("header_media_url"),
                         )
                         await db.record_trigger_execution(
                             trigger_id=trigger_id,
@@ -348,6 +352,8 @@ async def trigger_crm_status_change(
                         template_name=template_name,
                         language_code=language_code,
                         parameters=params,
+                        header_type=cfg.get("header_type"),
+                        header_media_url=cfg.get("header_media_url"),
                     )
                     await db.record_trigger_execution(
                         trigger_id=trigger_id,

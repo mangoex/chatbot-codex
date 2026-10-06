@@ -4,9 +4,20 @@ import types
 import unittest
 from unittest.mock import AsyncMock, patch
 
-sys.modules.setdefault("asyncpg", types.SimpleNamespace(Pool=object))
-sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
-sys.modules.setdefault("httpx", types.SimpleNamespace(AsyncClient=object))
+try:
+    import asyncpg
+except ImportError:
+    sys.modules.setdefault("asyncpg", types.SimpleNamespace(Pool=object))
+
+try:
+    import dotenv
+except ImportError:
+    sys.modules.setdefault("dotenv", types.SimpleNamespace(load_dotenv=lambda: None))
+
+try:
+    import httpx
+except ImportError:
+    sys.modules.setdefault("httpx", types.SimpleNamespace(AsyncClient=object))
 
 from app import meta_provider
 

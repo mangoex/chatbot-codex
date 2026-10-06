@@ -121,6 +121,16 @@ class CampaignCreateInput(BaseModel):
         description="Fecha y hora para envío programado futuro (ISO-8601 UTC). Si es null se dispara inmediatamente.",
         examples=[None],
     )
+    header_type: str | None = Field(
+        None,
+        description="Tipo de encabezado si la plantilla lo requiere ('image', 'video', 'document', 'text')",
+        examples=["image"],
+    )
+    header_media_url: str | None = Field(
+        None,
+        description="URL pública de la imagen o medio requerido en el encabezado de la plantilla",
+        examples=["https://ejemplo.com/portada.jpg"],
+    )
 
 
 # --- HELPERS ---
@@ -470,6 +480,10 @@ async def api_create_campaign(
         }
         if payload.scheduled_at:
             broadcast_kwargs["scheduled_at"] = payload.scheduled_at
+        if payload.header_type:
+            broadcast_kwargs["header_type"] = payload.header_type.strip()
+        if payload.header_media_url:
+            broadcast_kwargs["header_media_url"] = payload.header_media_url.strip()
 
         broadcast_id = await db.create_broadcast(**broadcast_kwargs)
     except Exception as exc:
@@ -533,6 +547,9 @@ async def api_get_campaign_status(
         "name": campaign["name"],
         "template_name": campaign["template_name"],
         "language_code": campaign["language_code"],
+        "header_type": campaign.get("header_type"),
+        "header_media_url": campaign.get("header_media_url"),
+        "last_error": campaign.get("last_error"),
         "status": campaign["status"],
         "total_recipients": campaign["total_recipients"],
         "sent_count": campaign["sent_count"],

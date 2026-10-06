@@ -298,6 +298,48 @@ async def get_bot_whatsapp_runtime(bot_id: int) -> dict[str, Any]:
     return {"bot": bot, "integration": integration, "access_token": access_token}
 
 
+def format_meta_api_error(err_data: Any, status_code: int = 400, raw_text: str = "") -> str:
+    """Extrae un mensaje descriptivo y estructurado de un error de Meta Graph API."""
+    if not isinstance(err_data, dict):
+        return f"Error HTTP {status_code}: {raw_text or 'Sin respuesta de Meta'}"
+        
+    err_obj = err_data.get("error", {})
+    if not isinstance(err_obj, dict):
+        return str(err_data)
+        
+    msg = err_obj.get("message") or raw_text or "Error desconocido de Meta"
+    code = err_obj.get("code")
+    subcode = err_obj.get("error_subcode")
+    err_type = err_obj.get("type")
+    
+    user_title = err_obj.get("error_user_title")
+    user_msg = err_obj.get("error_user_msg")
+    
+    error_data = err_obj.get("error_data") or err_data.get("error_data") or {}
+    details = error_data.get("details") if isinstance(error_data, dict) else None
+    
+    parts = []
+    if user_title:
+        parts.append(user_title)
+    if user_msg:
+        parts.append(user_msg)
+    if details:
+        parts.append(details)
+        
+    code_parts = []
+    if code:
+        code_parts.append(f"código {code}")
+    if subcode:
+        code_parts.append(f"subcódigo {subcode}")
+    if err_type:
+        code_parts.append(err_type)
+        
+    code_tag = f" [{', '.join(code_parts)}]" if code_parts else ""
+    details_str = f" - Detalle: {' - '.join(parts)}" if parts else ""
+    
+    return f"Error de Meta API{code_tag}: {msg}{details_str}"
+
+
 async def graph_get(path: str, access_token: str, params: dict[str, Any] | None = None) -> dict:
     headers = {"Authorization": f"Bearer {access_token}"}
     log.info(f"Meta Graph GET request to {path} with params={params}")
@@ -306,26 +348,9 @@ async def graph_get(path: str, access_token: str, params: dict[str, Any] | None 
         if response.status_code >= 400:
             try:
                 err_data = response.json()
-                err_obj = err_data.get("error", {})
-                msg = err_obj.get("message") or response.text
-                
-                user_title = err_obj.get("error_user_title")
-                user_msg = err_obj.get("error_user_msg")
-                details = err_obj.get("error_data", {}).get("details")
-                
-                parts = []
-                if user_title:
-                    parts.append(user_title)
-                if user_msg:
-                    parts.append(user_msg)
-                if details:
-                    parts.append(details)
-                    
-                if parts:
-                    msg = f"{msg}: " + " - ".join(parts)
-                    
+                formatted_msg = format_meta_api_error(err_data, response.status_code, response.text)
                 log.error(f"Meta Graph GET error: {err_data}")
-                raise ValueError(f"Error de Meta API: {msg}")
+                raise ValueError(formatted_msg)
             except Exception as e:
                 if isinstance(e, ValueError):
                     raise e
@@ -341,26 +366,9 @@ async def graph_post(path: str, access_token: str, json_data: dict[str, Any]) ->
         if response.status_code >= 400:
             try:
                 err_data = response.json()
-                err_obj = err_data.get("error", {})
-                msg = err_obj.get("message") or response.text
-                
-                user_title = err_obj.get("error_user_title")
-                user_msg = err_obj.get("error_user_msg")
-                details = err_obj.get("error_data", {}).get("details")
-                
-                parts = []
-                if user_title:
-                    parts.append(user_title)
-                if user_msg:
-                    parts.append(user_msg)
-                if details:
-                    parts.append(details)
-                    
-                if parts:
-                    msg = f"{msg}: " + " - ".join(parts)
-                    
+                formatted_msg = format_meta_api_error(err_data, response.status_code, response.text)
                 log.error(f"Meta Graph POST error: {err_data}")
-                raise ValueError(f"Error de Meta API: {msg}")
+                raise ValueError(formatted_msg)
             except Exception as e:
                 if isinstance(e, ValueError):
                     raise e
@@ -391,6 +399,8 @@ def build_test_message_payload(
     body_text: str = "",
     template_name: str = "",
     language_code: str = "",
+    header_type: str = "",
+    header_media_url: str = "",
 ) -> dict[str, Any]:
     to = _clean(to_wa_id)
     if not to:
@@ -409,13 +419,23 @@ def build_test_message_payload(
         return payload
     template = _clean(template_name) or "hello_world"
     language = _clean(language_code) or "en_US"
+    template_data: dict[str, Any] = {
+        "name": template,
+        "language": {"code": language},
+    }
+    if header_media_url:
+        h_type = (header_type or "image").lower()
+        media_payload = {"id": header_media_url} if header_media_url.isdigit() else {"link": header_media_url}
+        template_data["components"] = [
+            {
+                "type": "header",
+                "parameters": [{"type": h_type, h_type: media_payload}]
+            }
+        ]
     payload.update(
         {
             "type": "template",
-            "template": {
-                "name": template,
-                "language": {"code": language},
-            },
+            "template": template_data,
         }
     )
     return payload
@@ -428,6 +448,8 @@ async def send_test_message(
     body_text: str = "",
     template_name: str = "hello_world",
     language_code: str = "en_US",
+    header_type: str = "",
+    header_media_url: str = "",
 ) -> dict[str, Any]:
     runtime = await get_bot_whatsapp_runtime(bot_id)
     bot = runtime["bot"]
@@ -448,6 +470,8 @@ async def send_test_message(
         body_text=body_text,
         template_name=template_name,
         language_code=language_code,
+        header_type=header_type,
+        header_media_url=header_media_url,
     )
     result = await graph_post(f"{phone_number_id}/messages", token, payload)
     try:
@@ -590,6 +614,9 @@ async def create_message_template(
     category: str,
     body_text: str,
     examples: list[str] = None,
+    header_type: str = None,
+    header_text: str = None,
+    header_example: str = None,
 ) -> dict[str, Any]:
     runtime = await get_bot_whatsapp_runtime(bot_id)
     bot = runtime["bot"]
@@ -614,22 +641,36 @@ async def create_message_template(
     if not clean_name:
         raise ValueError("El nombre de la plantilla es inválido. Debe contener al menos una letra o número (a-z, 0-9).")
     
-    component = {
+    components = []
+    clean_h_type = (header_type or "").upper().strip()
+    if clean_h_type == "TEXT" and _clean(header_text):
+        h_comp = {"type": "HEADER", "format": "TEXT", "text": _clean(header_text)}
+        if header_example:
+            h_comp["example"] = {"header_text": [_clean(header_example)]}
+        components.append(h_comp)
+    elif clean_h_type in ("IMAGE", "VIDEO", "DOCUMENT"):
+        h_comp = {"type": "HEADER", "format": clean_h_type}
+        if header_example:
+            h_comp["example"] = {"header_handle": [_clean(header_example)]}
+        components.append(h_comp)
+
+    body_comp = {
         "type": "BODY",
         "text": _clean(body_text),
     }
     if examples:
         clean_examples = [_clean(ex) for ex in examples if _clean(ex)]
         if clean_examples:
-            component["example"] = {
+            body_comp["example"] = {
                 "body_text": [clean_examples]
             }
+    components.append(body_comp)
 
     payload = {
         "name": clean_name,
         "language": _clean(language) or "es_MX",
         "category": (_clean(category) or "UTILITY").upper(),
-        "components": [component],
+        "components": components,
     }
     return await graph_post(f"{waba_id}/message_templates", token, payload)
 
@@ -656,8 +697,11 @@ async def send_template_message(
     template_name: str,
     language_code: str = "es_MX",
     parameters: list[str] = None,
+    header_type: str | None = None,
+    header_media_url: str | None = None,
+    header_parameters: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Envía un mensaje de plantilla de WhatsApp con parámetros dinámicos a un destinatario."""
+    """Envía un mensaje de plantilla de WhatsApp con parámetros dinámicos y encabezado (imagen/media/texto) a un destinatario."""
     runtime = await get_bot_whatsapp_runtime(bot_id)
     bot = runtime["bot"]
     integration = runtime["integration"]
@@ -677,6 +721,36 @@ async def send_template_message(
         raise ValueError("Falta el número de teléfono de destino válido.")
 
     components = []
+
+    # 1. Componente HEADER (si la plantilla requiere imagen, video, documento o texto con variables)
+    clean_header_media = _clean(header_media_url)
+    h_type = (header_type or "").lower().strip()
+    
+    if clean_header_media or h_type in ("image", "video", "document"):
+        media_type = h_type if h_type in ("image", "video", "document") else "image"
+        # Si es un número (ID de medio en Meta) usar id, si es URL usar link
+        media_payload = {"id": clean_header_media} if clean_header_media.isdigit() else {"link": clean_header_media}
+        components.append({
+            "type": "header",
+            "parameters": [
+                {
+                    "type": media_type,
+                    media_type: media_payload,
+                }
+            ]
+        })
+    elif h_type == "text" and header_parameters:
+        components.append({
+            "type": "header",
+            "parameters": [{"type": "text", "text": str(p)} for p in header_parameters]
+        })
+    elif header_parameters and not h_type:
+        components.append({
+            "type": "header",
+            "parameters": [{"type": "text", "text": str(p)} for p in header_parameters]
+        })
+
+    # 2. Componente BODY
     if parameters:
         meta_params = [{"type": "text", "text": str(p)} for p in parameters]
         components.append({
@@ -702,6 +776,8 @@ async def send_template_message(
         saved_text = f"[Plantilla enviada: {template_name}]"
         if parameters:
             saved_text += f" ({', '.join(str(p) for p in parameters)})"
+        if clean_header_media:
+            saved_text += f" [Header {h_type or 'media'}: {clean_header_media}]"
         await db.save_message(to, "assistant", saved_text, bot_id=bot_id)
     except Exception as exc:
         log.warning("No se pudo registrar mensaje de plantilla en conversaciones: %s", exc)

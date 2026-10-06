@@ -316,6 +316,8 @@ async def test_evaluate_inactivity_triggers(
         template_name="reactivar_lead",
         language_code="es_MX",
         parameters=["Carlos Gomez"],
+        header_type=None,
+        header_media_url=None,
     )
     mock_record_exec.assert_called_once()
     assert mock_record_exec.call_args[1]["status"] == "sent"
@@ -371,6 +373,8 @@ async def test_trigger_crm_status_change(
         template_name="bienvenida_calificado",
         language_code="es_MX",
         parameters=["Lucia Mendez", "Asistto Plus"],
+        header_type=None,
+        header_media_url=None,
     )
     mock_record_exec.assert_called_once()
     assert mock_record_exec.call_args[1]["status"] == "sent"
@@ -427,6 +431,8 @@ async def test_evaluate_time_based_triggers_daily(
         template_name="recordatorio_diario",
         language_code="es_MX",
         parameters=["Pedro Pascal"],
+        header_type=None,
+        header_media_url=None,
     )
     mock_record_exec.assert_called_once()
     assert mock_record_exec.call_args[1]["status"] == "sent"

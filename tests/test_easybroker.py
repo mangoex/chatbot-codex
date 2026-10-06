@@ -49,7 +49,7 @@ async def test_format_property_doc():
 @pytest.mark.asyncio
 async def test_verify_api_key_success():
     """Verifica que verify_api_key retorne True cuando la API de Easybroker responde 200."""
-    with patch("httpx.AsyncClient") as mock_client_cls:
+    with patch("app.easybroker_client.httpx.AsyncClient") as mock_client_cls:
         mock_instance = AsyncMock()
         mock_instance.__aenter__.return_value = mock_instance
         mock_instance.get.return_value = MagicMock(
@@ -67,7 +67,7 @@ async def test_verify_api_key_success():
 @pytest.mark.asyncio
 async def test_verify_api_key_failure():
     """Verifica que verify_api_key maneje credenciales inválidas (401/403)."""
-    with patch("httpx.AsyncClient") as mock_client_cls:
+    with patch("app.easybroker_client.httpx.AsyncClient") as mock_client_cls:
         mock_instance = AsyncMock()
         mock_instance.__aenter__.return_value = mock_instance
         mock_response = MagicMock(status_code=401, text="Unauthorized")
@@ -90,7 +90,7 @@ async def test_fetch_all_properties():
         ],
     }
 
-    with patch("httpx.AsyncClient") as mock_client_cls:
+    with patch("app.easybroker_client.httpx.AsyncClient") as mock_client_cls:
         mock_instance = AsyncMock()
         mock_instance.__aenter__.return_value = mock_instance
         mock_instance.get.return_value = MagicMock(
@@ -109,7 +109,7 @@ async def test_fetch_all_properties():
 @pytest.mark.asyncio
 async def test_send_contact_request():
     """Verifica el envío de un lead / contacto a Easybroker."""
-    with patch("httpx.AsyncClient") as mock_client_cls:
+    with patch("app.easybroker_client.httpx.AsyncClient") as mock_client_cls:
         mock_instance = AsyncMock()
         mock_instance.__aenter__.return_value = mock_instance
         mock_instance.post.return_value = MagicMock(
