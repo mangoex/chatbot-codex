@@ -591,8 +591,42 @@ async def _process_human_message_echoes(payload: dict) -> None:
         await _process_human_message_echo(echo)
 
 
+async def _process_delivery_statuses(payload: dict) -> None:
+    statuses = whatsapp_client.extract_statuses(payload)
+    if not statuses:
+        return
+    for st in statuses:
+        wamid = st.get("wamid") or st.get("id") or st.get("message_id")
+        status = st.get("status")
+        rec_id = st.get("recipient_id")
+        phone_id = st.get("phone_number_id")
+        ts = st.get("timestamp")
+        errors = st.get("errors")
+        raw = st.get("raw_status") or payload
+        try:
+            res = await db.record_webhook_delivery_status(
+                wamid=wamid,
+                status=status,
+                recipient_id=rec_id,
+                phone_number_id=phone_id,
+                timestamp=ts,
+                errors=errors,
+                raw_payload=raw,
+            )
+            matched = (res or {}).get("matched", False)
+            log.info(
+                "Webhook delivery status procesado: wamid=%s status=%s matched_campaign=%s recipient=%s errors=%s",
+                wamid, status, matched, rec_id, len(errors) if errors else 0,
+            )
+        except Exception as exc:
+            log.warning("Error registrando delivery status para wamid %s: %s", wamid, exc)
+
+
 async def _process_inbound_messages(payload: dict) -> None:
-    # Meta can batch several customer messages in the same webhook delivery.
+    # 1. Delivery status events
+    await _process_delivery_statuses(payload)
+    
+    # 2. Meta can batch several customer messages in the same webhook delivery.
     for msg in whatsapp_client.extract_messages(payload):
         msg_id = msg["message_id"]
         if msg_id in _processing_message_ids:

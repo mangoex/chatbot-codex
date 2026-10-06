@@ -781,10 +781,17 @@ async def send_template_message(
         await db.save_message(to, "assistant", saved_text, bot_id=bot_id)
     except Exception as exc:
         log.warning("No se pudo registrar mensaje de plantilla en conversaciones: %s", exc)
+    wamid = ""
+    if isinstance(result, dict):
+        messages = result.get("messages")
+        if isinstance(messages, list) and len(messages) > 0 and isinstance(messages[0], dict):
+            wamid = messages[0].get("id", "") or ""
+
     return {
         "phone_number_id": phone_number_id,
         "to": to,
         "template_name": template_name,
         "request": payload,
         "response": result,
+        "wamid": wamid,
     }

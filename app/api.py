@@ -533,13 +533,31 @@ async def api_get_campaign_status(
     campaign_id: int,
     bot: bots.BotContext = Depends(verify_bot_auth),
 ):
-    """Consulta las métricas en tiempo real de una campaña: total de destinatarios, enviados y fallidos."""
+    """Consulta las métricas en tiempo real de una campaña: aceptados por Meta, entregados, leídos, fallidos y detalle por destinatario."""
     campaign = await db.get_broadcast(broadcast_id=campaign_id, bot_id=bot_id)
     if not campaign:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Campaña {campaign_id} no encontrada para este bot",
         )
+
+    recipients_data = await db.list_broadcast_recipients(broadcast_id=campaign_id)
+    recipients = [
+        {
+            "id": r["id"],
+            "wa_id": r["wa_id"],
+            "contact_name": r.get("contact_name") or "",
+            "wamid": r.get("wamid") or "",
+            "status": r.get("status") or "pending",
+            "error_message": r.get("error_message"),
+            "error_data": r.get("error_data"),
+            "sent_at": r["sent_at"].isoformat() if r.get("sent_at") else None,
+            "delivered_at": r["delivered_at"].isoformat() if r.get("delivered_at") else None,
+            "read_at": r["read_at"].isoformat() if r.get("read_at") else None,
+            "status_timestamp": r["status_timestamp"].isoformat() if r.get("status_timestamp") else None,
+        }
+        for r in recipients_data
+    ]
 
     return {
         "campaign_id": campaign["id"],
@@ -552,9 +570,13 @@ async def api_get_campaign_status(
         "last_error": campaign.get("last_error"),
         "status": campaign["status"],
         "total_recipients": campaign["total_recipients"],
+        "accepted_count": campaign.get("accepted_count", 0) or campaign.get("sent_count", 0),
+        "delivered_count": campaign.get("delivered_count", 0),
+        "read_count": campaign.get("read_count", 0),
         "sent_count": campaign["sent_count"],
         "failed_count": campaign["failed_count"],
         "created_at": campaign["created_at"].isoformat() if campaign.get("created_at") else None,
         "updated_at": campaign["updated_at"].isoformat() if campaign.get("updated_at") else None,
         "scheduled_at": campaign["scheduled_at"].isoformat() if campaign.get("scheduled_at") else None,
+        "recipients": recipients,
     }

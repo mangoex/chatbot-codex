@@ -334,6 +334,9 @@ CREATE TABLE IF NOT EXISTS broadcasts (
     language_code TEXT NOT NULL DEFAULT 'es_MX',
     variable_mappings JSONB NOT NULL DEFAULT '[]'::jsonb,
     total_recipients INT DEFAULT 0,
+    accepted_count INT DEFAULT 0,
+    delivered_count INT DEFAULT 0,
+    read_count INT DEFAULT 0,
     sent_count INT DEFAULT 0,
     failed_count INT DEFAULT 0,
     header_type TEXT,
@@ -351,12 +354,31 @@ CREATE TABLE IF NOT EXISTS broadcast_recipients (
     wa_id TEXT NOT NULL,
     contact_name TEXT,
     contact_business TEXT,
-    status TEXT NOT NULL DEFAULT 'pending' 
-        CHECK (status IN ('pending', 'sent', 'failed')),
+    wamid TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
     error_message TEXT,
-    sent_at TIMESTAMPTZ
+    error_data JSONB,
+    sent_at TIMESTAMPTZ,
+    delivered_at TIMESTAMPTZ,
+    read_at TIMESTAMPTZ,
+    status_timestamp TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS idx_recipients_exec ON broadcast_recipients(broadcast_id, status);
+CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_wamid ON broadcast_recipients(wamid);
+
+CREATE TABLE IF NOT EXISTS message_delivery_statuses (
+    id BIGSERIAL PRIMARY KEY,
+    wamid TEXT NOT NULL,
+    status TEXT NOT NULL,
+    recipient_id TEXT,
+    phone_number_id TEXT,
+    status_timestamp TIMESTAMPTZ,
+    errors JSONB,
+    raw_payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_msg_delivery_statuses_wamid ON message_delivery_statuses(wamid);
+CREATE INDEX IF NOT EXISTS idx_msg_delivery_statuses_rec ON message_delivery_statuses(recipient_id);
 
 CREATE TABLE IF NOT EXISTS template_triggers (
     id BIGSERIAL PRIMARY KEY,
@@ -504,6 +526,33 @@ async def run_migrations() -> None:
         await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS header_type TEXT")
         await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS header_media_url TEXT")
         await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS last_error TEXT")
+        await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS accepted_count INT NOT NULL DEFAULT 0")
+        await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS delivered_count INT NOT NULL DEFAULT 0")
+        await conn.execute("ALTER TABLE broadcasts ADD COLUMN IF NOT EXISTS read_count INT NOT NULL DEFAULT 0")
+        await conn.execute("ALTER TABLE broadcast_recipients DROP CONSTRAINT IF EXISTS broadcast_recipients_status_check")
+        await conn.execute("ALTER TABLE broadcast_recipients ADD COLUMN IF NOT EXISTS wamid TEXT")
+        await conn.execute("ALTER TABLE broadcast_recipients ADD COLUMN IF NOT EXISTS error_data JSONB")
+        await conn.execute("ALTER TABLE broadcast_recipients ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ")
+        await conn.execute("ALTER TABLE broadcast_recipients ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ")
+        await conn.execute("ALTER TABLE broadcast_recipients ADD COLUMN IF NOT EXISTS status_timestamp TIMESTAMPTZ")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_wamid ON broadcast_recipients(wamid)")
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS message_delivery_statuses (
+                id BIGSERIAL PRIMARY KEY,
+                wamid TEXT NOT NULL,
+                status TEXT NOT NULL,
+                recipient_id TEXT,
+                phone_number_id TEXT,
+                status_timestamp TIMESTAMPTZ,
+                errors JSONB,
+                raw_payload JSONB,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            CREATE INDEX IF NOT EXISTS idx_msg_delivery_statuses_wamid ON message_delivery_statuses(wamid);
+            CREATE INDEX IF NOT EXISTS idx_msg_delivery_statuses_rec ON message_delivery_statuses(recipient_id);
+            """
+        )
         for column, definition in (
             ("index_status", "TEXT NOT NULL DEFAULT 'pending'"),
             ("index_error", "TEXT"),
@@ -2985,11 +3034,20 @@ async def create_broadcast(
 
 
 async def list_broadcasts(bot_id: int, limit: int = 50) -> list[dict]:
-    """Lista las campañas de un bot ordenadas por fecha de creación descendente, incluyendo último error si hubo fallos."""
+    """Lista las campañas de un bot ordenadas por fecha de creación descendente, incluyendo métricas completas de entrega."""
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
             """
             SELECT b.*,
+                   COALESCE(b.accepted_count, b.sent_count, 0) AS accepted_count,
+                   COALESCE(b.delivered_count, (
+                       SELECT COUNT(*) FROM broadcast_recipients br 
+                       WHERE br.broadcast_id = b.id AND br.status IN ('delivered', 'read')
+                   ), 0) AS delivered_count,
+                   COALESCE(b.read_count, (
+                       SELECT COUNT(*) FROM broadcast_recipients br 
+                       WHERE br.broadcast_id = b.id AND br.status = 'read'
+                   ), 0) AS read_count,
                    COALESCE(b.last_error, (
                        SELECT br.error_message 
                        FROM broadcast_recipients br 
@@ -3008,11 +3066,20 @@ async def list_broadcasts(bot_id: int, limit: int = 50) -> list[dict]:
 
 
 async def get_broadcast(broadcast_id: int, bot_id: int) -> dict | None:
-    """Obtiene los detalles de una campaña de envío masivo con su último error."""
+    """Obtiene los detalles de una campaña de envío masivo con métricas completas de entrega y último error."""
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """
             SELECT b.*,
+                   COALESCE(b.accepted_count, b.sent_count, 0) AS accepted_count,
+                   COALESCE(b.delivered_count, (
+                       SELECT COUNT(*) FROM broadcast_recipients br 
+                       WHERE br.broadcast_id = b.id AND br.status IN ('delivered', 'read')
+                   ), 0) AS delivered_count,
+                   COALESCE(b.read_count, (
+                       SELECT COUNT(*) FROM broadcast_recipients br 
+                       WHERE br.broadcast_id = b.id AND br.status = 'read'
+                   ), 0) AS read_count,
                    COALESCE(b.last_error, (
                        SELECT br.error_message 
                        FROM broadcast_recipients br 
@@ -3074,11 +3141,18 @@ async def get_pending_broadcast_recipients(broadcast_id: int, limit: int = 100) 
         return [dict(r) for r in rows]
 
 
-async def list_broadcast_recipients(broadcast_id: int, limit: int = 100) -> list[dict]:
-    """Lista los destinatarios de una campaña con su estado y mensajes de error."""
+async def list_broadcast_recipients(broadcast_id: int, limit: int = 1000) -> list[dict]:
+    """Lista los destinatarios de una campaña con su wamid, estado, mensaje de error y timestamps."""
+    if _pool is None:
+        return []
     async with _pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT * FROM broadcast_recipients WHERE broadcast_id = $1 ORDER BY id ASC LIMIT $2",
+            """
+            SELECT * FROM broadcast_recipients 
+            WHERE broadcast_id = $1 
+            ORDER BY id ASC 
+            LIMIT $2
+            """,
             broadcast_id,
             limit,
         )
@@ -3089,29 +3163,68 @@ async def update_broadcast_recipient_status(
     recipient_id: int,
     status: str,
     error_message: str | None = None,
+    wamid: str | None = None,
+    error_data: dict | list | None = None,
+    timestamp: datetime | str | None = None,
 ) -> None:
     """Actualiza el estado de entrega de un destinatario individual y actualiza contadores y último error de campaña."""
     async with _pool.acquire() as conn:
         async with conn.transaction():
+            err_data_json = json.dumps(error_data) if error_data is not None else None
             # Actualizar destinatario
             row = await conn.fetchrow(
                 """
                 UPDATE broadcast_recipients
-                SET status = $1, error_message = $2, sent_at = now()
-                WHERE id = $3
-                RETURNING broadcast_id
+                SET status = $1,
+                    error_message = COALESCE($2, error_message),
+                    wamid = COALESCE($3, wamid),
+                    error_data = COALESCE($4::jsonb, error_data),
+                    sent_at = CASE WHEN $1 IN ('sent', 'accepted') AND sent_at IS NULL THEN now() ELSE sent_at END,
+                    delivered_at = CASE WHEN $1 = 'delivered' AND delivered_at IS NULL THEN now() ELSE delivered_at END,
+                    read_at = CASE WHEN $1 = 'read' AND read_at IS NULL THEN now() ELSE read_at END,
+                    status_timestamp = now()
+                WHERE id = $5
+                RETURNING broadcast_id, status AS new_status
                 """,
                 status,
                 error_message,
+                wamid,
+                err_data_json,
                 recipient_id,
             )
             
             if row:
                 broadcast_id = row["broadcast_id"]
                 # Incrementar el contador correspondiente en la campaña
-                if status == "sent":
+                if status in ("sent", "accepted"):
                     await conn.execute(
-                        "UPDATE broadcasts SET sent_count = sent_count + 1, updated_at = now() WHERE id = $1",
+                        """
+                        UPDATE broadcasts 
+                        SET sent_count = sent_count + 1,
+                            accepted_count = accepted_count + 1,
+                            updated_at = now() 
+                        WHERE id = $1
+                        """,
+                        broadcast_id,
+                    )
+                elif status == "delivered":
+                    await conn.execute(
+                        """
+                        UPDATE broadcasts 
+                        SET delivered_count = delivered_count + 1,
+                            updated_at = now() 
+                        WHERE id = $1
+                        """,
+                        broadcast_id,
+                    )
+                elif status == "read":
+                    await conn.execute(
+                        """
+                        UPDATE broadcasts 
+                        SET read_count = read_count + 1,
+                            updated_at = now() 
+                        WHERE id = $1
+                        """,
                         broadcast_id,
                     )
                 elif status == "failed":
@@ -3126,6 +3239,166 @@ async def update_broadcast_recipient_status(
                         broadcast_id,
                         error_message,
                     )
+
+
+async def record_webhook_delivery_status(
+    wamid: str,
+    status: str,
+    recipient_id: str | None = None,
+    phone_number_id: str | None = None,
+    timestamp: str | int | float | None = None,
+    errors: list[dict] | None = None,
+    raw_payload: dict | None = None,
+) -> dict | None:
+    """
+    Registra el evento de entrega de Meta en message_delivery_statuses 
+    y actualiza el destinatario de la campaña correspondiente si coincide el wamid o wa_id.
+    """
+    if _pool is None or not wamid:
+        return None
+
+    status_lower = (status or "").lower().strip()
+    clean_wamid = wamid.strip()
+    clean_rec_id = "".join(filter(str.isdigit, str(recipient_id or "")))
+
+    # Formatear errores si existen
+    formatted_err = None
+    if errors and isinstance(errors, list):
+        err_parts = []
+        for e in errors:
+            if isinstance(e, dict):
+                code = e.get("code")
+                title = e.get("title")
+                msg = e.get("message")
+                details = e.get("error_data", {}).get("details") if isinstance(e.get("error_data"), dict) else None
+                part = f"Meta Error {code}" if code else "Meta Error"
+                if title:
+                    part += f" ({title})"
+                if msg:
+                    part += f": {msg}"
+                if details:
+                    part += f" - {details}"
+                err_parts.append(part)
+            else:
+                err_parts.append(str(e))
+        formatted_err = " | ".join(err_parts)
+
+    parsed_ts = None
+    if timestamp:
+        try:
+            ts_float = float(timestamp)
+            parsed_ts = datetime.fromtimestamp(ts_float, tz=timezone.utc)
+        except Exception:
+            parsed_ts = None
+
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            # 1. Guardar en histórico de eventos message_delivery_statuses
+            await conn.execute(
+                """
+                INSERT INTO message_delivery_statuses (
+                    wamid, status, recipient_id, phone_number_id, status_timestamp, errors, raw_payload
+                ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)
+                """,
+                clean_wamid,
+                status_lower,
+                clean_rec_id or str(recipient_id or ""),
+                phone_number_id,
+                parsed_ts or datetime.now(timezone.utc),
+                json.dumps(errors) if errors else None,
+                json.dumps(raw_payload) if raw_payload else None,
+            )
+
+            # 2. Buscar si este wamid pertenece a un destinatario de campaña
+            row = await conn.fetchrow(
+                """
+                SELECT id, broadcast_id, status
+                FROM broadcast_recipients
+                WHERE wamid = $1
+                LIMIT 1
+                """,
+                clean_wamid,
+            )
+
+            if not row and clean_rec_id:
+                # Fallback por teléfono si wamid no se asoció previamente
+                row = await conn.fetchrow(
+                    """
+                    SELECT id, broadcast_id, status
+                    FROM broadcast_recipients
+                    WHERE wa_id = $1 AND (wamid IS NULL OR wamid = '')
+                    ORDER BY id DESC
+                    LIMIT 1
+                    """,
+                    clean_rec_id,
+                )
+
+            if row:
+                r_id = row["id"]
+                current_status = row["status"]
+                broadcast_id = row["broadcast_id"]
+
+                # Reglas de transición de estado
+                # read > delivered > sent / accepted
+                # failed siempre sobreescribe si la entrega falló
+                new_status = status_lower
+                if current_status == "read" and status_lower in ("delivered", "sent", "accepted"):
+                    new_status = "read"
+                elif current_status == "delivered" and status_lower in ("sent", "accepted"):
+                    new_status = "delivered"
+
+                await conn.execute(
+                    """
+                    UPDATE broadcast_recipients
+                    SET status = $1,
+                        wamid = COALESCE(wamid, $2),
+                        error_message = COALESCE($3, error_message),
+                        error_data = COALESCE($4::jsonb, error_data),
+                        delivered_at = CASE WHEN $1 = 'delivered' AND delivered_at IS NULL THEN COALESCE($5, now()) ELSE delivered_at END,
+                        read_at = CASE WHEN $1 = 'read' AND read_at IS NULL THEN COALESCE($5, now()) ELSE read_at END,
+                        status_timestamp = COALESCE($5, now())
+                    WHERE id = $6
+                    """,
+                    new_status,
+                    clean_wamid,
+                    formatted_err,
+                    json.dumps(errors) if errors else None,
+                    parsed_ts,
+                    r_id,
+                )
+
+                # Actualizar contadores y último error en la campaña
+                if status_lower == "delivered":
+                    await conn.execute(
+                        "UPDATE broadcasts SET delivered_count = delivered_count + 1, updated_at = now() WHERE id = $1",
+                        broadcast_id,
+                    )
+                elif status_lower == "read":
+                    await conn.execute(
+                        "UPDATE broadcasts SET read_count = read_count + 1, updated_at = now() WHERE id = $1",
+                        broadcast_id,
+                    )
+                elif status_lower == "failed":
+                    await conn.execute(
+                        """
+                        UPDATE broadcasts 
+                        SET failed_count = failed_count + 1,
+                            last_error = COALESCE($2, last_error),
+                            updated_at = now() 
+                        WHERE id = $1
+                        """,
+                        broadcast_id,
+                        formatted_err,
+                    )
+
+                return {
+                    "matched": True,
+                    "recipient_id": r_id,
+                    "broadcast_id": broadcast_id,
+                    "status": new_status,
+                }
+
+    return {"matched": False, "wamid": clean_wamid, "status": status_lower}
 
 
 # --- TEMPLATE TRIGGERS & AUTOMATIONS ---

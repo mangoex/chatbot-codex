@@ -135,6 +135,8 @@ async def test_process_broadcast_queue(
         []
     ]
 
+    mock_send_template.return_value = {"wamid": "wamid.HBg12345", "response": {"messages": [{"id": "wamid.HBg12345"}]}}
+
     with patch("app.db.is_conversation_handoff_active", AsyncMock(return_value=False)):
         await client.process_broadcast_queue(broadcast_id=10, bot_id=43)
 
@@ -153,7 +155,7 @@ async def test_process_broadcast_queue(
         header_media_url=None,
     )
     
-    mock_update_recipient_status.assert_called_once_with(101, "sent")
+    mock_update_recipient_status.assert_called_once_with(101, "accepted", wamid="wamid.HBg12345")
 
 
 @pytest.mark.asyncio
@@ -323,6 +325,8 @@ async def test_process_broadcast_queue_with_image_header(
         []
     ]
 
+    mock_send_template.return_value = {"wamid": "wamid.HBgHeaderTest"}
+
     with patch("app.db.is_conversation_handoff_active", AsyncMock(return_value=False)):
         await client.process_broadcast_queue(broadcast_id=12, bot_id=43)
 
@@ -335,7 +339,7 @@ async def test_process_broadcast_queue_with_image_header(
         header_type="image",
         header_media_url="https://images.unsplash.com/photo-tacos.jpg",
     )
-    mock_update_recipient_status.assert_called_once_with(201, "sent")
+    mock_update_recipient_status.assert_called_once_with(201, "accepted", wamid="wamid.HBgHeaderTest")
     mock_update_status.assert_any_call(12, "completed")
 
 
@@ -488,4 +492,171 @@ async def test_client_trigger_create_with_header_image(
         variable_mappings=[],
         is_active=True,
     )
+
+
+@pytest.mark.asyncio
+@patch("app.client._require_client_login")
+@patch("app.client._require_bot_editor")
+@patch("app.db.get_broadcast")
+@patch("app.db.list_broadcast_recipients")
+async def test_client_get_campaign_recipients_endpoint(
+    mock_list_recipients,
+    mock_get_broadcast,
+    mock_editor,
+    mock_login,
+):
+    mock_login.return_value = {"client_id": 44, "user": "user@test.com", "role": "client_admin"}
+    mock_get_broadcast.return_value = {
+        "id": 10,
+        "name": "Campaña Test",
+        "template_name": "promo_1",
+        "total_recipients": 2,
+        "accepted_count": 2,
+        "delivered_count": 1,
+        "read_count": 1,
+        "sent_count": 2,
+        "failed_count": 0,
+    }
+    mock_list_recipients.return_value = [
+        {
+            "id": 101,
+            "wa_id": "5215512345678",
+            "contact_name": "Ana",
+            "status": "read",
+            "wamid": "wamid.HBg9999",
+            "error_message": None,
+            "error_data": None,
+            "sent_at": None,
+            "delivered_at": None,
+            "read_at": None,
+            "status_timestamp": None,
+        },
+        {
+            "id": 102,
+            "wa_id": "5215587654321",
+            "contact_name": "Carlos",
+            "status": "failed",
+            "wamid": "wamid.HBg8888",
+            "error_message": "Meta Error 131026: Undeliverable",
+            "error_data": {"code": 131026},
+            "sent_at": None,
+            "delivered_at": None,
+            "read_at": None,
+            "status_timestamp": None,
+        },
+    ]
+
+    class MockRequest:
+        session = {}
+
+    response = await client.client_get_campaign_recipients(
+        MockRequest(),
+        bot_id=43,
+        broadcast_id=10,
+    )
+
+    assert response.status_code == 200
+    data = json.loads(response.body)
+    assert data["campaign"]["id"] == 10
+    assert data["campaign"]["delivered_count"] == 1
+    assert data["campaign"]["read_count"] == 1
+    assert len(data["recipients"]) == 2
+    assert data["recipients"][0]["wamid"] == "wamid.HBg9999"
+    assert data["recipients"][0]["status"] == "read"
+    assert data["recipients"][1]["status"] == "failed"
+    assert "131026" in data["recipients"][1]["error_message"]
+
+
+@pytest.mark.asyncio
+@patch("app.meta_provider.get_bot_whatsapp_runtime")
+@patch("app.meta_provider.graph_post")
+@patch("app.db.save_message")
+async def test_send_template_message_extracts_wamid(mock_save_msg, mock_graph_post, mock_runtime):
+    mock_runtime.return_value = {
+        "bot": {"phone_number_id": "123456", "whatsapp_access_token": "token123"},
+        "integration": {},
+        "access_token": "token123",
+    }
+    mock_graph_post.return_value = {
+        "messaging_product": "whatsapp",
+        "contacts": [{"input": "5215512345678", "wa_id": "5215512345678"}],
+        "messages": [{"id": "wamid.HBgTestMessageId123"}],
+    }
+
+    res = await meta_provider.send_template_message(
+        bot_id=1,
+        to_wa_id="5215512345678",
+        template_name="test_tpl",
+        language_code="es_MX",
+    )
+
+    assert res["wamid"] == "wamid.HBgTestMessageId123"
+    assert res["phone_number_id"] == "123456"
+
+
+def test_whatsapp_client_extract_statuses_with_errors():
+    from app import whatsapp_client
+
+    payload = {
+        "object": "whatsapp_business_account",
+        "entry": [
+            {
+                "id": "1000",
+                "changes": [
+                    {
+                        "field": "messages",
+                        "value": {
+                            "messaging_product": "whatsapp",
+                            "metadata": {
+                                "display_phone_number": "5215500000000",
+                                "phone_number_id": "999888",
+                            },
+                            "statuses": [
+                                {
+                                    "id": "wamid.HBgFailureStatus",
+                                    "status": "failed",
+                                    "timestamp": "1728248400",
+                                    "recipient_id": "5215512345678",
+                                    "errors": [
+                                        {
+                                            "code": 131026,
+                                            "title": "Message undeliverable",
+                                            "message": "Message Undeliverable",
+                                            "error_data": {
+                                                "details": "Cloud API message undeliverable"
+                                            },
+                                        }
+                                    ],
+                                },
+                                {
+                                    "id": "wamid.HBgDeliveredStatus",
+                                    "status": "delivered",
+                                    "timestamp": "1728248410",
+                                    "recipient_id": "5215599999999",
+                                },
+                            ],
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+    statuses = whatsapp_client.extract_statuses(payload)
+    assert len(statuses) == 2
+
+    s0 = statuses[0]
+    assert s0["wamid"] == "wamid.HBgFailureStatus"
+    assert s0["status"] == "failed"
+    assert s0["recipient_id"] == "5215512345678"
+    assert s0["phone_number_id"] == "999888"
+    assert len(s0["errors"]) == 1
+    assert s0["errors"][0]["code"] == 131026
+
+    s1 = statuses[1]
+    assert s1["wamid"] == "wamid.HBgDeliveredStatus"
+    assert s1["status"] == "delivered"
+    assert s1["recipient_id"] == "5215599999999"
+    assert s1["errors"] == []
+
 

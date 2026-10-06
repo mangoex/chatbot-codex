@@ -276,4 +276,8 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data["campaign_id"], 999)
             self.assertEqual(data["status"], "running")
             self.assertEqual(data["sent_count"], 8)
+            self.assertEqual(data["accepted_count"], 8)
+            self.assertEqual(data["delivered_count"], 0)
+            self.assertEqual(data["read_count"], 0)
             self.assertEqual(data["total_recipients"], 10)
+            self.assertIsInstance(data["recipients"], list)

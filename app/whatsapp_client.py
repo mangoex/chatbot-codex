@@ -228,31 +228,38 @@ def extract_message(payload: dict) -> dict | None:
 def extract_statuses(payload: dict) -> list[dict]:
     """
     Extrae eventos de estado (statuses) del webhook de Meta.
-    Devuelve lista de diccionarios con info de entrega/envío.
+    Devuelve lista de diccionarios con info de entrega/envío y errores si existen.
     """
     out = []
-    try:
-        entry = payload["entry"][0]
-        change = entry["changes"][0]
-        value = change["value"]
+    if not isinstance(payload, dict):
+        return out
+
+    for change in _changes(payload):
+        value = change.get("value") or {}
+        if not isinstance(value, dict):
+            continue
         metadata = value.get("metadata", {}) or {}
         phone_id = metadata.get("phone_number_id", "")
         statuses = value.get("statuses") or []
         for s in statuses:
+            if not isinstance(s, dict):
+                continue
+            rec_id = s.get("recipient_id") or ""
+            wamid = s.get("id", "")
             conv = s.get("conversation", {}) or {}
             origin = conv.get("origin", {}) or {}
-            rec_id = s.get("recipient_id") or ""
-            if rec_id:
-                out.append({
-                    "message_id": s.get("id", ""),
-                    "status": s.get("status", ""),
-                    "recipient_id": rec_id,
-                    "phone_number_id": phone_id,
-                    "timestamp": s.get("timestamp"),
-                    "conversation_origin": origin.get("type", ""),
-                })
-    except (KeyError, IndexError, TypeError):
-        pass
+            out.append({
+                "id": wamid,
+                "wamid": wamid,
+                "message_id": wamid,
+                "status": s.get("status", ""),
+                "recipient_id": rec_id,
+                "phone_number_id": phone_id,
+                "timestamp": s.get("timestamp"),
+                "conversation_origin": origin.get("type", ""),
+                "errors": s.get("errors") or [],
+                "raw_status": s,
+            })
     return out
 
 

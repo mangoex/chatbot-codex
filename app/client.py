@@ -2055,15 +2055,18 @@ async def client_app(
     for b in broadcasts:
         b_status = b["status"].upper()
         total = b["total_recipients"] or 0
-        sent = b["sent_count"] or 0
-        failed = b["failed_count"] or 0
+        accepted = b.get("accepted_count") if b.get("accepted_count") is not None else (b.get("sent_count") or 0)
+        delivered = b.get("delivered_count") or 0
+        read = b.get("read_count") or 0
+        failed = b.get("failed_count") or 0
         last_error = (b.get("last_error") or "").strip()
+        b_name_b64 = base64.b64encode(b["name"].encode("utf-8")).decode("utf-8")
         
         if b_status == "COMPLETED":
-            if failed > 0 and sent == 0:
+            if failed > 0 and accepted == 0:
                 badge_class = "danger"
                 b_status_label = "Rechazada / Con fallos"
-            elif failed > 0 and sent > 0:
+            elif failed > 0 and accepted > 0:
                 badge_class = "warning"
                 b_status_label = "Parcialmente enviada"
             else:
@@ -2079,7 +2082,7 @@ async def client_app(
             badge_class = "info"
             b_status_label = b["status"]
         
-        progress_pct = int(min(100, (sent + failed) * 100 / total)) if total > 0 else 0
+        progress_pct = int(min(100, (accepted + failed) * 100 / total)) if total > 0 else 0
         
         scheduled_label = ""
         if b.get("scheduled_at") and b_status == "PENDING":
@@ -2090,7 +2093,6 @@ async def client_app(
         if failed > 0 or last_error:
             display_err = last_error or "Error desconocido al procesar plantilla con Meta WhatsApp API"
             err_b64 = base64.b64encode(display_err.encode("utf-8")).decode("utf-8")
-            b_name_b64 = base64.b64encode(b["name"].encode("utf-8")).decode("utf-8")
             b_tpl_b64 = base64.b64encode(b["template_name"].encode("utf-8")).decode("utf-8")
             error_html = f"""
             <div style="margin-top:6px; background:#fff1f2; border:1px solid #fecdd3; border-radius:5px; padding:6px 8px; font-size:11px; color:#9f1239; line-height:1.35;">
@@ -2104,6 +2106,18 @@ async def client_app(
             </div>
             """
 
+        metrics_html = f"""
+        <div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:5px; font-size:11px;">
+          <span class="badge" style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd;" title="Aceptados por la API de Meta">🔵 {accepted} aceptados</span>
+          <span class="badge" style="background:#dcfce7; color:#15803d; border:1px solid #bbf7d0;" title="Entregados al dispositivo de WhatsApp">🟢 {delivered} entregados</span>
+          <span class="badge" style="background:#f3e8ff; color:#7e22ce; border:1px solid #e9d5ff;" title="Leídos por el destinatario">🟣 {read} leídos</span>
+          <span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid #fecaca;" title="Falló el envío o entrega">🔴 {failed} fallidos</span>
+        </div>
+        <button type="button" class="btn secondary" onclick="showCampaignRecipientsModal('{b["id"]}', '{b_name_b64}')" style="margin-top:6px; padding:2px 8px; font-size:11px; display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
+          <span>📋 Ver destinatarios ({total})</span>
+        </button>
+        """
+
         header_badge_html = ""
         if b.get("header_media_url"):
             h_type_label = (b.get("header_type") or "imagen").upper()
@@ -2116,11 +2130,11 @@ async def client_app(
             {header_badge_html}
           </td>
           <td><code>{html.escape(b["template_name"])}</code></td>
-          <td style="font-size:12px; min-width:200px;"><strong>{sent + failed}</strong> / {total} <span class="muted-text">({progress_pct}%)</span><br>
+          <td style="font-size:12px; min-width:230px;"><strong>{accepted + failed}</strong> / {total} procesados <span class="muted-text">({progress_pct}%)</span><br>
             <div style="width:100%; background:#e2e8f0; height:6px; border-radius:3px; overflow:hidden; margin-top:4px;">
-              <div style="width:{progress_pct}%; background:{"var(--red)" if (failed > 0 and sent == 0) else "var(--primary)"}; height:100%;"></div>
+              <div style="width:{progress_pct}%; background:{"var(--red)" if (failed > 0 and accepted == 0) else "var(--primary)"}; height:100%;"></div>
             </div>
-            <small style="color:var(--green); font-weight:600;">{sent} exitosos</small> | <small style="color:var(--red); font-weight:600;">{failed} fallidos</small>
+            {metrics_html}
             {error_html}
           </td>
           <td><span class="badge {badge_class}" style="font-size:11px;">{html.escape(b_status_label)}</span>{scheduled_label}</td>
@@ -2938,6 +2952,46 @@ async def client_app(
         </div>
       </div>
 
+      <!-- Modal para ver destinatarios y status de entrega de Meta -->
+      <div id="campaignRecipientsModal" class="modal-overlay" onclick="closeCampaignRecipientsModal(event)">
+        <div class="modal-content" onclick="event.stopPropagation()" style="max-width:880px; width:95%;">
+          <div class="modal-header" style="background:#f8fafc; border-bottom:1px solid #e2e8f0;">
+            <div>
+              <h3 id="modalCampaignRecipientsTitle" style="color:var(--ink); margin:0; font-size:16px; display:flex; align-items:center; gap:8px;">
+                <span>📊</span> Estado de Entrega por Destinatario
+              </h3>
+              <small id="modalCampaignRecipientsSub" style="color:var(--muted); font-size:12px; display:block; margin-top:2px;">Campaña: -</small>
+            </div>
+            <button class="modal-close-btn" onclick="closeCampaignRecipientsModal(event)">&times;</button>
+          </div>
+          <div class="modal-body" style="max-height: 70vh; overflow-y: auto; padding:16px 20px;">
+            <div id="modalCampaignRecipientsCounts" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; padding:10px 14px; background:#f1f5f9; border-radius:6px;">
+              <!-- Badges de resumen dinámicos -->
+            </div>
+
+            <div style="overflow-x:auto;">
+              <table style="width:100%; font-size:12px; border-collapse:collapse;" id="modalCampaignRecipientsTable">
+                <thead>
+                  <tr style="border-bottom:2px solid #e2e8f0; text-align:left; color:var(--muted); font-size:11px; text-transform:uppercase;">
+                    <th style="padding:8px 6px;">Destinatario</th>
+                    <th style="padding:8px 6px;">Estado Meta</th>
+                    <th style="padding:8px 6px;">WAMID (ID Meta)</th>
+                    <th style="padding:8px 6px;">Fechas</th>
+                    <th style="padding:8px 6px;">Error / Detalle Meta</th>
+                  </tr>
+                </thead>
+                <tbody id="modalCampaignRecipientsBody">
+                  <tr><td colspan="5" style="text-align:center; padding:20px; color:var(--muted);">Cargando destinatarios...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="modal-footer" style="padding:12px 20px;">
+            <button class="btn secondary" onclick="closeCampaignRecipientsModal(event)" style="padding: 6px 16px; font-size:13px;">Cerrar</button>
+          </div>
+        </div>
+      </div>
+
       <script>
         function showCampaignErrorModal(id, nameB64, tplB64, errB64) {{
           try {{
@@ -2997,6 +3051,96 @@ async def client_app(
         function closeCampaignErrorModal(event) {{
           if (event) event.preventDefault();
           const modal = document.getElementById('campaignErrorModal');
+          if (modal) modal.classList.remove('active');
+        }}
+
+        async function showCampaignRecipientsModal(campaignId, nameB64) {{
+          try {{
+            const name = nameB64 ? atob(nameB64) : `Campaña #${{campaignId}}`;
+            document.getElementById('modalCampaignRecipientsSub').innerText = `Campaña: ${{name}} (ID: #${{campaignId}})`;
+            const countsEl = document.getElementById('modalCampaignRecipientsCounts');
+            const tbody = document.getElementById('modalCampaignRecipientsBody');
+            countsEl.innerHTML = '<span class="muted-text">Cargando métricas de entrega...</span>';
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--muted);">Cargando lista de destinatarios...</td></tr>';
+            
+            const modal = document.getElementById('campaignRecipientsModal');
+            if (modal) modal.classList.add('active');
+
+            const resp = await fetch(`/client/bots/{bot_id}/campaigns/${{campaignId}}/recipients`);
+            if (!resp.ok) {{
+              tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--red);">Error al consultar los destinatarios con el servidor.</td></tr>';
+              return;
+            }}
+            const data = await resp.json();
+            const camp = data.campaign || {{}};
+            const recs = data.recipients || [];
+
+            countsEl.innerHTML = `
+              <span class="badge" style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd;">🔵 Aceptados Meta: <strong>${{camp.accepted_count || 0}}</strong></span>
+              <span class="badge" style="background:#dcfce7; color:#15803d; border:1px solid #bbf7d0;">🟢 Entregados: <strong>${{camp.delivered_count || 0}}</strong></span>
+              <span class="badge" style="background:#f3e8ff; color:#7e22ce; border:1px solid #e9d5ff;">🟣 Leídos: <strong>${{camp.read_count || 0}}</strong></span>
+              <span class="badge" style="background:#fee2e2; color:#b91c1c; border:1px solid #fecaca;">🔴 Fallidos: <strong>${{camp.failed_count || 0}}</strong></span>
+              <span class="badge" style="background:#f8fafc; color:#475569; border:1px solid #cbd5e1;">👥 Total: <strong>${{camp.total_recipients || recs.length}}</strong></span>
+            `;
+
+            if (recs.length === 0) {{
+              tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--muted);">No hay destinatarios registrados en esta campaña.</td></tr>';
+              return;
+            }}
+
+            let rowsHtml = '';
+            for (const r of recs) {{
+              let badgeHtml = '';
+              const st = (r.status || 'pending').toLowerCase();
+              if (st === 'read') {{
+                badgeHtml = '<span class="badge" style="background:#f3e8ff; color:#7e22ce; border:1px solid #e9d5ff;">🟣 Leído</span>';
+              }} else if (st === 'delivered') {{
+                badgeHtml = '<span class="badge" style="background:#dcfce7; color:#15803d; border:1px solid #bbf7d0;">🟢 Entregado</span>';
+              }} else if (st === 'accepted' || st === 'sent') {{
+                badgeHtml = '<span class="badge" style="background:#e0f2fe; color:#0369a1; border:1px solid #bae6fd;">🔵 Aceptado Meta</span>';
+              }} else if (st === 'failed') {{
+                badgeHtml = '<span class="badge danger">🔴 Fallido</span>';
+              }} else if (st === 'skipped_human_handoff') {{
+                badgeHtml = '<span class="badge warning">Omitido (Asesor)</span>';
+              }} else {{
+                badgeHtml = `<span class="badge info">${{r.status}}</span>`;
+              }}
+
+              const wamidVal = r.wamid || '';
+              const wamidShort = wamidVal ? `<span title="${{wamidVal}}" style="font-family:monospace; font-size:10.5px; background:#f1f5f9; padding:2px 5px; border-radius:4px; max-width:130px; display:inline-block; overflow:hidden; text-overflow:ellipsis; vertical-align:middle; cursor:pointer;" onclick="navigator.clipboard.writeText('${{wamidVal}}'); alert('WAMID copiado al portapapeles');">${{wamidVal.length > 18 ? wamidVal.substring(0, 8) + '...' + wamidVal.slice(-6) : wamidVal}}</span>` : '<span class="muted-text">-</span>';
+
+              let datesHtml = '';
+              if (r.read_at) datesHtml += `<div><small style="color:#7e22ce;">Leído: ${{r.read_at}}</small></div>`;
+              if (r.delivered_at) datesHtml += `<div><small style="color:#15803d;">Entregado: ${{r.delivered_at}}</small></div>`;
+              if (r.sent_at) datesHtml += `<div><small style="color:var(--muted);">Enviado: ${{r.sent_at}}</small></div>`;
+              if (!datesHtml) datesHtml = '<span class="muted-text">-</span>';
+
+              const errText = r.error_message || (r.error_data ? JSON.stringify(r.error_data) : '');
+              const errCell = errText ? `<div style="color:#991b1b; font-size:11px; line-height:1.3; max-width:260px; word-break:break-word; background:#fee2e2; padding:4px 6px; border-radius:4px; border:1px solid #fca5a5;">${{errText}}</div>` : '<span style="color:#16a34a; font-size:11px; font-weight:600;">✓ Sin errores</span>';
+
+              rowsHtml += `
+                <tr style="border-bottom:1px solid #f1f5f9;">
+                  <td style="padding:8px 6px;">
+                    <strong>+${{r.wa_id}}</strong>
+                    ${{r.contact_name ? `<br><small class="muted-text">${{r.contact_name}}</small>` : ''}}
+                  </td>
+                  <td style="padding:8px 6px;">${{badgeHtml}}</td>
+                  <td style="padding:8px 6px;">${{wamidShort}}</td>
+                  <td style="padding:8px 6px;">${{datesHtml}}</td>
+                  <td style="padding:8px 6px;">${{errCell}}</td>
+                </tr>
+              `;
+            }}
+            tbody.innerHTML = rowsHtml;
+          }} catch (e) {{
+            console.error(e);
+            alert('Error al desplegar detalle de destinatarios: ' + e);
+          }}
+        }}
+
+        function closeCampaignRecipientsModal(event) {{
+          if (event) event.preventDefault();
+          const modal = document.getElementById('campaignRecipientsModal');
           if (modal) modal.classList.remove('active');
         }}
 
@@ -5911,7 +6055,7 @@ async def process_broadcast_queue(broadcast_id: int, bot_id: int) -> None:
                         )
                         await db.update_broadcast_recipient_status(recipient_id, "skipped_human_handoff")
                         continue
-                    await meta_provider.send_template_message(
+                    send_res = await meta_provider.send_template_message(
                         bot_id=bot_id,
                         to_wa_id=wa_id,
                         template_name=template_name,
@@ -5920,7 +6064,12 @@ async def process_broadcast_queue(broadcast_id: int, bot_id: int) -> None:
                         header_type=header_type,
                         header_media_url=header_media_url,
                     )
-                    await db.update_broadcast_recipient_status(recipient_id, "sent")
+                    wamid = send_res.get("wamid") if isinstance(send_res, dict) else None
+                    await db.update_broadcast_recipient_status(
+                        recipient_id,
+                        "accepted",
+                        wamid=wamid,
+                    )
                 except Exception as exc:
                     log.error(f"Error al enviar mensaje de campaña a {wa_id}: {exc}")
                     await db.update_broadcast_recipient_status(recipient_id, "failed", error_message=str(exc))
@@ -5929,7 +6078,7 @@ async def process_broadcast_queue(broadcast_id: int, bot_id: int) -> None:
                 
         # Finalizar campaña: verificar si todos fallaron o si hubo envíos exitosos
         final_b = await db.get_broadcast(broadcast_id, bot_id)
-        if final_b and final_b.get("sent_count", 0) == 0 and final_b.get("failed_count", 0) > 0:
+        if final_b and (final_b.get("accepted_count", 0) == 0 and final_b.get("sent_count", 0) == 0) and final_b.get("failed_count", 0) > 0:
             await db.update_broadcast_status(broadcast_id, "failed")
             log.info(f"Procesamiento de campaña {broadcast_id} finalizado con fallos totales (failed_count={final_b.get('failed_count')}).")
         else:
@@ -6061,6 +6210,49 @@ async def client_campaigns_create(
     return RedirectResponse(
         f"/client/app?bot_id={bot_id}&tab=campaigns&saved=1", status_code=302
     )
+
+
+@router.get("/bots/{bot_id}/campaigns/{broadcast_id}/recipients", response_class=JSONResponse)
+async def client_get_campaign_recipients(
+    request: Request,
+    bot_id: int,
+    broadcast_id: int,
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    b = await db.get_broadcast(broadcast_id, bot_id)
+    if not b:
+        raise HTTPException(status_code=404, detail="Campaña no encontrada")
+    recipients = await db.list_broadcast_recipients(broadcast_id, limit=1000)
+    return JSONResponse({
+        "campaign": {
+            "id": b["id"],
+            "name": b["name"],
+            "template_name": b["template_name"],
+            "total_recipients": b["total_recipients"],
+            "accepted_count": b.get("accepted_count", 0) or b.get("sent_count", 0),
+            "delivered_count": b.get("delivered_count", 0),
+            "read_count": b.get("read_count", 0),
+            "sent_count": b.get("sent_count", 0),
+            "failed_count": b.get("failed_count", 0),
+        },
+        "recipients": [
+            {
+                "id": r["id"],
+                "wa_id": r["wa_id"],
+                "contact_name": r.get("contact_name") or "",
+                "status": r.get("status") or "pending",
+                "wamid": r.get("wamid") or "",
+                "error_message": r.get("error_message") or "",
+                "error_data": r.get("error_data"),
+                "sent_at": _fmt_dt(r.get("sent_at")) if r.get("sent_at") else "",
+                "delivered_at": _fmt_dt(r.get("delivered_at")) if r.get("delivered_at") else "",
+                "read_at": _fmt_dt(r.get("read_at")) if r.get("read_at") else "",
+                "status_timestamp": _fmt_dt(r.get("status_timestamp")) if r.get("status_timestamp") else "",
+            }
+            for r in recipients
+        ],
+    })
 
 
 @router.post("/bots/{bot_id}/triggers/create")
