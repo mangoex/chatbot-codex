@@ -1823,10 +1823,30 @@ async def client_app(
             </div>
             """
         else:
-            col_options = ""
-            for idx, h in enumerate(headers):
-                col_options += f'<option value="{idx}">{html.escape(h)} (Columna {idx+1})</option>'
-                
+            def _build_col_select_options(keywords: list[str], required: bool = False) -> str:
+                matched_idx = -1
+                for idx, h in enumerate(headers):
+                    hl = h.lower()
+                    if any(kw in hl for kw in keywords):
+                        matched_idx = idx
+                        break
+                opts = []
+                if required:
+                    placeholder_sel = "selected" if matched_idx < 0 else ""
+                    opts.append(f'<option value="" disabled {placeholder_sel}>-- Seleccionar columna --</option>')
+                else:
+                    none_sel = "selected" if matched_idx < 0 else ""
+                    opts.append(f'<option value="-1" {none_sel}>-- No importar (vacío) --</option>')
+                for idx, h in enumerate(headers):
+                    sel = "selected" if idx == matched_idx else ""
+                    opts.append(f'<option value="{idx}" {sel}>{html.escape(h)} (Columna {idx+1})</option>')
+                return "".join(opts)
+
+            phone_col_options = _build_col_select_options(["phone", "tel", "cel", "wa", "whatsapp", "móvil", "movil"], required=True)
+            name_col_options = _build_col_select_options(["name", "nom", "contacto", "title", "cliente"])
+            business_col_options = _build_col_select_options(["busin", "negoc", "empresa", "local", "categoria", "category"])
+            tags_col_options = _build_col_select_options(["tag", "etiquet", "score", "clasif"])
+
             mapping_wizard_html = f"""
             <div class="card" style="margin-top:20px; border:1px solid #bae6fd; background:#f0f9ff;">
               <div class="card-header">
@@ -1841,24 +1861,21 @@ async def client_app(
                     <label style="font-weight:600; margin-bottom:4px;">Columna de Teléfono (Obligatoria)</label>
                     <p class="muted-text" style="font-size:11px; margin:0 0 6px 0;">Debe contener los números telefónicos con prefijo de país.</p>
                     <select name="phone_col" required>
-                      <option value="" disabled selected>-- Seleccionar columna --</option>
-                      {col_options}
+                      {phone_col_options}
                     </select>
                   </div>
                   
                   <div>
                     <label style="font-weight:600; margin-bottom:4px;">Columna de Nombre (Opcional)</label>
                     <select name="name_col">
-                      <option value="-1">-- No importar (vacío) --</option>
-                      {col_options}
+                      {name_col_options}
                     </select>
                   </div>
                   
                   <div>
                     <label style="font-weight:600; margin-bottom:4px;">Columna de Negocio/Empresa (Opcional)</label>
                     <select name="business_col">
-                      <option value="-1">-- No importar (vacío) --</option>
-                      {col_options}
+                      {business_col_options}
                     </select>
                   </div>
                   
@@ -1866,8 +1883,7 @@ async def client_app(
                     <label style="font-weight:600; margin-bottom:4px;">Columna de Etiquetas (Opcional)</label>
                     <p class="muted-text" style="font-size:11px; margin:0 0 6px 0;">Las etiquetas dentro de la celda deben estar separadas por comas.</p>
                     <select name="tags_col">
-                      <option value="-1">-- No importar (vacío) --</option>
-                      {col_options}
+                      {tags_col_options}
                     </select>
                   </div>
                 </div>
@@ -5756,19 +5772,59 @@ async def client_whatsapp_templates_submit(
 
 # --- CONTACTS FILE PARSING & IMPORT HELPERS ---
 
+def _read_text_file_lines(file_path: str) -> tuple[list[str], str]:
+    """Lee un archivo de texto probando codificaciones comunes (utf-8-sig, utf-8, latin-1, cp1252)."""
+    encodings = ("utf-8-sig", "utf-8", "latin-1", "cp1252")
+    for enc in encodings:
+        try:
+            with open(file_path, "r", encoding=enc) as f:
+                content = f.read()
+                return content.splitlines(), enc
+        except UnicodeDecodeError:
+            continue
+    with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+        return f.read().splitlines(), "utf-8"
+
+
+def _detect_csv_delimiter(sample_lines: list[str]) -> str:
+    """Detecta el delimitador de CSV más probable (coma, punto y coma o tabulación)."""
+    if not sample_lines:
+        return ","
+    sample = "\n".join(sample_lines[:15])
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+        return dialect.delimiter
+    except Exception:
+        semis = sample.count(";")
+        commas = sample.count(",")
+        tabs = sample.count("\t")
+        if semis > commas and semis > tabs:
+            return ";"
+        if tabs > commas and tabs > semis:
+            return "\t"
+        return ","
+
+
 def extract_headers_from_file(file_path: str) -> list[str]:
     _, ext = os.path.splitext(file_path.lower())
     try:
         if ext == ".csv":
-            with open(file_path, "r", encoding="utf-8-sig") as f:
-                reader = csv.reader(f)
-                headers = next(reader, None)
-                return [h.strip() for h in headers if h.strip()] if headers else []
+            lines, _ = _read_text_file_lines(file_path)
+            if not lines:
+                return []
+            delim = _detect_csv_delimiter(lines)
+            reader = csv.reader(lines, delimiter=delim)
+            headers = next(reader, None)
+            if not headers:
+                return []
+            return [str(h).strip() if str(h).strip() else f"Columna {i+1}" for i, h in enumerate(headers)]
         elif ext == ".xlsx":
-            wb = openpyxl.load_workbook(file_path, read_only=True)
+            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
             sheet = wb.active
             for row in sheet.iter_rows(max_row=1, values_only=True):
-                return [str(cell).strip() for cell in row if cell is not None and str(cell).strip()]
+                if not row:
+                    return []
+                return [str(cell).strip() if cell is not None and str(cell).strip() else f"Columna {i+1}" for i, cell in enumerate(row)]
     except Exception as exc:
         log.error(f"Error reading headers from {file_path}: {exc}")
     return []
@@ -5785,24 +5841,27 @@ def parse_contacts_file(
     _, ext = os.path.splitext(file_path.lower())
     try:
         if ext == ".csv":
-            with open(file_path, "r", encoding="utf-8-sig") as f:
-                reader = csv.reader(f)
-                next(reader, None)  # Skip header
-                for row in reader:
-                    if not row or len(row) <= phone_col_idx:
-                        continue
-                    phone = row[phone_col_idx].strip()
-                    if not phone:
-                        continue
-                    name = row[name_col_idx].strip() if (name_col_idx is not None and len(row) > name_col_idx) else None
-                    business = row[business_col_idx].strip() if (business_col_idx is not None and len(row) > business_col_idx) else None
-                    tags = row[tags_col_idx].strip() if (tags_col_idx is not None and len(row) > tags_col_idx) else None
-                    contacts.append({
-                        "wa_id": phone,
-                        "name": name,
-                        "business": business,
-                        "tags": tags,
-                    })
+            lines, _ = _read_text_file_lines(file_path)
+            if not lines:
+                return []
+            delim = _detect_csv_delimiter(lines)
+            reader = csv.reader(lines, delimiter=delim)
+            next(reader, None)  # Skip header
+            for row in reader:
+                if not row or len(row) <= phone_col_idx:
+                    continue
+                phone = str(row[phone_col_idx] or "").strip()
+                if not phone:
+                    continue
+                name = str(row[name_col_idx]).strip() if (name_col_idx is not None and len(row) > name_col_idx and row[name_col_idx] is not None) else None
+                business = str(row[business_col_idx]).strip() if (business_col_idx is not None and len(row) > business_col_idx and row[business_col_idx] is not None) else None
+                tags = str(row[tags_col_idx]).strip() if (tags_col_idx is not None and len(row) > tags_col_idx and row[tags_col_idx] is not None) else None
+                contacts.append({
+                    "wa_id": phone,
+                    "name": name,
+                    "business": business,
+                    "tags": tags,
+                })
         elif ext == ".xlsx":
             wb = openpyxl.load_workbook(file_path, data_only=True)
             sheet = wb.active
@@ -5813,12 +5872,16 @@ def parse_contacts_file(
                     continue
                 if not row or len(row) <= phone_col_idx:
                     continue
-                phone = str(row[phone_col_idx] or "").strip()
+                raw_phone = row[phone_col_idx]
+                if isinstance(raw_phone, float) and raw_phone.is_integer():
+                    phone = str(int(raw_phone))
+                else:
+                    phone = str(raw_phone or "").strip()
                 if not phone:
                     continue
-                name = str(row[name_col_idx] or "").strip() if (name_col_idx is not None and len(row) > name_col_idx) else None
-                business = str(row[business_col_idx] or "").strip() if (business_col_idx is not None and len(row) > business_col_idx) else None
-                tags = str(row[tags_col_idx] or "").strip() if (tags_col_idx is not None and len(row) > tags_col_idx) else None
+                name = str(row[name_col_idx]).strip() if (name_col_idx is not None and len(row) > name_col_idx and row[name_col_idx] is not None) else None
+                business = str(row[business_col_idx]).strip() if (business_col_idx is not None and len(row) > business_col_idx and row[business_col_idx] is not None) else None
+                tags = str(row[tags_col_idx]).strip() if (tags_col_idx is not None and len(row) > tags_col_idx and row[tags_col_idx] is not None) else None
                 contacts.append({
                     "wa_id": phone,
                     "name": name,

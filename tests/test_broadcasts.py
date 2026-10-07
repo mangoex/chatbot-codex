@@ -660,3 +660,48 @@ def test_whatsapp_client_extract_statuses_with_errors():
     assert s1["errors"] == []
 
 
+def test_parse_contacts_file_latin1_and_semicolon(tmp_path):
+    """Verifica que el parser soporte archivos CSV con codificación Latin-1 y delimitador de punto y coma."""
+    csv_file = tmp_path / "latin1_contacts.csv"
+    content = "Nombre;Teléfono;Negocio;Tags\nTaquería Sinaloa;526675014742;Taquería;Score A\nTaquería El Viejón;526677674125;Taquería;Score A\n"
+    with open(csv_file, "w", encoding="latin-1") as f:
+        f.write(content)
+
+    headers = client.extract_headers_from_file(str(csv_file))
+    assert headers == ["Nombre", "Teléfono", "Negocio", "Tags"]
+
+    contacts = client.parse_contacts_file(
+        str(csv_file),
+        phone_col_idx=1,
+        name_col_idx=0,
+        business_col_idx=2,
+        tags_col_idx=3,
+    )
+    assert len(contacts) == 2
+    assert contacts[0]["name"] == "Taquería Sinaloa"
+    assert contacts[0]["wa_id"] == "526675014742"
+    assert contacts[0]["business"] == "Taquería"
+    assert contacts[1]["name"] == "Taquería El Viejón"
+
+
+def test_parse_contacts_file_xlsx_numeric_phone(tmp_path):
+    """Verifica que números telefónicos numéricos o floats en Excel no sufran distorsión."""
+    xlsx_file = tmp_path / "numeric_contacts.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["Nombre", "Telefono", "Negocio"])
+    ws.append(["Tacos Don Pepe", 526671234567.0, "Taquería"])
+    wb.save(xlsx_file)
+
+    contacts = client.parse_contacts_file(
+        str(xlsx_file),
+        phone_col_idx=1,
+        name_col_idx=0,
+        business_col_idx=2,
+    )
+    assert len(contacts) == 1
+    assert contacts[0]["wa_id"] == "526671234567"
+    assert contacts[0]["name"] == "Tacos Don Pepe"
+
+
+
