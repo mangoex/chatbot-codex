@@ -19,6 +19,7 @@ from tests.test_pbd_validation import (
     VALID_SPECS,
     VALID_TESTS,
 )
+from tests.test_single_prompt import VALID_SINGLE_PROMPT
 
 # Clean sys.modules after module loading
 sys.modules.pop("httpx", None)
@@ -27,6 +28,80 @@ sys.modules.pop("cryptography.fernet", None)
 
 
 class TestClientPanelFeatures:
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.publish_bot_prompt")
+    async def test_single_prompt_save_publishes_without_auxiliary_documents(self, mock_publish, mock_bot):
+        from app import client
+
+        request = types.SimpleNamespace(session={"user": "owner", "role": "client_admin", "client_id": 44})
+        mock_bot.return_value = {"id": 1, "client_id": 44}
+        response = await client.client_prompt_save(
+            request, 1, prompt=VALID_SINGLE_PROMPT, prompt_format="single_prompt",
+        )
+        assert "saved=1" in response.headers["location"]
+        mock_publish.assert_awaited_once_with(1, VALID_SINGLE_PROMPT.strip())
+
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.publish_bot_prompt")
+    async def test_single_prompt_save_rejects_incomplete_and_pending_content(self, mock_publish, mock_bot):
+        from app import client
+
+        request = types.SimpleNamespace(session={"user": "owner", "role": "client_admin", "client_id": 44})
+        mock_bot.return_value = {"id": 1, "client_id": 44}
+        for prompt in ("Prompt incompleto", VALID_SINGLE_PROMPT + "\n[TBD: definir precios]"):
+            response = await client.client_prompt_save(request, 1, prompt=prompt, prompt_format="single_prompt")
+            assert "saved=err_" in response.headers["location"]
+        mock_publish.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.get_active_bot_prompt")
+    @patch("app.db.list_bot_knowledge")
+    @patch("app.db.list_bot_integrations")
+    @patch("app.db.list_bot_skills")
+    @patch("app.prompt_assistant.assist_prompt")
+    @patch("app.db.publish_bot_prompt")
+    async def test_single_prompt_assist_uses_stored_legacy_rules_for_own_bot(
+        self, mock_publish, mock_assist, mock_skills, mock_integrations, mock_knowledge, mock_prompt, mock_bot,
+    ):
+        from app import client
+
+        request = types.SimpleNamespace(session={"user": "owner", "role": "client_admin", "client_id": 44})
+        mock_bot.return_value = {"id": 1, "client_id": 44}
+        mock_prompt.return_value = {"pbd_constitution": "Reglas propias", "pbd_specs": "Flujos propios"}
+        mock_knowledge.return_value = []
+        mock_integrations.return_value = []
+        mock_skills.return_value = []
+        mock_assist.return_value = {"ok": True, "prompt": VALID_SINGLE_PROMPT}
+        response = await client.client_prompt_assist(
+            request, 1, instruction="Ajusta tono", current_prompt="Borrador editado",
+            mode="single_prompt", pbd_constitution="Reglas manipuladas", auto_publish="true",
+        )
+        assert response.status_code == 200
+        assert json.loads(response.body)["published"] is False
+        mock_prompt.assert_awaited_once_with(1)
+        assert mock_assist.await_args.kwargs["pbd_constitution"] == "Reglas propias"
+        assert mock_assist.await_args.kwargs["pbd_specs"] == "Flujos propios"
+        assert mock_assist.await_args.kwargs["pbd_test_suite"] == ""
+        assert mock_assist.await_args.kwargs["current_prompt"] == "Borrador editado"
+        mock_publish.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("app.db.get_bot")
+    @patch("app.db.publish_bot_prompt")
+    async def test_single_prompt_save_respects_viewer_and_tenant_permissions(self, mock_publish, mock_bot):
+        from app import client
+        from fastapi import HTTPException
+
+        mock_bot.return_value = {"id": 1, "client_id": 99}
+        for role in ("client_viewer", "client_admin"):
+            request = types.SimpleNamespace(session={"user": "owner", "role": role, "client_id": 44})
+            with pytest.raises(HTTPException):
+                await client.client_prompt_save(request, 1, prompt=VALID_SINGLE_PROMPT, prompt_format="single_prompt")
+        mock_publish.assert_not_awaited()
+
     def test_knowledge_table_marks_private_directory_and_index_status(self):
         from app import client
 
@@ -250,15 +325,16 @@ class TestClientPanelFeatures:
         assert response is not None
         html_body = response.body.decode("utf-8")
         assert "Bot 1" in html_body
-        assert "Agente PBD con IA" in html_body
-        assert "PBD" in html_body
-        assert "Validar y publicar comportamiento" in html_body
+        assert "Tu prompt maestro" in html_body
+        assert "Generar o ajustar prompt maestro" in html_body
+        assert "Guardar y activar prompt maestro" in html_body
         assert "Publicar automáticamente en producción" not in html_body
-        assert "Autorizar cambio constitucional" in html_body
-
-        assert "Constitucion actual" in html_body
-        assert "Especificaciones actuales" in html_body
-        assert "Suite actual" in html_body
+        assert 'name="prompt_format" value="single_prompt"' in html_body
+        assert "Autorizar cambio constitucional" not in html_body
+        assert "activeConstitutionEditor" not in html_body
+        assert "Constitucion actual" not in html_body
+        assert "Especificaciones actuales" not in html_body
+        assert "Suite actual" not in html_body
 
     @pytest.mark.asyncio
     @patch("app.db.get_bot")

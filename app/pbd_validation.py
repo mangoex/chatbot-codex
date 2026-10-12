@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 
 
@@ -38,6 +39,18 @@ TEST_CLAUSE_ALIASES = {
     "THEN/ENTONCES": (r"\bTHEN\b", r"\bENTONCES\b"),
     "AND MUST NOT/Y NO DEBE": (r"\bAND\s+MUST\s+NOT\b", r"\bY\s+NO\s+DEBE\b"),
 }
+
+SINGLE_PROMPT_SECTIONS = (
+    "Identidad y contexto",
+    "Objetivos",
+    "Criterios de respuesta",
+    "Guardrails",
+    "Reglas y flujos",
+    "Fuentes autorizadas",
+    "Herramientas e integraciones",
+    "Escalado humano y fallbacks",
+    "Ejemplos de comportamiento",
+)
 
 
 @dataclass
@@ -229,6 +242,63 @@ def validate_pbd_bundle(
 
 def validation_error_message(report: PBDValidationReport) -> str:
     return "Validación PBD fallida: " + " ".join(report.errors)
+
+
+def validate_single_prompt(
+    prompt: str | None, *, for_publish: bool = False,
+) -> PBDValidationReport:
+    """Check one executable document, without synthesizing missing business rules.
+
+    This validates structure, not the semantic safety of generated responses.
+    Existing XML prompts remain supported during migration.
+    """
+    text = _clean(prompt)
+    report = PBDValidationReport(master_xml=text)
+    if not text:
+        report.errors.append("El prompt maestro está vacío.")
+        return report
+    if any(marker.lower() in text.lower() for marker in TRUNCATION_MARKERS):
+        report.errors.append("El prompt maestro contiene una marca de truncamiento.")
+    if any(marker in text.lower() for marker in ("[tbd", "pending decision", "pendiente de decisión")):
+        message = "El prompt maestro contiene decisiones pendientes."
+        if for_publish:
+            report.errors.append(message + " Resuélvelas antes de guardar.")
+        else:
+            report.warnings.append(message)
+
+    candidate = extract_master_xml(text)
+    if text.startswith("<") or re.search(r"```xml\s", text, re.IGNORECASE):
+        try:
+            root = ET.fromstring(candidate)
+        except ET.ParseError:
+            report.errors.append("El prompt maestro contiene XML incompleto o inválido.")
+        else:
+            report.master_xml = candidate
+            for tag in REQUIRED_MASTER_SECTIONS:
+                elements = [e for e in root.iter() if e.tag.split("}")[-1] == tag]
+                if not elements or not any("".join(e.itertext()).strip() for e in elements):
+                    report.errors.append(f"El prompt maestro necesita contenido en {tag}.")
+        return report
+
+    def normalize(value: str) -> str:
+        return "".join(c for c in unicodedata.normalize("NFD", value.lower())
+                       if unicodedata.category(c) != "Mn").strip()
+
+    headings = list(re.finditer(r"^#{1,6}\s+(.+?)\s*$", text, re.MULTILINE))
+    sections: dict[str, str] = {}
+    for index, heading in enumerate(headings):
+        level = len(heading.group(0)) - len(heading.group(0).lstrip("#"))
+        end = len(text)
+        for following in headings[index + 1:]:
+            next_level = len(following.group(0)) - len(following.group(0).lstrip("#"))
+            if next_level <= level:
+                end = following.start()
+                break
+        sections[normalize(heading.group(1))] = text[heading.end():end].strip()
+    for section in SINGLE_PROMPT_SECTIONS:
+        if not sections.get(normalize(section)):
+            report.errors.append(f"El prompt maestro necesita la sección «{section}» con contenido.")
+    return report
 
 
 def auto_heal_pbd_bundle(

@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 
 from app import bot_control, db, config, auth, secure_store, meta_provider, prompt_assistant, pbd_validation, skill_runtime, calendar_client, file_parser
 from app.knowledge_privacy import is_private_directory_title
+from app.prompt_workspace import render_prompt_workspace
 
 log = logging.getLogger("client-panel")
 router = APIRouter(prefix="/client", tags=["client-portal"])
@@ -1241,9 +1242,6 @@ async def client_app(
     # Active prompt and PBD docs
     prompt_row = await db.get_active_bot_prompt(bot_id)
     current_prompt_content = (prompt_row.get("content") or "") if prompt_row else ""
-    current_constitution = (prompt_row.get("pbd_constitution") or "") if prompt_row else ""
-    current_specs = (prompt_row.get("pbd_specs") or "") if prompt_row else ""
-    current_test_suite = (prompt_row.get("pbd_test_suite") or "") if prompt_row else ""
     
     # Business Hours Skill
     hours_skill = await db.get_bot_skill(bot_id, "business_hours")
@@ -3622,251 +3620,7 @@ async def client_app(
     <!-- 3. TAB PANEL: COMPORTAMIENTO (PROMPT) -->
     <div id="panel-prompt" class="tab-panel">
       {'' if prompt_row else '<div class="notice-banner error">Este bot no tiene un prompt activo. Permanecera bloqueado hasta publicar un comportamiento propio.</div>'}
-      <form id="behaviorForm" method="post" action="/client/bots/{bot_id}/prompt/save?csrf_token={html.escape(csrf_token)}">
-        <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
-
-        <div class="prompt-workspace" style="display:block; max-width:960px; margin:0 auto;">
-          <div class="card" style="box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-radius: 8px;">
-            <div class="card-header" style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px;">
-              <div>
-                <h2 style="font-size:18px; margin:0 0 6px 0;">Agente PBD con IA (Prompt Behavior Design)</h2>
-                <p style="color:var(--text-muted); font-size:13.5px; margin:0; line-height:1.5;">
-                  Define en lenguaje natural cómo debe comportarse tu bot mediante historias y requerimientos. El sistema desarrolla internamente los 4 documentos PBD (Constitución, Especificaciones, Pruebas y Master Prompt) respetando estrictamente tu Base de Conocimiento y las reglas de escalado humano.
-                </p>
-              </div>
-              <a href="/client/bots/{bot_id}/prompt/pbd/export" class="btn secondary" style="font-size:12px; padding:6px 12px; text-decoration:none; display:inline-flex; align-items:center; gap:6px; flex-shrink:0;" title="Descargar paquete completo de documentación .md">
-                📥 Descargar PBD (.zip)
-              </a>
-            </div>
-            
-            <div style="margin-bottom:16px;">
-              <label for="aiPromptInstruction" style="font-size:14px; font-weight:700; margin-bottom:8px; display:block;">
-                ¿Cómo quieres que se comporte tu bot o qué cambios necesitas?
-              </label>
-              <textarea id="aiPromptInstruction" style="min-height: 130px; width:100%; border:1.5px solid var(--border-color); border-radius:8px; padding:14px; font-size:13.5px; line-height:1.6; box-sizing:border-box;" placeholder="Ej. Quiero que atiendas dudas sobre nuestros servicios basándote en la base de conocimiento oficial. Si un cliente solicita agendar cita o tiene una queja, pide su nombre y teléfono y canalízalo de inmediato con un asesor humano..."></textarea>
-            </div>
-            
-            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:18px; background:#f8fafc; padding:12px; border-radius:6px; border:1px solid var(--border-color);">
-              <div>
-                <label for="aiPbdMode" style="font-size:12px; font-weight:600; margin-bottom:4px; display:block;">Modo de Operación PBD</label>
-                <select id="aiPbdMode" style="width:100%; padding:6px 10px; font-size:12.5px; border-radius:4px; border:1px solid var(--border-color); background:#fff;">
-                  <option value="auto" selected>⚡ Auto (Detectar y actualizar sin romper reglas)</option>
-                  <option value="bootstrap">🔄 Bootstrap (Crear o reconstruir todo desde cero)</option>
-                  <option value="update">🎯 Update (Adecuar especificaciones y flujos)</option>
-                </select>
-              </div>
-              <div style="display:flex; align-items:center; padding-top:16px;">
-                <div>
-                  <label style="display:flex; align-items:center; gap:8px; font-size:12.5px; font-weight:600; cursor:pointer;">
-                    <input type="checkbox" id="aiAllowConstitutionChange" style="width:16px; height:16px; cursor:pointer;">
-                    Autorizar cambio constitucional
-                  </label>
-                  <small style="display:block; color:#92400e; margin-top:4px;">Actívalo solo si deseas cambiar identidad, guardrails o reglas superiores.</small>
-                </div>
-              </div>
-            </div>
-
-            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-              <button class="btn primary-btn" type="button" id="btnAssistPrompt" onclick="requestAIPrompt()" style="font-size:13.5px; font-weight:700; padding:10px 20px;">
-                ✨ Desarrollar y Validar Comportamiento con PBD
-              </button>
-              <span id="aiAssistLoader" role="status" aria-live="polite" style="display:none; font-size:13px; color:var(--primary); font-weight:600;">
-                🧠 Ejecutando PBD WhatsApp Maintainer...
-              </span>
-            </div>
-            
-            <!-- ALERTA DE CONTRADICCIÓN CONSTITUCIONAL -->
-            <div id="pbdBlockedAlert" role="alert" style="margin-top:16px; display:none; background:#fff1f2; border:1px solid #fda4af; border-left:4px solid #e11d48; padding:14px; border-radius:6px;">
-              <div style="display:flex; align-items:center; gap:8px; margin-bottom:6px;">
-                <span style="font-size:16px;">⛔</span>
-                <span style="font-weight:700; color:#9f1239; font-size:13.5px;">Cambio Bloqueado por Contradicción Constitucional</span>
-              </div>
-              <p id="pbdBlockedText" style="font-size:12.5px; color:#881337; margin:0; line-height:1.5; white-space:pre-wrap;"></p>
-            </div>
-
-            <!-- RESULTADO Y VALIDACIÓN PBD -->
-            <div id="promptPreviewBlock" style="margin-top:20px; display:none; background:#f0fdf4; border:1px solid #bbf7d0; padding:18px; border-radius:8px;">
-              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-                <div>
-                  <span class="bold-text" style="font-size:14px; color:#166534;" id="pbdPreviewTitle">✅ Comportamiento PBD Validado y Listo</span>
-                </div>
-              </div>
-              <div id="pbdValidationReport" role="status" aria-live="polite" style="font-size:12.5px; color:#15803d; line-height:1.5; margin:0 0 14px;"></div>
-              
-              <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:10px; margin-bottom:14px; font-size:12px;">
-                <div style="background:#fff; padding:10px; border-radius:6px; border:1px solid #bbf7d0;">
-                  <span style="font-weight:700; color:#166534;">📚 Base de Conocimiento</span>
-                  <div style="color:#14532d; margin-top:2px;">Respuestas estrictamente fundamentadas en fuentes oficiales.</div>
-                </div>
-                <div style="background:#fff; padding:10px; border-radius:6px; border:1px solid #bbf7d0;">
-                  <span style="font-weight:700; color:#166534;">🚨 Escalado Humano</span>
-                  <div style="color:#14532d; margin-top:2px;">Reglas de transferencia ante quejas o dudas complejas.</div>
-                </div>
-                <div style="background:#fff; padding:10px; border-radius:6px; border:1px solid #bbf7d0;">
-                  <span style="font-weight:700; color:#166534;">🧪 Suite de Pruebas</span>
-                  <div style="color:#14532d; margin-top:2px;">Casos de prueba Gherkin validados sin regresiones.</div>
-                </div>
-              </div>
-
-              <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
-                <button class="btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""} style="background:#16a34a; color:#fff; font-weight:700; font-size:14px; padding:10px 22px; border-radius:6px; cursor:pointer;">
-                  🚀 Validar y publicar comportamiento en WhatsApp
-                </button>
-              </div>
-            </div>
-
-            <!-- MODO AVANZADO / PRIVADO PBD (DOCUMENTOS TÉCNICOS COLAPSABLES) -->
-            <details id="pbdTechDetails" style="margin-top:28px; border:1px solid var(--border-color); border-radius:8px; padding:14px; background:#f8fafc;">
-              <summary style="font-weight:600; font-size:13px; color:var(--text-muted); cursor:pointer;">
-                🛠️ Modo Avanzado: Documentación Técnica PBD (01 Constitución, 02 Specs, 03 Tests, 04 Master Prompt)
-              </summary>
-              <div style="margin-top:14px;">
-                <p style="font-size:12px; color:var(--text-muted); margin-bottom:12px;">
-                  El motor PBD gestiona estos 4 archivos internamente para auditar y prevenir regresiones en el Master Prompt ejecutable. Puedes revisarlos o modificarlos manualmente si requieres ajustes finos.
-                </p>
-
-                <label for="activeConstitutionEditor" style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">01 - Constitución (Verdad Absoluta)</label>
-                <textarea id="activeConstitutionEditor" name="pbd_constitution" style="min-height: 100px; width: 100%; font-family:monospace; font-size:11.5px; line-height:1.4; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 12px;">{html.escape(current_constitution)}</textarea>
-
-                <label for="activeSpecsEditor" style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">02 - Especificaciones (Flujos y Datos)</label>
-                <textarea id="activeSpecsEditor" name="pbd_specs" style="min-height: 100px; width: 100%; font-family:monospace; font-size:11.5px; line-height:1.4; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 12px;">{html.escape(current_specs)}</textarea>
-
-                <label for="activeTestSuiteEditor" style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">03 - Suite de Pruebas (Casos de uso)</label>
-                <textarea id="activeTestSuiteEditor" name="pbd_test_suite" style="min-height: 100px; width: 100%; font-family:monospace; font-size:11.5px; line-height:1.4; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 12px;">{html.escape(current_test_suite)}</textarea>
-
-                <label for="activePromptEditor" style="font-size:12px; font-weight:600; display:block; margin-bottom:4px;">04 - Master Prompt (Código del Bot en Producción)</label>
-                <textarea id="activePromptEditor" name="prompt" style="min-height: 220px; width: 100%; font-family:monospace; font-size:11.5px; line-height:1.4; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; box-sizing: border-box; margin-bottom: 12px;" placeholder="System prompt...">{html.escape(current_prompt_content)}</textarea>
-
-                <!-- Hidden preview elements for DOM compatibility -->
-                <textarea id="aiConstitutionPreview" style="display:none;"></textarea>
-                <textarea id="aiSpecsPreview" style="display:none;"></textarea>
-                <textarea id="aiTestSuitePreview" style="display:none;"></textarea>
-                <textarea id="aiPromptPreview" style="display:none;"></textarea>
-
-                <div style="margin-top:8px;">
-                  <button class="btn secondary" type="submit" {"disabled" if session["role"] == "client_viewer" else ""} style="font-size:12px;">
-                    Guardar cambios manuales en PBD
-                  </button>
-                </div>
-              </div>
-            </details>
-          </div>
-        </div>
-      </form>
-      
-      <script>
-        document.getElementById("behaviorForm")?.addEventListener("submit", function(event) {{
-          if (window.promptEditor?.codemirror) {{
-            window.promptEditor.codemirror.save();
-          }}
-          if (!window.confirm("¿Publicar estos cuatro documentos PBD como comportamiento activo del bot en WhatsApp?")) {{
-            event.preventDefault();
-          }}
-        }});
-
-        async function requestAIPrompt() {{
-          const instruction = document.getElementById("aiPromptInstruction").value.trim();
-          const current = window.promptEditor ? window.promptEditor.value() : document.getElementById("activePromptEditor").value;
-          if (!instruction) {{
-            alert("Por favor escribe una descripción o historia para el comportamiento del bot.");
-            return;
-          }}
-          
-          const loader = document.getElementById("aiAssistLoader");
-          const btn = document.getElementById("btnAssistPrompt");
-          const previewBlock = document.getElementById("promptPreviewBlock");
-          const blockedAlert = document.getElementById("pbdBlockedAlert");
-          const blockedText = document.getElementById("pbdBlockedText");
-          const previewArea = document.getElementById("aiPromptPreview");
-          const constPreview = document.getElementById("aiConstitutionPreview");
-          const specsPreview = document.getElementById("aiSpecsPreview");
-          const testPreview = document.getElementById("aiTestSuitePreview");
-          const validationReport = document.getElementById("pbdValidationReport");
-          const pbdPreviewTitle = document.getElementById("pbdPreviewTitle");
-          
-          loader.innerHTML = '<span style="display:inline-block; width:12px; height:12px; border:2px solid #2563eb; border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; vertical-align:middle; margin-right:6px;"></span> 🤖 Desarrollando arquitectura PBD (01 Constitución, 02 Specs, 03 Pruebas, 04 Master Prompt)... (~30-50s)';
-          loader.style.display = "inline-block";
-          btn.disabled = true;
-          blockedAlert.style.display = "none";
-          previewBlock.style.display = "none";
-          
-          const mode = document.getElementById("aiPbdMode")?.value || "auto";
-          const allowConstitutionChange = document.getElementById("aiAllowConstitutionChange")?.checked ? "true" : "false";
-
-          const csrfToken = "{html.escape(csrf_token)}";
-          const formData = new FormData();
-          formData.append("instruction", instruction);
-          formData.append("current_prompt", current);
-          formData.append("pbd_constitution", document.getElementById("activeConstitutionEditor").value);
-          formData.append("pbd_specs", document.getElementById("activeSpecsEditor").value);
-          formData.append("pbd_test_suite", document.getElementById("activeTestSuiteEditor").value);
-          formData.append("mode", mode);
-          formData.append("allow_constitution_change", allowConstitutionChange);
-          formData.append("csrf_token", csrfToken);
-          
-          try {{
-            const fetchUrl = `/client/bots/{bot_id}/prompt/assist?csrf_token=${{encodeURIComponent(csrfToken)}}`;
-            const response = await fetch(fetchUrl, {{
-              method: "POST",
-              headers: {{
-                "X-CSRF-Token": csrfToken,
-                "Accept": "application/json"
-              }},
-              body: formData
-            }});
-            
-            const rawText = await response.text();
-            let data;
-            try {{
-              data = JSON.parse(rawText);
-            }} catch (jsonErr) {{
-              throw new Error(rawText || "Error de comunicación con el servidor");
-            }}
-            
-            if (data.blocked) {{
-              blockedText.textContent = data.blocked_reason || data.error || "El cambio solicitado viola una regla constitucional activa.";
-              blockedAlert.style.display = "block";
-              blockedAlert.scrollIntoView({{ behavior: "smooth", block: "center" }});
-              return;
-            }}
-
-            if (!response.ok || !data.ok) {{
-              throw new Error(data.error || "Error generando el prompt");
-            }}
-
-            // Sincronizar automáticamente los editores activos internos
-            document.getElementById("activePromptEditor").value = data.prompt || "";
-            document.getElementById("activeConstitutionEditor").value = data.pbd_constitution || "";
-            document.getElementById("activeSpecsEditor").value = data.pbd_specs || "";
-            document.getElementById("activeTestSuiteEditor").value = data.pbd_test_suite || "";
-
-            if (window.promptEditor) {{
-              window.promptEditor.value(data.prompt || "");
-              if (window.promptEditor.codemirror) {{
-                window.promptEditor.codemirror.save();
-              }}
-            }}
-
-            if (previewArea) previewArea.value = data.prompt || "";
-            if (constPreview) constPreview.value = data.pbd_constitution || "";
-            if (specsPreview) specsPreview.value = data.pbd_specs || "";
-            if (testPreview) testPreview.value = data.pbd_test_suite || "";
-            
-            pbdPreviewTitle.textContent = "✅ Comportamiento PBD Validado y Listo para Publicar";
-            const warnings = data.validation?.warnings || [];
-            validationReport.innerHTML = `<strong>Base de Conocimiento y Escalado Humano integrados.</strong> Se actualizaron las especificaciones y la suite de pruebas sin regresiones. Haz clic en el botón verde abajo para activar el comportamiento en WhatsApp.${{warnings.length ? `<br><small style="color:#b45309;">Nota: ${{warnings.join(" ")}}</small>` : ""}}`;
-
-            previewBlock.style.display = "block";
-            previewBlock.scrollIntoView({{ behavior: "smooth", block: "nearest" }});
-          }} catch (e) {{
-            alert(e.message);
-          }} finally {{
-            loader.style.display = "none";
-            btn.disabled = false;
-          }}
-        }}
-
-      </script>
+        {render_prompt_workspace(bot_id, current_prompt_content, csrf_token, readonly=session["role"] == "client_viewer")}
 
       <style>
         /* Estilos para hacer EasyMDE más presentable y acorde al diseño */
@@ -3905,14 +3659,18 @@ async def client_app(
         }}
       </style>
       <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.css">
+      <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
       <script src="https://cdn.jsdelivr.net/npm/easymde/dist/easymde.min.js"></script>
       <script>
         document.addEventListener("DOMContentLoaded", function() {{
+          if (!window.EasyMDE || !window.DOMPurify) return;
           window.promptEditor = new EasyMDE({{
             element: document.getElementById('activePromptEditor'),
             spellChecker: false,
-            minHeight: "350px"
+            minHeight: "350px",
+            renderingConfig: {{ sanitizerFunction: function(rendered) {{ return DOMPurify.sanitize(rendered); }} }}
           }});
+          window.promptEditor.codemirror.setOption("readOnly", {"true" if session["role"] == "client_viewer" else "false"});
         }});
       </script>
     </div>
@@ -4714,12 +4472,24 @@ async def client_prompt_save(
     pbd_constitution: str | None = Form(None),
     pbd_specs: str | None = Form(None),
     pbd_test_suite: str | None = Form(None),
+    prompt_format: str = Form("pbd"),
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
     clean = prompt.strip()
     if not clean:
         raise HTTPException(status_code=400, detail="El prompt no puede estar vacío")
+
+    if prompt_format == "single_prompt":
+        report = pbd_validation.validate_single_prompt(clean, for_publish=True)
+        if not report.valid:
+            message = quote(" ".join(report.errors)[:900])
+            return RedirectResponse(
+                f"/client/app?bot_id={bot_id}&tab=prompt&saved=err_{message}", status_code=302,
+            )
+        # Publishing creates a new version; the previous PBD bundle stays archived.
+        await db.publish_bot_prompt(bot_id, report.master_xml)
+        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=prompt&saved=1", status_code=302)
     
     pbd_constitution, pbd_specs, pbd_test_suite, clean = pbd_validation.auto_heal_pbd_bundle(
         pbd_constitution, pbd_specs, pbd_test_suite, clean
@@ -4764,6 +4534,12 @@ async def client_prompt_assist(
     session = _require_client_login(request)
     bot = await _require_bot_editor(session, bot_id)
     try:
+        if mode == "single_prompt":
+            previous = await db.get_active_bot_prompt(bot_id) or {}
+            # Legacy rules come from this bot's stored version, never from a hidden UI editor.
+            pbd_constitution = previous.get("pbd_constitution") or ""
+            pbd_specs = previous.get("pbd_specs") or ""
+            pbd_test_suite = previous.get("pbd_test_suite") or ""
         knowledge_docs = await db.list_bot_knowledge(bot_id, active_only=True)
         integrations = await db.list_bot_integrations(bot_id)
         skills = await db.list_bot_skills(bot_id)
