@@ -44,11 +44,11 @@ Ante una contradicción, prevalece la Constitución. Toda modificación de compo
 
 ## Estado del baseline
 
-- Constitución: `1.1.2` (`2026-08-11`)
-- Especificaciones, pruebas y prompt maestro: `1.2.2` (`2026-08-11`)
-- Catálogo de productos: `1.0.2` (`2026-08-11`)
-- Estado: 13 enlaces activos; preparado para ejecución de la suite y validación en el bot
-- Método actual: actualización manual; sin sincronización automática con el panel
+- Constitución: `2.0.0` (`2026-10-09`)
+- Especificaciones, pruebas y prompt maestro: `2.0.0` (`2026-10-09`)
+- Modelo: Ruta de Conversión a Cita del Escáner de Bienestar en Culiacán, Sinaloa
+- Estado: Preparado para validación conversacional y sincronización en Asistto
+- Método actual: Actualización PBD manual compatible con panel de Asistto
 
 ## Configuración manual requerida para la escalación
 

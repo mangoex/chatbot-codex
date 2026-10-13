@@ -1208,6 +1208,22 @@ async def client_app(
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Se eliminaron {deleted} contactos correctamente.</div>'
 
     # 1. FETCH STATE
+    req_headers = getattr(request, "headers", {}) or {}
+    forwarded_host = req_headers.get("x-forwarded-host")
+    forwarded_proto = req_headers.get("x-forwarded-proto", "https")
+    if forwarded_host:
+        effective_base_url = f"{forwarded_proto}://{forwarded_host}".rstrip("/")
+    else:
+        host = req_headers.get("host")
+        if host and not host.startswith(("localhost", "127.0.0.1")):
+            req_url = getattr(request, "url", None)
+            proto = req_headers.get("x-forwarded-proto") or (req_url.scheme if req_url else None) or "https"
+            effective_base_url = f"{proto}://{host}".rstrip("/")
+        elif config.WEBHOOK_DOMAIN and "bot.humanio.digital" not in config.WEBHOOK_DOMAIN:
+            effective_base_url = config.WEBHOOK_DOMAIN.rstrip("/")
+        else:
+            effective_base_url = "https://asistto.bots2.me"
+
     # WhatsApp config
     wa_row = await db.get_bot_whatsapp_number(bot_id)
     wa_info = wa_row or {}
@@ -1266,22 +1282,37 @@ async def client_app(
     # Integrations
     calendar_status = await calendar_client.runtime_status(bot_id)
     calendar_config = {}
+    calendar_client_secret_val = ""
+    calendar_refresh_token_val = ""
     calendar_integration = await db.get_active_bot_integration(bot_id, "google_calendar")
     if calendar_integration:
         calendar_config = calendar_integration.get("config") or {}
+        cal_secrets = await db.get_integration_secret_values(int(calendar_integration["id"]))
+        calendar_client_secret_val = (
+            secure_store.decrypt_secret(cal_secrets.get("client_secret") or cal_secrets.get("google_client_secret") or "")
+            or ""
+        )
+        calendar_refresh_token_val = (
+            secure_store.decrypt_secret(cal_secrets.get("refresh_token") or cal_secrets.get("google_refresh_token") or "")
+            or ""
+        )
         
     api_integration = await db.get_active_bot_integration(bot_id, "external_api")
     api_config = {}
     api_secrets = []
+    api_secret_values = {}
     if api_integration:
         api_config = api_integration.get("config") or {}
         api_secrets = await db.list_integration_secrets(int(api_integration["id"]))
+        api_secret_values = await db.get_integration_secret_values(int(api_integration["id"]))
         
     chatwoot_integration = await db.get_bot_integration_by_type(bot_id, "chatwoot")
     chatwoot_config = {}
     chatwoot_enabled = False
     chatwoot_token_saved = False
     chatwoot_webhook_secret_saved = False
+    chatwoot_token_val = ""
+    chatwoot_webhook_secret_val = ""
     chatwoot_verified = False
     cw_account = ""
     cw_base_url = ""
@@ -1290,8 +1321,14 @@ async def client_app(
         chatwoot_enabled = chatwoot_integration.get("enabled", False)
         chatwoot_verified = bool(chatwoot_config.get("verified"))
         enc_secrets = await db.get_integration_secret_values(int(chatwoot_integration["id"]))
-        chatwoot_token_saved = bool(enc_secrets.get("api_token"))
-        chatwoot_webhook_secret_saved = bool(enc_secrets.get("webhook_secret"))
+        chatwoot_token_saved = "api_token" in enc_secrets
+        chatwoot_webhook_secret_saved = "webhook_secret" in enc_secrets
+        chatwoot_token_val = secure_store.decrypt_secret(enc_secrets.get("api_token") or "") or (
+            "********" if chatwoot_token_saved else ""
+        )
+        chatwoot_webhook_secret_val = secure_store.decrypt_secret(enc_secrets.get("webhook_secret") or "") or (
+            "********" if chatwoot_webhook_secret_saved else ""
+        )
     chatwoot_ready = (
         chatwoot_enabled
         and chatwoot_verified
@@ -1305,12 +1342,20 @@ async def client_app(
     grok_enabled = False
     grok_auth_saved = False
     grok_webhook_secret_saved = False
+    grok_auth_val = ""
+    grok_webhook_secret_val = ""
     if grok_integration:
         grok_config = grok_integration.get("config") or {}
         grok_enabled = grok_integration.get("enabled", False)
         enc_secrets = await db.get_integration_secret_values(int(grok_integration["id"]))
-        grok_auth_saved = bool(enc_secrets.get("auth_header"))
-        grok_webhook_secret_saved = bool(enc_secrets.get("webhook_secret"))
+        grok_auth_saved = "auth_header" in enc_secrets
+        grok_webhook_secret_saved = "webhook_secret" in enc_secrets
+        grok_auth_val = secure_store.decrypt_secret(enc_secrets.get("auth_header") or "") or (
+            "********" if grok_auth_saved else ""
+        )
+        grok_webhook_secret_val = secure_store.decrypt_secret(enc_secrets.get("webhook_secret") or "") or (
+            "********" if grok_webhook_secret_saved else ""
+        )
     grok_ready = grok_enabled and bool(grok_config.get("webhook_url")) and grok_webhook_secret_saved
         
     # Routing Rules integration
@@ -1318,17 +1363,20 @@ async def client_app(
     routing_config = {}
     routing_enabled = False
     routing_secrets = {}
+    routing_token_saved = False
+    routing_webhook_auth_token_val = ""
     if routing_integration:
         routing_config = routing_integration.get("config") or {}
         routing_enabled = routing_integration.get("enabled", False)
         enc_secrets = await db.get_integration_secret_values(int(routing_integration["id"]))
-        if "webhook_auth_token" in enc_secrets:
-            routing_secrets["webhook_auth_token"] = secure_store.decrypt_secret(enc_secrets["webhook_auth_token"])
+        routing_token_saved = "webhook_auth_token" in enc_secrets
+        if routing_token_saved:
+            routing_webhook_auth_token_val = secure_store.decrypt_secret(enc_secrets["webhook_auth_token"]) or "********"
+            routing_secrets["webhook_auth_token"] = routing_webhook_auth_token_val
             
     routing_webhook_url = routing_config.get("webhook_url", "")
     routing_phone_numbers = ",".join(routing_config.get("phone_numbers", []))
     routing_save_history = routing_config.get("save_history", False)
-    routing_token_saved = bool(routing_secrets.get("webhook_auth_token"))
 
     # Easybroker integration
     easybroker_integration = await db.get_bot_integration_by_type(bot_id, "easybroker")
@@ -1385,21 +1433,25 @@ async def client_app(
     }
     github_enabled = True
     github_token_saved = False
+    github_token_val = ""
     if github_integration:
         github_config.update(github_integration.get("config") or {})
         github_enabled = bool(github_integration.get("enabled"))
-        github_token_saved = bool(
-            (await db.get_integration_secret_values(int(github_integration["id"]))).get("github_token")
-        )
+        gh_secrets = await db.get_integration_secret_values(int(github_integration["id"]))
+        github_token_val = secure_store.decrypt_secret(gh_secrets.get("github_token") or "") or ""
+        github_token_saved = bool(github_token_val)
         
     env_rows_html = ""
     for sec in api_secrets:
-        key_safe = html.escape(sec["secret_name"])
+        key_name = sec["secret_name"]
+        key_safe = html.escape(key_name)
+        raw_val = secure_store.decrypt_secret(api_secret_values.get(key_name, "") or "") or ""
+        val_safe = html.escape(raw_val)
         env_rows_html += f'''
         <div class="env-var-row" style="display:flex; gap:8px; align-items:center; width:100%;">
           <input name="env_key" placeholder="KEY (Ej. STRIPE_KEY)" value="{key_safe}" style="flex:1; margin:0;" readonly>
           <div class="password-wrapper" style="flex:2;">
-            <input type="password" name="env_val" placeholder="Valor del secreto" value="********" autocomplete="new-password" style="margin:0;">
+            <input type="password" name="env_val" placeholder="Valor del secreto" value="{val_safe}" autocomplete="new-password" style="margin:0;">
             <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
             </button>
@@ -3860,21 +3912,21 @@ async def client_app(
             
             <label>User API Token</label>
             <div class="password-wrapper">
-              <input type="password" name="api_token" placeholder="Copia aquí el token" autocomplete="new-password" value="{"********" if chatwoot_token_saved else ""}">
+              <input type="password" name="api_token" placeholder="Copia aquí el token" autocomplete="new-password" value="{html.escape(chatwoot_token_val)}">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
             </div>
-            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">El token guardado nunca vuelve a mostrarse. Deja los asteriscos para conservarlo.</span>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">El token se guarda cifrado. Usa el icono del ojo para revisarlo.</span>
 
             <label>Webhook Signing Secret</label>
             <div class="password-wrapper">
-              <input type="password" name="webhook_secret" placeholder="Secreto generado por Chatwoot" autocomplete="new-password" value="{"********" if chatwoot_webhook_secret_saved else ""}">
+              <input type="password" name="webhook_secret" placeholder="Secreto generado por Chatwoot" autocomplete="new-password" value="{html.escape(chatwoot_webhook_secret_val)}">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
             </div>
-            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Crea el webhook en Chatwoot y copia aquí su secreto de firma. URL: <code>{html.escape((config.WEBHOOK_DOMAIN or "https://TU-DOMINIO").rstrip("/") + f"/webhooks/chatwoot/{bot_id}")}</code></span>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Crea el webhook en Chatwoot y copia aquí su secreto de firma. URL: <code>{html.escape(effective_base_url.rstrip("/") + f"/webhooks/chatwoot/{bot_id}")}</code></span>
             
             <div style="margin-top:20px; display:flex; gap:10px;">
               <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar y probar Chatwoot</button>
@@ -3906,7 +3958,7 @@ async def client_app(
             
             <label>Encabezado Authorization</label>
             <div class="password-wrapper">
-              <input type="password" name="auth_header" placeholder="Ej. Bearer tu-token" autocomplete="new-password" value="{"********" if grok_auth_saved else ""}">
+              <input type="password" name="auth_header" placeholder="Ej. Bearer tu-token" autocomplete="new-password" value="{html.escape(grok_auth_val)}">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
@@ -3914,12 +3966,12 @@ async def client_app(
             <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Se enviará como encabezado Authorization en cada POST hacia Grok.</span>
 
             <label>URL de Regreso</label>
-            <input name="return_url" placeholder="{html.escape((config.WEBHOOK_DOMAIN or "https://TU-DOMINIO").rstrip("/") + f"/webhooks/grok/{bot_id}")}" value="{html.escape(grok_config.get("return_url") or "")}">
-            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Grok nos va a llamar a esta URL con la respuesta: <code>{html.escape((config.WEBHOOK_DOMAIN or "https://TU-DOMINIO").rstrip("/") + f"/webhooks/grok/{bot_id}")}</code></span>
+            <input name="return_url" placeholder="{html.escape(effective_base_url.rstrip("/") + f"/webhooks/grok/{bot_id}")}" value="{html.escape(grok_config.get("return_url") or "")}">
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Grok nos va a llamar a esta URL con la respuesta: <code>{html.escape(effective_base_url.rstrip("/") + f"/webhooks/grok/{bot_id}")}</code></span>
 
             <label>Secreto de Validación</label>
             <div class="password-wrapper">
-              <input type="password" name="webhook_secret" placeholder="Copia aquí el secreto" autocomplete="new-password" value="{"********" if grok_webhook_secret_saved else ""}">
+              <input type="password" name="webhook_secret" placeholder="Copia aquí el secreto" autocomplete="new-password" value="{html.escape(grok_webhook_secret_val)}">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
@@ -3967,7 +4019,7 @@ async def client_app(
             
             <label>Google Client Secret</label>
             <div class="password-wrapper">
-              <input type="password" name="client_secret" placeholder="********" autocomplete="new-password" value="{"" if not calendar_status.get("secret_client_secret_saved") else "********"}">
+              <input type="password" name="client_secret" placeholder="Copia aquí el client secret" autocomplete="new-password" value="{html.escape(calendar_client_secret_val)}">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
@@ -3975,7 +4027,7 @@ async def client_app(
             
             <label>Google Refresh Token</label>
             <div class="password-wrapper">
-              <input type="password" name="refresh_token" placeholder="1//0..." autocomplete="new-password" value="{"" if not calendar_status.get("secret_refresh_token_saved") else "********"}">
+              <input type="password" name="refresh_token" placeholder="1//0..." autocomplete="new-password" value="{html.escape(calendar_refresh_token_val)}">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
@@ -4070,7 +4122,7 @@ async def client_app(
             
             <label>Token de Autenticación del Webhook (Opcional)</label>
             <div class="password-wrapper">
-              <input type="password" name="webhook_auth_token" placeholder="********" autocomplete="new-password" value="{"" if not routing_token_saved else "********"}">
+              <input type="password" name="webhook_auth_token" placeholder="Token secreto opcional" autocomplete="new-password" value="{html.escape(routing_webhook_auth_token_val)}">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
@@ -4166,7 +4218,7 @@ async def client_app(
 
             <label>Token GitHub opcional</label>
             <div class="password-wrapper">
-              <input type="password" name="github_token" placeholder="{"********" if github_token_saved else "ghp_..."}" autocomplete="new-password">
+              <input type="password" name="github_token" placeholder="ghp_..." value="{html.escape(github_token_val)}" autocomplete="new-password">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
@@ -6308,7 +6360,7 @@ def _render_easybroker_card(
             
             <label>API Key de Easybroker</label>
             <div class="password-wrapper">
-              <input type="password" name="api_key" placeholder="Pega tu API Key de Easybroker" autocomplete="new-password" value="{html.escape(masked_key)}">
+              <input type="password" name="api_key" placeholder="Pega tu API Key de Easybroker" autocomplete="new-password" value="{html.escape(key_val)}">
               <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
