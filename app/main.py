@@ -417,7 +417,10 @@ async def receive_external_agent_webhook(request: Request, bot_id: int | None = 
         raise HTTPException(status_code=404, detail="External Agent integration not active")
 
     enc_secrets = await db.get_integration_secret_values(int(integration["id"]))
-    stored_secret = secure_store.decrypt_secret(enc_secrets.get("webhook_secret", ""))
+    stored_secret = (
+        secure_store.decrypt_secret(enc_secrets.get("webhook_secret", ""))
+        or secure_store.decrypt_secret(enc_secrets.get("auth_header", ""))
+    )
     if not stored_secret:
         raise HTTPException(status_code=503, detail="External agent webhook secret not configured")
 
@@ -428,7 +431,12 @@ async def receive_external_agent_webhook(request: Request, bot_id: int | None = 
         payload=payload,
         query_params=query_dict,
     )
-    if not external_agent_client.validate_secret(received_secret, stored_secret):
+    if not external_agent_client.validate_secret(
+        received_secret,
+        stored_secret,
+        raw_body=raw_body,
+        headers=headers_dict,
+    ):
         raise HTTPException(status_code=401, detail="Invalid External Agent secret")
 
     wa_id, reply_text = external_agent_client.normalize_external_reply_payload(payload)
@@ -947,7 +955,47 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         log.info("Bot %s esta pausado. Mensaje de %s guardado, no se responde.", bot.id, wa_id)
         return
 
-    # Comprobar si Grok Bot está activo para este bot y tiene delegada la atención entrante
+    # 1. Prioridad Máxima: Agente Externo / POS (ej. KiwiPOS / RestaurantOS)
+    external_agent_integration = await db.get_active_bot_integration(bot.id, "external_agent")
+    if external_agent_integration:
+        agent_config = external_agent_integration.get("config") or {}
+        handle_inbound = agent_config.get("handle_inbound")
+        should_forward_inbound = handle_inbound if handle_inbound is not None else True
+        agent_webhook_url = (agent_config.get("webhook_url") or "").strip()
+        if should_forward_inbound and agent_webhook_url:
+            secrets = await db.get_integration_secret_values(int(external_agent_integration["id"]))
+            auth_header = ""
+            if secrets.get("auth_header"):
+                auth_header = secure_store.decrypt_secret(secrets["auth_header"]) or ""
+
+            contact_name = msg.get("name") or ""
+            if not contact_name:
+                contact = await db.get_contact_by_wa_id(bot.id, wa_id)
+                if contact and contact.get("name"):
+                    contact_name = contact["name"]
+
+            agent_payload = external_agent_client.build_external_agent_payload(
+                bot_id=bot.id,
+                msg=msg,
+                user_text=user_text,
+                contact_name=contact_name,
+                raw_meta_payload=payload,
+            )
+            await external_agent_client.forward_to_external_agent(
+                agent_webhook_url,
+                agent_payload,
+                auth_header=auth_header,
+            )
+            log.info(
+                "Mensaje %s de %s delegado a Agente Externo (bot_id=%s, url=%s). Asistto en silencio local.",
+                msg["message_id"],
+                wa_id,
+                bot.id,
+                agent_webhook_url,
+            )
+            return
+
+    # 2. Delegación alternativa a Grok Bot (si está activo para este bot)
     grok_integration = await db.get_active_bot_integration(bot.id, "grok_bot")
     if grok_integration:
         grok_config = grok_integration.get("config") or {}
@@ -960,7 +1008,6 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             auth_header = ""
             if secrets.get("auth_header"):
                 auth_header = secure_store.decrypt_secret(secrets["auth_header"]) or ""
-
 
             contact_name = msg.get("name") or ""
             if not contact_name:
@@ -986,46 +1033,6 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
                 wa_id,
                 bot.id,
                 grok_webhook_url,
-            )
-            return
-
-    # Comprobar si Agente Externo / POS está activo para este bot y tiene delegada la atención entrante
-    external_agent_integration = await db.get_active_bot_integration(bot.id, "external_agent")
-    if external_agent_integration:
-        agent_config = external_agent_integration.get("config") or {}
-        handle_inbound = agent_config.get("handle_inbound")
-        should_forward_inbound = handle_inbound if handle_inbound is not None else True
-        agent_webhook_url = (agent_config.get("webhook_url") or "").strip()
-        if should_forward_inbound and agent_webhook_url:
-            secrets = await db.get_integration_secret_values(int(external_agent_integration["id"]))
-            auth_header = ""
-            if secrets.get("auth_header"):
-                auth_header = secure_store.decrypt_secret(secrets["auth_header"]) or ""
-
-            contact_name = msg.get("name") or ""
-            if not contact_name:
-                contact = await db.get_contact_by_wa_id(bot.id, wa_id)
-                if contact and contact.get("name"):
-                    contact_name = contact["name"]
-
-            agent_payload = {
-                "bot_id": bot.id,
-                "from": wa_id,
-                "name": contact_name,
-                "text": user_text,
-                "message_id": msg["message_id"],
-            }
-            await external_agent_client.forward_to_external_agent(
-                agent_webhook_url,
-                agent_payload,
-                auth_header=auth_header,
-            )
-            log.info(
-                "Mensaje %s de %s enviado a Agente Externo (bot_id=%s, url=%s). Asistto en silencio local.",
-                msg["message_id"],
-                wa_id,
-                bot.id,
-                agent_webhook_url,
             )
             return
 

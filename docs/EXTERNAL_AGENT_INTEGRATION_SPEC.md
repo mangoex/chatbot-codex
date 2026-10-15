@@ -29,27 +29,74 @@ Proveer una integración nativa y universal denominada **"Agente Externo (POS / 
 ### 2.1 Reenvío Entrante (Asistto -> Sistema Externo / POS)
 - **Método:** `POST`
 - **URL Destino:** Configurada en el campo `webhook_url` de la integración.
-- **Encabezados:**
+- **Encabezados Criptográficos y de Autorización:**
   - `Content-Type: application/json`
   - `Accept: application/json`
-  - `Authorization: <auth_header>` (si fue configurado en Asistto, ej. `whsec_...` o `Bearer <token>`)
-- **Payload JSON:**
+  - `X-Hub-Signature-256: sha256=<hmac_sha256_hex>` (Firma criptográfica HMAC-SHA256 del cuerpo exacto de la petición usando el Webhook Secret de Entrada. Requerido por KiwiPOS / RestaurantOS).
+  - `X-Hub-Signature: sha1=<hmac_sha1_hex>`
+  - `Authorization: Bearer <secret>`
+  - `X-Webhook-Secret: <secret>`
+  - `X-Asistto-Secret-Token: <secret>`
+- **Payload Universal Dual (Estructura Meta Cloud API + Campos Planos):**
   ```json
   {
+    "object": "whatsapp_business_account",
+    "entry": [
+      {
+        "id": "147",
+        "changes": [
+          {
+            "field": "messages",
+            "value": {
+              "messaging_product": "whatsapp",
+              "metadata": {
+                "display_phone_number": "5215500000000",
+                "phone_number_id": "phone-147"
+              },
+              "contacts": [
+                {
+                  "profile": {
+                    "name": "Cliente Nombre"
+                  },
+                  "wa_id": "523312345678"
+                }
+              ],
+              "messages": [
+                {
+                  "from": "523312345678",
+                  "id": "wamid.HBgNNTIzMzEyMzQ1Njc4FQIAEhgg...",
+                  "timestamp": "1710000000",
+                  "type": "text",
+                  "text": {
+                    "body": "Quiero ordenar una hamburguesa con papas"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
     "bot_id": 147,
     "from": "523312345678",
+    "wa_id": "523312345678",
     "name": "Cliente Nombre",
     "text": "Quiero ordenar una hamburguesa con papas",
-    "message_id": "wamid.HBgNNTIzMzEyMzQ1Njc4FQIAEhgg..."
+    "message_id": "wamid.HBgNNTIzMzEyMzQ1Njc4FQIAEhgg...",
+    "timestamp": "1710000000",
+    "type": "text"
   }
   ```
+  *Nota: Si el cliente envía una nota de voz / audio, Asistto la transcribe automáticamente con Whisper antes de delegar el payload al Agente Externo, permitiendo procesar pedidos por voz sin fricción.*
 
 ### 2.2 Despacho Saliente (Sistema Externo / POS -> Asistto)
 - **Método:** `POST`
 - **Endpoint:** `/webhooks/external-agent/{bot_id}` (o `/webhooks/external-agent`)
-- **Autenticación:**
+- **Autenticación Soportada:**
+  - Encabezado `X-Hub-Signature-256: sha256=<hmac>` (Firma criptográfica HMAC)
   - `Authorization: Bearer <webhook_secret>`
-  - O encabezado `X-Webhook-Secret: <webhook_secret>` / `X-API-Key: <webhook_secret>`
+  - Encabezados `X-Webhook-Secret: <webhook_secret>` / `X-API-Key: <webhook_secret>`
+  - Resolución dual: Se valida contra `webhook_secret` o `auth_header`.
 - **Payloads Soportados:**
   
   *Opción A (JSON Plano):*
@@ -73,6 +120,7 @@ Proveer una integración nativa y universal denominada **"Agente Externo (POS / 
     }
   }
   ```
+  *(También soporta formatos interactivos con botones y plantillas).*
 
 ---
 

@@ -509,6 +509,241 @@ class ExternalAgentCardRenderingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Conectado", html)
 
 
+class ExternalAgentMetaCompatibilityTests(unittest.IsolatedAsyncioTestCase):
+    def test_compute_hmac_signatures(self):
+        body = b'{"hello":"world"}'
+        secret = "whsec_test_secret_123"
+        sigs = external_agent_client.compute_hmac_signatures(body, secret)
+        self.assertIn("X-Hub-Signature-256", sigs)
+        self.assertIn("X-Hub-Signature", sigs)
+        self.assertTrue(sigs["X-Hub-Signature-256"].startswith("sha256="))
+        self.assertTrue(sigs["X-Hub-Signature"].startswith("sha1="))
+
+        # Strips Bearer prefix if provided
+        sigs_bearer = external_agent_client.compute_hmac_signatures(body, f"Bearer {secret}")
+        self.assertEqual(sigs["X-Hub-Signature-256"], sigs_bearer["X-Hub-Signature-256"])
+
+    def test_validate_secret_with_hmac_signatures(self):
+        import hashlib, hmac
+        body = b'{"action":"order_status","order_id":42}'
+        secret = "whsec_super_secret"
+        sig256 = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+        # Validated via X-Hub-Signature-256 header
+        headers = {"X-Hub-Signature-256": f"sha256={sig256}"}
+        self.assertTrue(
+            external_agent_client.validate_secret(
+                received_secret=None,
+                expected_secret=secret,
+                raw_body=body,
+                headers=headers,
+            )
+        )
+
+        # Invalid signature fails
+        headers_bad = {"X-Hub-Signature-256": "sha256=invalid"}
+        self.assertFalse(
+            external_agent_client.validate_secret(
+                received_secret=None,
+                expected_secret=secret,
+                raw_body=body,
+                headers=headers_bad,
+            )
+        )
+
+    def test_build_external_agent_payload_contains_meta_and_flat_data(self):
+        msg = {
+            "wa_id": "523312345678",
+            "message_id": "wamid.test999",
+            "type": "text",
+            "display_phone_number": "5215500000000",
+            "phone_number_id": "phone-147",
+        }
+        payload = external_agent_client.build_external_agent_payload(
+            bot_id=147,
+            msg=msg,
+            user_text="Una pizza hawaiana por favor",
+            contact_name="Carlos Santana",
+        )
+
+        # 1. Flat fields
+        self.assertEqual(payload["bot_id"], 147)
+        self.assertEqual(payload["from"], "523312345678")
+        self.assertEqual(payload["name"], "Carlos Santana")
+        self.assertEqual(payload["text"], "Una pizza hawaiana por favor")
+        self.assertEqual(payload["message_id"], "wamid.test999")
+
+        # 2. Canonical Meta Cloud API structure
+        self.assertEqual(payload["object"], "whatsapp_business_account")
+        self.assertIsInstance(payload["entry"], list)
+        entry = payload["entry"][0]
+        change = entry["changes"][0]["value"]
+        self.assertEqual(change["messaging_product"], "whatsapp")
+        self.assertEqual(change["contacts"][0]["wa_id"], "523312345678")
+        self.assertEqual(change["contacts"][0]["profile"]["name"], "Carlos Santana")
+        meta_msg = change["messages"][0]
+        self.assertEqual(meta_msg["id"], "wamid.test999")
+        self.assertEqual(meta_msg["from"], "523312345678")
+        self.assertEqual(meta_msg["text"]["body"], "Una pizza hawaiana por favor")
+
+    async def test_forward_to_external_agent_sends_hmac_and_bearer_headers(self):
+        webhook_url = "https://paperclip-kiwirestaurante.yroec7.easypanel.host/v1/integrations/whatsapp/webhook"
+        secret = "whsec_kiwi_inbound_secret"
+        payload = {"bot_id": 147, "text": "Hola"}
+
+        mock_resp = MagicMock(status_code=200, text="OK")
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client_cls = MagicMock()
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+        with patch("httpx.AsyncClient", mock_client_cls):
+            success = await external_agent_client.forward_to_external_agent(
+                webhook_url=webhook_url,
+                payload=payload,
+                auth_header=secret,
+            )
+
+        self.assertTrue(success)
+        mock_client.post.assert_awaited_once()
+        args, kwargs = mock_client.post.call_args
+        sent_url = args[0]
+        headers = kwargs["headers"]
+        content = kwargs["content"]
+
+        self.assertEqual(sent_url, webhook_url)
+        self.assertIn("X-Hub-Signature-256", headers)
+        self.assertTrue(headers["X-Hub-Signature-256"].startswith("sha256="))
+        self.assertEqual(headers["Authorization"], f"Bearer {secret}")
+        self.assertEqual(headers["X-Webhook-Secret"], secret)
+
+        # Validate that the HMAC signature in headers actually matches the content bytes
+        import hashlib, hmac
+        expected_sig = "sha256=" + hmac.new(secret.encode("utf-8"), content, hashlib.sha256).hexdigest()
+        self.assertEqual(headers["X-Hub-Signature-256"], expected_sig)
+
+    async def test_external_agent_preempts_grok_bot_when_both_active(self):
+        bot = MagicMock(
+            id=147,
+            name="Restaurante Bot",
+            status="active",
+            whatsapp_phone_number_id="phone-147",
+            whatsapp_access_token="wa-secret-token",
+            openai_model="gpt-4o",
+            display_phone_number="5215500000000",
+        )
+        external_agent_integ = {
+            "id": 101,
+            "name": "Agente Externo",
+            "enabled": True,
+            "config": {
+                "webhook_url": "https://kiwirestaurante.ejemplo/webhook",
+                "handle_inbound": True,
+            },
+        }
+        grok_integ = {
+            "id": 102,
+            "name": "Grok Bot",
+            "enabled": True,
+            "config": {
+                "webhook_url": "https://grok.ejemplo/webhook",
+                "handle_inbound": True,
+            },
+        }
+
+        with (
+            patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=bot)),
+            patch.object(main.db, "was_processed", AsyncMock(return_value=False)),
+            patch.object(main.db, "mark_processed", AsyncMock(return_value=True)),
+            patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)),
+            patch.object(main.db, "get_active_bot_integration") as get_integ,
+            patch.object(main.db, "get_integration_secret_values", AsyncMock(return_value={"auth_header": "enc:token"})),
+            patch.object(main.secure_store, "decrypt_secret", return_value="whsec_kiwi_valid"),
+            patch.object(main.db, "save_message", AsyncMock()),
+            patch.object(main.follow_ups, "cancel", AsyncMock()),
+            patch.object(main.db, "get_history", AsyncMock(return_value=[])),
+            patch.object(external_agent_client, "forward_to_external_agent", AsyncMock(return_value=True)) as forward_ext_mock,
+            patch.object(main.grok_client, "forward_to_grok", AsyncMock()) as forward_grok_mock,
+            patch.object(main.openai_client, "complete", AsyncMock()) as openai_mock,
+        ):
+            def mock_get_integ(bot_id, itype):
+                if itype == "external_agent":
+                    return external_agent_integ
+                if itype == "grok_bot":
+                    return grok_integ
+                return None
+
+            get_integ.side_effect = mock_get_integ
+
+            await main._process_message_impl(
+                msg={
+                    "wa_id": "523312345678",
+                    "message_id": "wamid.msg999",
+                    "type": "text",
+                    "text": "Orden de comida",
+                    "phone_number_id": "phone-147",
+                    "display_phone_number": "5215500000000",
+                    "name": "Cliente Prioritario",
+                },
+                payload={},
+            )
+
+        # External agent MUST be called
+        forward_ext_mock.assert_awaited_once()
+        # Grok Bot and OpenAI MUST NOT be called
+        forward_grok_mock.assert_not_awaited()
+        openai_mock.assert_not_awaited()
+
+    async def test_return_webhook_accepts_hmac_signature(self):
+        import hashlib, hmac
+        body_dict = {"to": "523312345678", "text": "Su orden está lista"}
+        body_bytes = json.dumps(body_dict).encode("utf-8")
+        secret = "whsec_return_auth"
+        sig256 = hmac.new(secret.encode("utf-8"), body_bytes, hashlib.sha256).hexdigest()
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "headers": [
+                (b"x-hub-signature-256", f"sha256={sig256}".encode()),
+                (b"content-type", b"application/json"),
+            ],
+            "query_string": b"",
+        }
+        req = Request(scope)
+        async def _body():
+            return body_bytes
+        req.body = _body
+        req._json = body_dict
+
+        integration = {"id": 101, "enabled": True, "config": {}}
+        bot = MagicMock(
+            id=147,
+            whatsapp_phone_number_id="phone-147",
+            whatsapp_access_token="wa-token",
+        )
+
+        with (
+            patch.object(main.db, "get_active_bot_integration", AsyncMock(return_value=integration)),
+            patch.object(main.db, "get_integration_secret_values", AsyncMock(return_value={"webhook_secret": "enc:secret"})),
+            patch.object(main.secure_store, "decrypt_secret", return_value=secret),
+            patch.object(main.db, "is_within_24h_window", AsyncMock(return_value=True)),
+            patch.object(main.bots, "resolve_by_bot_id", AsyncMock(return_value=bot)),
+            patch.object(main.whatsapp_client, "send_text", AsyncMock(return_value={"messages": [{"id": "wamid.out101"}]})) as send_text_mock,
+            patch.object(main.db, "save_message", AsyncMock()),
+            patch.object(main.db, "record_bot_sent_message", AsyncMock()),
+        ):
+            result = await main.receive_external_agent_webhook(req, 147)
+
+        self.assertEqual(result, {"status": "sent"})
+        send_text_mock.assert_awaited_once_with(
+            to_wa_id="523312345678",
+            body="Su orden está lista",
+            phone_number_id="phone-147",
+            access_token="wa-token",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
 
