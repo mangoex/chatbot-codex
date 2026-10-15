@@ -8,7 +8,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from app import bots, client, config, db, grok_client, meta_provider, secure_store
+from app import bots, client, config, db, external_agent_client, grok_client, meta_provider, secure_store
 
 log = logging.getLogger("api-v1")
 router = APIRouter(prefix="/api/v1", tags=["External Integration API"])
@@ -208,8 +208,17 @@ async def verify_bot_auth(
             request.state.grok_integration = grok_integration
             return bot
 
+    # 3. Validar contra integración external_agent si está activa
+    external_agent_integration = await db.get_active_bot_integration(bot_id, "external_agent")
+    if external_agent_integration:
+        enc_secrets = await db.get_integration_secret_values(int(external_agent_integration["id"]))
+        stored_agent_secret = secure_store.decrypt_secret(enc_secrets.get("webhook_secret", ""))
+        if stored_agent_secret and external_agent_client.validate_secret(received_secret, stored_agent_secret):
+            request.state.auth_source = "external_agent"
+            request.state.external_agent_integration = external_agent_integration
+            return bot
 
-    # 3. Validar contra integración api_key si está activa
+    # 4. Validar contra integración api_key si está activa
     api_key_integration = await db.get_active_bot_integration(bot_id, "api_key")
     if api_key_integration:
         enc_secrets = await db.get_integration_secret_values(int(api_key_integration["id"]))

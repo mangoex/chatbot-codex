@@ -1365,6 +1365,37 @@ async def client_app(
     grok_allow_campaigns = grok_config.get("allow_campaigns", True) if grok_integration else True
     grok_handle_inbound = grok_config.get("handle_inbound", False) if grok_integration else False
         
+    # Agente Externo (POS / Bot Personalizado) integration
+    external_agent_integration = await db.get_bot_integration_by_type(bot_id, "external_agent")
+    external_agent_config = {}
+    external_agent_enabled = False
+    external_agent_auth_saved = False
+    external_agent_webhook_secret_saved = False
+    external_agent_auth_val = ""
+    external_agent_webhook_secret_val = ""
+    if external_agent_integration:
+        external_agent_config = external_agent_integration.get("config") or {}
+        external_agent_enabled = external_agent_integration.get("enabled", False)
+        enc_secrets = await db.get_integration_secret_values(int(external_agent_integration["id"]))
+        external_agent_auth_saved = "auth_header" in enc_secrets
+        external_agent_webhook_secret_saved = "webhook_secret" in enc_secrets
+        external_agent_auth_val = secure_store.decrypt_secret(enc_secrets.get("auth_header") or "") or (
+            "********" if external_agent_auth_saved else ""
+        )
+        external_agent_webhook_secret_val = secure_store.decrypt_secret(enc_secrets.get("webhook_secret") or "") or (
+            "********" if external_agent_webhook_secret_saved else ""
+        )
+    external_agent_ready = (
+        external_agent_enabled
+        and bool(external_agent_config.get("webhook_url"))
+        and external_agent_webhook_secret_saved
+    )
+    external_agent_handle_inbound = (
+        external_agent_config.get("handle_inbound", True)
+        if external_agent_integration
+        else True
+    )
+
     # Routing Rules integration
 
     routing_integration = await db.get_bot_integration_by_type(bot_id, "routing_rules")
@@ -4064,6 +4095,72 @@ async def client_app(
 
         <div class="card">
           <div class="card-header">
+            <h2>Agente Externo (POS / Bot Propio)</h2>
+            <p>Conecta sistemas de punto de venta (como KiwiPOS / RestaurantOS), e-commerce o agentes de n8n para atender WhatsApp directamente sin intermediación ni triangulación.</p>
+          </div>
+          
+          <div style="margin-bottom:14px; display:flex; justify-content:space-between; align-items:center; padding-bottom:8px; border-bottom:1px solid var(--line);">
+            <span class="bold-text">Estado de la Integración</span>
+            <span class="badge {"success" if external_agent_ready else ("warning" if external_agent_enabled else "neutral")}">
+              {"Conectado" if external_agent_ready else ("Configuración incompleta" if external_agent_enabled else "Desconectado")}
+            </span>
+          </div>
+          
+          <form method="post" action="/client/bots/{bot_id}/integrations/external-agent">
+            <div class="checkbox-group" style="margin-bottom:12px;">
+              <input type="checkbox" name="enabled" id="externalAgentToggle" {"checked" if external_agent_enabled else ""}>
+              <label for="externalAgentToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar Agente Externo</label>
+            </div>
+            
+            <div style="margin: 0 0 16px 0; padding: 12px; background: var(--bg-card-subtle, #f8fafc); border-radius: 8px; border: 1px solid var(--border-color, #e2e8f0);">
+              <span style="display:block; font-size:12px; font-weight:600; color:var(--text-main, #0f172a); margin-bottom:10px;">Control Conversacional y Coexistencia:</span>
+              
+              <div class="checkbox-group" style="margin-bottom:0;">
+                <input type="checkbox" name="handle_inbound" id="externalAgentHandleInbound" {"checked" if external_agent_handle_inbound else ""}>
+                <label for="externalAgentHandleInbound" style="margin:0; font-size:13px; cursor:pointer;">
+                  <strong>Delegar atención total de WhatsApp al Agente Externo</strong>
+                  <span style="display:block; font-size:11px; color:var(--muted, #64748b); font-weight:normal;">Al marcar esta casilla, Asistto silencia su IA nativa y no responde por su cuenta, permitiendo que tu bot externo (ej. KiwiPOS) atienda al cliente y registre comandas directamente en la POS.</span>
+                </label>
+              </div>
+            </div>
+            
+            <label>URL del Webhook de Entrada (Tu Sistema / KiwiPOS)</label>
+            <input name="webhook_url" placeholder="https://paperclip-kiwirestaurante.yroec7.easypanel.host/v1/integrations/whatsapp/webhook" value="{html.escape(external_agent_config.get("webhook_url") or "")}">
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Endpoint oficial de tu sistema donde Asistto entregará los mensajes de los clientes en WhatsApp.</span>
+
+            <label>Encabezado / Token de Salida (hacia tu Sistema)</label>
+            <div class="password-wrapper">
+              <input type="password" name="auth_header" placeholder="whsec_... o Bearer tu-token" autocomplete="new-password" value="{html.escape(external_agent_auth_val)}">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Firma secreta o token que Asistto enviará en el encabezado HTTP hacia tu sistema (ej. Webhook Secret de Entrada).</span>
+
+            <label>Return URL de Asistto (URL de Salida para Meta WhatsApp Cloud API)</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <input id="externalAgentReturnUrl" name="return_url" readonly style="background:var(--bg-card-subtle, #f8fafc); cursor:text; font-family:monospace; font-size:12px;" value="{html.escape(effective_base_url.rstrip("/") + f"/webhooks/external-agent/{bot_id}")}">
+              <button type="button" class="btn secondary-btn" style="white-space:nowrap; padding:8px 14px;" onclick="navigator.clipboard.writeText(document.getElementById('externalAgentReturnUrl').value); this.innerText='¡Copiado!'; setTimeout(()=>this.innerText='Copiar', 2000);">Copiar</button>
+            </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:4px; margin-bottom:12px;">Copia y pega esta URL exacta en tu sistema (ej. en el campo <i>Return URL de Asistto</i> en KiwiPOS) para que tu bot despache sus respuestas a WhatsApp.</span>
+
+            <label>Token de Autorización de Salida (Bearer para Asistto)</label>
+            <div class="password-wrapper">
+              <input type="password" name="webhook_secret" placeholder="Copia aquí el token secreto compartido" autocomplete="new-password" value="{html.escape(external_agent_webhook_secret_val)}">
+              <button type="button" class="password-toggle" onclick="togglePasswordVisibility(this)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Token secreto que tu sistema enviará en el encabezado <code>Authorization: Bearer</code> al llamar a la Return URL.</span>
+
+            <div style="margin-top:20px; display:flex; gap:10px;">
+              <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar Agente Externo</button>
+            </div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
             <h2>Agenda (Google Calendar)</h2>
             <p>Conecta la cuenta de Google Calendar de tu negocio para agendar de forma autónoma.</p>
           </div>
@@ -5281,6 +5378,73 @@ async def client_grok_save(
             bot_id=bot_id,
             integration_type="grok_bot",
             name="Grok Bot",
+            config_data=config_data,
+            enabled=is_enabled,
+        )
+
+    if clean_auth_header and not re.match(r"^\*+$", clean_auth_header):
+        encrypted_auth = secure_store.encrypt_secret(clean_auth_header)
+        await db.upsert_integration_secret(integration_id, "auth_header", encrypted_auth)
+    elif clean_auth_header == "":
+        await db.delete_integration_secret(integration_id, "auth_header")
+
+    if clean_webhook_secret and not re.match(r"^\*+$", clean_webhook_secret):
+        encrypted_secret = secure_store.encrypt_secret(clean_webhook_secret)
+        await db.upsert_integration_secret(integration_id, "webhook_secret", encrypted_secret)
+    elif clean_webhook_secret == "":
+        await db.delete_integration_secret(integration_id, "webhook_secret")
+
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=integrations&saved=1",
+        status_code=302,
+    )
+
+
+@router.post("/bots/{bot_id}/integrations/external-agent")
+async def client_external_agent_save(
+    request: Request,
+    bot_id: int,
+    enabled: str | None = Form(None),
+    handle_inbound: str | None = Form(None),
+    webhook_url: str = Form(""),
+    auth_header: str = Form(""),
+    return_url: str = Form(""),
+    webhook_secret: str = Form(""),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+
+    clean_webhook_url = webhook_url.strip()
+    clean_return_url = return_url.strip()
+    clean_auth_header = auth_header.strip()
+    clean_webhook_secret = webhook_secret.strip()
+
+    is_enabled = (enabled == "on" or enabled == "true")
+    is_handle_inbound = (handle_inbound == "on" or handle_inbound == "true")
+
+    config_data = {
+        "webhook_url": clean_webhook_url,
+        "return_url": clean_return_url,
+        "handle_inbound": is_handle_inbound,
+    }
+
+    integration = await db.get_bot_integration_by_type(bot_id, "external_agent")
+
+    if integration:
+        integration_id = int(integration["id"])
+        await db.update_bot_integration(
+            bot_id=bot_id,
+            integration_id=integration_id,
+            integration_type="external_agent",
+            name="Agente Externo (POS / Bot Propio)",
+            config_data=config_data,
+            enabled=is_enabled,
+        )
+    else:
+        integration_id = await db.create_bot_integration(
+            bot_id=bot_id,
+            integration_type="external_agent",
+            name="Agente Externo (POS / Bot Propio)",
             config_data=config_data,
             enabled=is_enabled,
         )

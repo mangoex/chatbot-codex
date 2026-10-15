@@ -2886,6 +2886,7 @@ INTEGRATION_TYPES = (
     ("external_api", "API externa"),
     ("webhook", "Webhook"),
     ("grok_bot", "Grok Bot"),
+    ("external_agent", "Agente Externo (POS / Bot Propio)"),
     ("crm", "CRM"),
     ("custom", "Personalizada"),
 )
@@ -2949,6 +2950,12 @@ def _default_integration_config(integration_type: str) -> dict:
             "constitution_path": "docs/pbd/constitucion.md",
             "knowledge_path": "docs/pbd",
             "sync_direction": "panel_to_github",
+        }
+    if integration_type == "external_agent":
+        return {
+            "webhook_url": "",
+            "return_url": "",
+            "handle_inbound": True,
         }
     return {}
 

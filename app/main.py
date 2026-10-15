@@ -32,6 +32,7 @@ from app import (
     easybroker_client,
     escalations,
     external_actions,
+    external_agent_client,
     follow_ups,
     grok_client,
     leads,
@@ -386,6 +387,89 @@ async def receive_grok_webhook(request: Request, bot_id: int | None = None):
         raise HTTPException(status_code=502, detail="WhatsApp delivery failed")
 
     return {"status": "sent"}
+
+
+@app.post("/webhooks/external-agent/{bot_id}")
+@app.post("/webhooks/external-agent")
+@app.post("/webhooks/agent/{bot_id}")
+@app.post("/webhooks/agent")
+async def receive_external_agent_webhook(request: Request, bot_id: int | None = None):
+    """
+    Webhook de retorno para Agentes Externos y sistemas POS (ej. KiwiPOS / RestaurantOS).
+    Recibe la respuesta generada por el bot externo y la despacha al cliente por Meta WhatsApp Cloud API.
+    """
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body) if raw_body else {}
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    target_bot_id = bot_id or payload.get("bot_id") or request.query_params.get("bot_id")
+    if not target_bot_id:
+        raise HTTPException(status_code=400, detail="Missing bot_id")
+    try:
+        target_bot_id = int(target_bot_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid bot_id")
+
+    integration = await db.get_active_bot_integration(target_bot_id, "external_agent")
+    if not integration:
+        raise HTTPException(status_code=404, detail="External Agent integration not active")
+
+    enc_secrets = await db.get_integration_secret_values(int(integration["id"]))
+    stored_secret = secure_store.decrypt_secret(enc_secrets.get("webhook_secret", ""))
+    if not stored_secret:
+        raise HTTPException(status_code=503, detail="External agent webhook secret not configured")
+
+    headers_dict = dict(request.headers)
+    query_dict = dict(request.query_params)
+    received_secret = external_agent_client.extract_secret_from_request(
+        headers=headers_dict,
+        payload=payload,
+        query_params=query_dict,
+    )
+    if not external_agent_client.validate_secret(received_secret, stored_secret):
+        raise HTTPException(status_code=401, detail="Invalid External Agent secret")
+
+    wa_id, reply_text = external_agent_client.normalize_external_reply_payload(payload)
+    if not wa_id or not reply_text:
+        raise HTTPException(status_code=400, detail="Missing recipient ('to'/'from'/'wa_id') or 'text'")
+
+    # Regla: enviar solo como respuesta dentro de las 24 horas. No iniciar conversación ni usar plantilla.
+    if not await db.is_within_24h_window(target_bot_id, wa_id):
+        log.warning(
+            "Respuesta de Agente Externo rechazada para bot %s y %s: ventana de 24h expirada.",
+            target_bot_id,
+            wa_id,
+        )
+        return {
+            "status": "window_expired",
+            "detail": "24-hour messaging window expired; cannot reply without template",
+        }
+
+    bot = await bots.resolve_by_bot_id(target_bot_id)
+    if not bot or not bot.whatsapp_phone_number_id or not bot.whatsapp_access_token:
+        log.error("External Agent webhook blocked for bot %s: missing WhatsApp credentials", target_bot_id)
+        raise HTTPException(status_code=502, detail="Bot missing WhatsApp credentials")
+
+    try:
+        res = await whatsapp_client.send_text(
+            to_wa_id=wa_id,
+            body=reply_text,
+            phone_number_id=bot.whatsapp_phone_number_id,
+            access_token=bot.whatsapp_access_token,
+        )
+        await db.save_message(wa_id, "assistant", reply_text, bot_id=target_bot_id)
+        if isinstance(res, dict) and res.get("messages"):
+            for m in res["messages"]:
+                if m.get("id"):
+                    await db.record_bot_sent_message(m["id"], target_bot_id)
+    except Exception as exc:
+        log.error("Error al enviar respuesta de Agente Externo a WhatsApp (%s): %s", wa_id, exc)
+        raise HTTPException(status_code=502, detail="WhatsApp delivery failed")
+
+    return {"status": "sent"}
+
 
 
 
@@ -902,6 +986,46 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
                 wa_id,
                 bot.id,
                 grok_webhook_url,
+            )
+            return
+
+    # Comprobar si Agente Externo / POS está activo para este bot y tiene delegada la atención entrante
+    external_agent_integration = await db.get_active_bot_integration(bot.id, "external_agent")
+    if external_agent_integration:
+        agent_config = external_agent_integration.get("config") or {}
+        handle_inbound = agent_config.get("handle_inbound")
+        should_forward_inbound = handle_inbound if handle_inbound is not None else True
+        agent_webhook_url = (agent_config.get("webhook_url") or "").strip()
+        if should_forward_inbound and agent_webhook_url:
+            secrets = await db.get_integration_secret_values(int(external_agent_integration["id"]))
+            auth_header = ""
+            if secrets.get("auth_header"):
+                auth_header = secure_store.decrypt_secret(secrets["auth_header"]) or ""
+
+            contact_name = msg.get("name") or ""
+            if not contact_name:
+                contact = await db.get_contact_by_wa_id(bot.id, wa_id)
+                if contact and contact.get("name"):
+                    contact_name = contact["name"]
+
+            agent_payload = {
+                "bot_id": bot.id,
+                "from": wa_id,
+                "name": contact_name,
+                "text": user_text,
+                "message_id": msg["message_id"],
+            }
+            await external_agent_client.forward_to_external_agent(
+                agent_webhook_url,
+                agent_payload,
+                auth_header=auth_header,
+            )
+            log.info(
+                "Mensaje %s de %s enviado a Agente Externo (bot_id=%s, url=%s). Asistto en silencio local.",
+                msg["message_id"],
+                wa_id,
+                bot.id,
+                agent_webhook_url,
             )
             return
 
