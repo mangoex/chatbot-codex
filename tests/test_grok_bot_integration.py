@@ -113,6 +113,39 @@ class GrokBotFormTests(unittest.IsolatedAsyncioTestCase):
         save_secret.assert_not_awaited()
         delete_secret.assert_not_awaited()
 
+    async def test_save_grok_bot_saves_granular_permissions(self):
+        request = MagicMock()
+        existing_integration = {"id": 99, "name": "Grok Bot", "enabled": True, "config": {}}
+
+        with (
+            patch.object(client, "_require_client_login", return_value={"role": "client_admin"}),
+            patch.object(client, "_require_bot_editor", AsyncMock()),
+            patch.object(client.db, "get_bot_integration_by_type", AsyncMock(return_value=existing_integration)),
+            patch.object(client.db, "update_bot_integration", AsyncMock(return_value=True)) as update_integ,
+            patch.object(client.db, "upsert_integration_secret", AsyncMock()),
+            patch.object(client.db, "delete_integration_secret", AsyncMock()),
+        ):
+            # allow_campaigns="on", handle_inbound=None (unchecked)
+            response = await client.client_grok_save(
+                request=request,
+                bot_id=147,
+                enabled="on",
+                allow_campaigns="on",
+                handle_inbound=None,
+                webhook_url="https://grok.example.com/api/webhook",
+                auth_header="********",
+                return_url="",
+                webhook_secret="********",
+            )
+
+        self.assertEqual(response.status_code, 302)
+        update_integ.assert_awaited_once()
+        _, kwargs = update_integ.call_args
+        config_data = kwargs.get("config_data")
+        self.assertEqual(config_data.get("allow_campaigns"), True)
+        self.assertEqual(config_data.get("handle_inbound"), False)
+
+
 
 class GrokInboundForwardingTests(unittest.IsolatedAsyncioTestCase):
     def _inbound_payload(self, text: str = "Hola, me interesa información", wa_id: str = "5215551234567") -> dict:
@@ -277,6 +310,58 @@ class GrokInboundForwardingTests(unittest.IsolatedAsyncioTestCase):
         forward_mock.assert_not_awaited()
         openai_mock.assert_awaited_once()
         send_track_mock.assert_awaited_once()
+
+    async def test_inbound_message_proceeds_locally_when_handle_inbound_is_false(self):
+        payload = self._inbound_payload()
+        bot = MagicMock(
+            id=147,
+            name="Bot Inmobiliario",
+            status="active",
+            whatsapp_phone_number_id="phone-147",
+            whatsapp_access_token="wa-secret-token",
+            openai_model="gpt-4o",
+            display_phone_number="5215500000000",
+        )
+        integration = {
+            "id": 99,
+            "name": "Grok Bot",
+            "enabled": True,
+            "config": {
+                "webhook_url": "https://grok.external.service/webhook",
+                "allow_campaigns": True,
+                "handle_inbound": False,  # Grok does NOT answer WhatsApp
+            },
+        }
+
+        with (
+            patch.object(main.bots, "resolve_by_phone_number_id", AsyncMock(return_value=bot)),
+            patch.object(main.db, "was_processed", AsyncMock(return_value=False)),
+            patch.object(main.db, "mark_processed", AsyncMock(return_value=True)),
+            patch.object(main.db, "is_chatwoot_handoff_active", AsyncMock(return_value=False)),
+            patch.object(main.db, "get_active_bot_integration", AsyncMock(return_value=integration)),
+            patch.object(main.db, "save_message", AsyncMock()),
+            patch.object(main.follow_ups, "cancel", AsyncMock()),
+            patch.object(main.db, "get_history", AsyncMock(return_value=[])),
+            patch.object(grok_client, "forward_to_grok", AsyncMock()) as forward_mock,
+            patch.object(main.openai_client, "complete", AsyncMock(return_value="Respuesta de Asistto")),
+            patch.object(main.leads, "process_reply", AsyncMock(side_effect=lambda w, r, h, bot_id: r)),
+            patch.object(main, "_send_and_track", AsyncMock(return_value=True)) as send_track_mock,
+        ):
+            await main._process_message_impl(
+                msg={
+                    "wa_id": "5215551234567",
+                    "message_id": "wamid.msg123",
+                    "type": "text",
+                    "text": "Hola, me interesa información",
+                    "phone_number_id": "phone-147",
+                    "display_phone_number": "5215500000000",
+                },
+                payload=payload,
+            )
+
+        forward_mock.assert_not_awaited()
+        send_track_mock.assert_awaited_once()
+
 
 
 class GrokReturnWebhookTests(unittest.IsolatedAsyncioTestCase):
@@ -539,8 +624,59 @@ class GrokBotCardRenderingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn('name="auth_header" placeholder="Ej. Bearer tu-token" autocomplete="new-password" value="********"', html)
             self.assertIn('name="webhook_secret" placeholder="Copia aquí el secreto" autocomplete="new-password" value="********"', html)
             self.assertIn("Conectado", html)
+            self.assertIn('name="allow_campaigns"', html)
+            self.assertIn('name="handle_inbound"', html)
+
+
+class GrokCampaignsPermissionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_client_campaigns_toggle_grok_permission_success(self):
+        request = MagicMock()
+        existing_integration = {
+            "id": 99,
+            "name": "Grok Bot",
+            "enabled": True,
+            "config": {"webhook_url": "https://grok.external/hook", "allow_campaigns": True},
+        }
+
+        with (
+            patch.object(client, "_require_client_login", return_value={"role": "client_admin"}),
+            patch.object(client, "_require_bot_editor", AsyncMock()),
+            patch.object(client.db, "get_bot_integration_by_type", AsyncMock(return_value=existing_integration)),
+            patch.object(client.db, "update_bot_integration", AsyncMock(return_value=True)) as update_integ,
+        ):
+            # Toggle off
+            response = await client.client_campaigns_toggle_grok_permission(
+                request=request,
+                bot_id=147,
+                allow_campaigns=None,
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("tab=campaigns", response.headers["location"])
+        self.assertIn("saved=grok_perm_updated", response.headers["location"])
+        update_integ.assert_awaited_once()
+        _, kwargs = update_integ.call_args
+        self.assertEqual(kwargs["config_data"]["allow_campaigns"], False)
+
+    async def test_client_campaigns_toggle_grok_permission_error_when_not_configured(self):
+        request = MagicMock()
+
+        with (
+            patch.object(client, "_require_client_login", return_value={"role": "client_admin"}),
+            patch.object(client, "_require_bot_editor", AsyncMock()),
+            patch.object(client.db, "get_bot_integration_by_type", AsyncMock(return_value=None)),
+        ):
+            response = await client.client_campaigns_toggle_grok_permission(
+                request=request,
+                bot_id=147,
+                allow_campaigns="on",
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("err_grok_not_configured", response.headers["location"])
 
 
 if __name__ == "__main__":
     unittest.main()
+
 

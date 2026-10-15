@@ -241,6 +241,35 @@ class ApiV1Tests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(data["recipients_count"], 2)
             mock_create_broadcast.assert_awaited_once()
 
+    async def test_create_campaign_forbidden_when_grok_allow_campaigns_is_false(self):
+        mock_integration = {
+            "id": 10,
+            "enabled": True,
+            "config": {"allow_campaigns": False},
+        }
+        raw_secret = "test-secret"
+
+        with (
+            patch.object(bots, "resolve_by_bot_id", AsyncMock(return_value=self.mock_bot)),
+            patch.object(db, "get_active_bot_integration", AsyncMock(return_value=mock_integration)),
+            patch.object(db, "get_integration_secret_values", AsyncMock(return_value={"webhook_secret": "enc:secret"})),
+            patch.object(secure_store, "decrypt_secret", return_value=raw_secret),
+        ):
+            payload = {
+                "name": "Campaña Grok No Autorizada",
+                "template_name": "plantilla_bienvenida",
+                "language_code": "es_MX",
+                "audience": {"type": "all"},
+            }
+            resp = self.client.post(
+                f"/api/v1/bots/{self.bot_id}/campaigns",
+                json=payload,
+                headers={"X-Grok-Secret": raw_secret},
+            )
+            self.assertEqual(resp.status_code, 403)
+            self.assertIn("Grok Bot no tiene permisos habilitados para crear campañas", resp.json()["detail"])
+
+
     async def test_get_campaign_status(self):
         mock_integration = {"id": 10, "enabled": True}
         raw_secret = "test-secret"

@@ -204,7 +204,10 @@ async def verify_bot_auth(
         enc_secrets = await db.get_integration_secret_values(int(grok_integration["id"]))
         stored_grok_secret = secure_store.decrypt_secret(enc_secrets.get("webhook_secret", ""))
         if stored_grok_secret and grok_client.validate_grok_secret(received_secret, stored_grok_secret):
+            request.state.auth_source = "grok_bot"
+            request.state.grok_integration = grok_integration
             return bot
+
 
     # 3. Validar contra integración api_key si está activa
     api_key_integration = await db.get_active_bot_integration(bot_id, "api_key")
@@ -405,13 +408,26 @@ async def api_create_campaign(
     bot_id: int,
     payload: CampaignCreateInput,
     background_tasks: BackgroundTasks,
+    request: Request,
     bot: bots.BotContext = Depends(verify_bot_auth),
 ):
     """
     Crea y lanza (o programa) una campaña masiva de WhatsApp utilizando una plantilla aprobada por Meta.
     Grok Bot puede especificar la audiencia por tag, por lista directa o a todos los contactos.
     """
+    # Validar permisos específicos de Grok Bot si la petición proviene de dicha integración
+    if getattr(request.state, "auth_source", None) == "grok_bot":
+        grok_integ = getattr(request.state, "grok_integration", None) or {}
+        grok_cfg = grok_integ.get("config") or {}
+        allow_campaigns = grok_cfg.get("allow_campaigns")
+        if allow_campaigns is False:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Grok Bot no tiene permisos habilitados para crear campañas",
+            )
+
     recipients_list: list[dict[str, Any]] = []
+
 
     # 1. Resolver destinatarios según el tipo de audiencia
     aud_type = payload.audience.type

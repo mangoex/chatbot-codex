@@ -1180,8 +1180,13 @@ async def client_app(
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} No fue posible reindexar la base de conocimiento.</div>'
     elif saved == "chatwoot_api_only":
         notice_html = f'<div class="notice-banner success">{ICONS["success"]} Conexión API validada. Falta guardar el Webhook Signing Secret para completar la conexión bidireccional.</div>'
+    elif saved == "grok_perm_updated":
+        notice_html = f'<div class="notice-banner success">{ICONS["success"]} Permisos de Grok Bot para campañas actualizados correctamente.</div>'
+    elif saved == "err_grok_not_configured":
+        notice_html = f'<div class="notice-banner error">{ICONS["error"]} Debes configurar primero la integración de Grok Bot en la pestaña Integraciones antes de habilitar permisos.</div>'
     elif saved == "err":
         notice_html = f'<div class="notice-banner error">{ICONS["error"]} Ocurrió un error. Revisa los datos.</div>'
+
     elif saved and saved.startswith("err_"):
         import urllib.parse
         decoded_msg = urllib.parse.unquote(saved[4:])
@@ -1357,8 +1362,11 @@ async def client_app(
             "********" if grok_webhook_secret_saved else ""
         )
     grok_ready = grok_enabled and bool(grok_config.get("webhook_url")) and grok_webhook_secret_saved
+    grok_allow_campaigns = grok_config.get("allow_campaigns", True) if grok_integration else True
+    grok_handle_inbound = grok_config.get("handle_inbound", False) if grok_integration else False
         
     # Routing Rules integration
+
     routing_integration = await db.get_bot_integration_by_type(bot_id, "routing_rules")
     routing_config = {}
     routing_enabled = False
@@ -2278,6 +2286,40 @@ async def client_app(
     create_view_display = "block" if broadcast_selected else "none"
     list_view_display = "none" if broadcast_selected else "block"
 
+    # Grok Bot Campaigns Banner / Control Box
+    if grok_integration and grok_webhook_secret_saved:
+        grok_camp_badge_class = "success" if grok_allow_campaigns else "secondary"
+        grok_camp_badge_text = "Habilitado para Campañas" if grok_allow_campaigns else "Inactivo para Campañas"
+        bot_display_name = (selected_bot.get("name") if selected_bot else None) or "Asistto"
+        responder_text = "Grok Bot" if grok_handle_inbound else f"Bot nativo de Asistto ({html.escape(bot_display_name)})"
+
+        
+        grok_action_btn = f"""
+        <form method="post" action="/client/bots/{bot_id}/campaigns/grok-permission" style="margin:0;">
+          <input type="hidden" name="allow_campaigns" value="{'false' if grok_allow_campaigns else 'on'}">
+          <button type="submit" class="btn {'secondary' if grok_allow_campaigns else 'primary-btn'}" style="padding:6px 14px; font-size:12px;" {"disabled" if session["role"] == "client_viewer" else ""}>
+            {"Desactivar permiso de Grok" if grok_allow_campaigns else "Habilitar permiso para Grok"}
+          </button>
+        </form>
+        """
+        grok_campaigns_control_html = f"""
+        <div style="margin-bottom:16px; padding:12px 16px; background:var(--bg-card-subtle, #f8fafc); border-radius:8px; border:1px solid var(--border-color, #e2e8f0); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+          <div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <strong style="font-size:13px; color:var(--text-main, #0f172a);">🤖 Automatización de Campañas con Grok Bot:</strong>
+              <span class="badge {grok_camp_badge_class}">{grok_camp_badge_text}</span>
+            </div>
+            <p style="margin:4px 0 0 0; font-size:12px; color:var(--muted, #64748b);">
+              Permite a Grok Bot disparar campañas de plantillas vía API REST. 
+              <strong>Atención de respuestas WhatsApp:</strong> {responder_text}.
+            </p>
+          </div>
+          {grok_action_btn}
+        </div>
+        """
+    else:
+        grok_campaigns_control_html = ""
+
     campaigns_panel_html = f"""
     <div id="panel-campaigns" class="tab-panel">
       
@@ -2296,7 +2338,9 @@ async def client_app(
         
         <!-- List Campaigns View -->
         <div id="campaignsListView" style="display:{list_view_display};">
+          {grok_campaigns_control_html}
           <div class="card">
+
             <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
               <div>
                 <h2>Campañas de Envío Masivo & Programadas</h2>
@@ -3948,12 +3992,35 @@ async def client_app(
           </div>
           
           <form method="post" action="/client/bots/{bot_id}/integrations/grok">
-            <div class="checkbox-group">
+            <input type="hidden" name="permissions_present" value="1">
+            <div class="checkbox-group" style="margin-bottom:12px;">
               <input type="checkbox" name="enabled" id="grokToggle" {"checked" if grok_enabled else ""}>
               <label for="grokToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar integración con Grok Bot</label>
             </div>
             
+            <div style="margin: 0 0 16px 0; padding: 12px; background: var(--bg-card-subtle, #f8fafc); border-radius: 8px; border: 1px solid var(--border-color, #e2e8f0);">
+              <span style="display:block; font-size:12px; font-weight:600; color:var(--text-main, #0f172a); margin-bottom:10px;">Permisos Granulares de Grok Bot:</span>
+              
+              <div class="checkbox-group" style="margin-bottom:10px;">
+                <input type="checkbox" name="allow_campaigns" id="grokAllowCampaigns" {"checked" if grok_allow_campaigns else ""}>
+                <label for="grokAllowCampaigns" style="margin:0; font-size:13px; cursor:pointer;">
+                  <strong>Permitir a Grok Bot lanzar campañas (API REST)</strong>
+                  <span style="display:block; font-size:11px; color:var(--muted, #64748b); font-weight:normal;">Autoriza a Grok a cargar prospectos y disparar plantillas masivas vía <code>/api/v1/bots/{bot_id}/campaigns</code>.</span>
+                </label>
+              </div>
+              
+              <div class="checkbox-group" style="margin-bottom:0;">
+                <input type="checkbox" name="handle_inbound" id="grokHandleInbound" {"checked" if grok_handle_inbound else ""}>
+                <label for="grokHandleInbound" style="margin:0; font-size:13px; cursor:pointer;">
+                  <strong>Delegar atención de WhatsApp a Grok Bot</strong>
+                  <span style="display:block; font-size:11px; color:var(--muted, #64748b); font-weight:normal;">Si está <u>desmarcado</u>, el bot nativo de Asistto ({html.escape((selected_bot.get("name") if selected_bot else None) or "Asistto")}) responderá a los clientes cuando contesten a las campañas.</span>
+                </label>
+
+              </div>
+            </div>
+            
             <label>URL del Webhook (Grok Bot)</label>
+
             <input name="webhook_url" placeholder="https://api.grok.ejemplo/webhook" value="{html.escape(grok_config.get("webhook_url") or "")}">
             
             <label>Encabezado Authorization</label>
@@ -5153,6 +5220,9 @@ async def client_grok_save(
     request: Request,
     bot_id: int,
     enabled: str | None = Form(None),
+    allow_campaigns: str | None = Form(None),
+    handle_inbound: str | None = Form(None),
+    permissions_present: str | None = Form(None),
     webhook_url: str = Form(""),
     auth_header: str = Form(""),
     return_url: str = Form(""),
@@ -5168,12 +5238,33 @@ async def client_grok_save(
 
     is_enabled = (enabled == "on" or enabled == "true")
 
-    integration = await db.get_bot_integration_by_type(bot_id, "grok_bot")
-
     config_data = {
         "webhook_url": clean_webhook_url,
         "return_url": clean_return_url,
     }
+
+    def _is_truthy(v: Any) -> bool:
+        if isinstance(v, str):
+            return v.strip().lower() in ("on", "true", "1")
+        return bool(v)
+
+    def _is_explicit(v: Any) -> bool:
+        return v is not None and not hasattr(v, "default")
+
+    if _is_explicit(permissions_present) or _is_explicit(allow_campaigns) or _is_explicit(handle_inbound):
+        config_data["allow_campaigns"] = _is_truthy(allow_campaigns) if _is_explicit(allow_campaigns) else False
+        config_data["handle_inbound"] = _is_truthy(handle_inbound) if _is_explicit(handle_inbound) else False
+    else:
+        existing_integ = await db.get_bot_integration_by_type(bot_id, "grok_bot")
+        if existing_integ and existing_integ.get("config"):
+            prev_cfg = existing_integ["config"]
+            if "allow_campaigns" in prev_cfg:
+                config_data["allow_campaigns"] = prev_cfg["allow_campaigns"]
+            if "handle_inbound" in prev_cfg:
+                config_data["handle_inbound"] = prev_cfg["handle_inbound"]
+
+
+    integration = await db.get_bot_integration_by_type(bot_id, "grok_bot")
 
     if integration:
         integration_id = int(integration["id"])
@@ -5210,6 +5301,41 @@ async def client_grok_save(
         f"/client/app?bot_id={bot_id}&tab=integrations&saved=1",
         status_code=302,
     )
+
+
+@router.post("/bots/{bot_id}/campaigns/grok-permission")
+async def client_campaigns_toggle_grok_permission(
+    request: Request,
+    bot_id: int,
+    allow_campaigns: str | None = Form(None),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+
+    integration = await db.get_bot_integration_by_type(bot_id, "grok_bot")
+    if not integration:
+        return RedirectResponse(
+            f"/client/app?bot_id={bot_id}&tab=campaigns&saved=err_grok_not_configured",
+            status_code=302,
+        )
+
+    is_allowed = (allow_campaigns == "on" or allow_campaigns == "true")
+    cfg = dict(integration.get("config") or {})
+    cfg["allow_campaigns"] = is_allowed
+
+    await db.update_bot_integration(
+        bot_id=bot_id,
+        integration_id=int(integration["id"]),
+        integration_type="grok_bot",
+        name=integration.get("name") or "Grok Bot",
+        config_data=cfg,
+        enabled=True if is_allowed else integration.get("enabled", False),
+    )
+    return RedirectResponse(
+        f"/client/app?bot_id={bot_id}&tab=campaigns&saved=grok_perm_updated",
+        status_code=302,
+    )
+
 
 
 @router.post("/bots/{bot_id}/integrations/github")

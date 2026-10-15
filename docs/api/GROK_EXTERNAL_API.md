@@ -11,25 +11,29 @@ La conexión entre Grok Bot y Asistto opera en dos fases complementarias:
 1. **Fase Saliente (Outbound / Prospección y Campañas)**:
    - Grok Bot identifica o recopila prospectos calificados.
    - Grok Bot los registra en Asistto vía `POST /api/v1/bots/{bot_id}/contacts/batch`.
-   - Grok Bot dispara una campaña vía `POST /api/v1/bots/{bot_id}/campaigns` usando una plantilla aprobada por Meta WhatsApp Cloud API.
+   - Grok Bot dispara una campaña vía `POST /api/v1/bots/{bot_id}/campaigns` usando una plantilla aprobada por Meta WhatsApp Cloud API (requiere permiso `allow_campaigns` activo).
    - Asistto procesa la cola de envíos en segundo plano de manera controlada y segura.
 
 2. **Fase Entrante y Conversacional (Inbound / Ventana de 24 horas)**:
    - Cuando el prospecto responde por WhatsApp, Asistto recibe el webhook de Meta y abre la ventana libre de 24 horas.
-   - Si la integración con Grok Bot está activa, Asistto reenvía el mensaje al webhook configurado en Grok Bot.
-   - Grok Bot procesa la respuesta y contesta de vuelta a `POST /webhooks/grok/{bot_id}` para continuar la conversación y la venta consultiva.
+   - **Modo Desacoplado (Recomendado)**: Si la opción *"Delegar atención a Grok Bot"* (`handle_inbound`) está desmarcada, el **bot nativo de Asistto** atiende la conversación de forma inmediata con su menú, prompts y base de conocimiento.
+   - **Modo Delegado**: Si dicha opción está activa, Asistto reenvía el mensaje entrante al webhook de Grok Bot, y Grok Bot contesta de vuelta a `POST /webhooks/grok/{bot_id}`.
 
 ```mermaid
-flowchart LR
+flowchart TD
     A[Grok Bot / Agente] -->|1. Carga Prospectos| B[POST /api/v1/bots/ID/contacts/batch]
     A -->|2. Lanza Campaña| C[POST /api/v1/bots/ID/campaigns]
     C --> D[Motor de Broadcasts Asistto]
     D -->|Plantilla Meta| E[WhatsApp del Cliente]
     E -->|Respuesta del Cliente| F[Asistto Webhook]
-    F -->|Reenvío| A
-    A -->|3. Respuesta Conversacional| G[POST /webhooks/grok/ID]
-    G --> E
+    F -->|¿handle_inbound activo?| G{Delegación}
+    G -->|No (Por Defecto)| H[Bot Nativo Asistto OpenAI / RAG]
+    G -->|Sí| I[Reenvío a Grok Bot]
+    I -->|Respuesta| J[POST /webhooks/grok/ID]
+    H --> E
+    J --> E
 ```
+
 
 ---
 

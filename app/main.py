@@ -863,16 +863,20 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         log.info("Bot %s esta pausado. Mensaje de %s guardado, no se responde.", bot.id, wa_id)
         return
 
-    # Comprobar si Grok Bot está activo para este bot
+    # Comprobar si Grok Bot está activo para este bot y tiene delegada la atención entrante
     grok_integration = await db.get_active_bot_integration(bot.id, "grok_bot")
     if grok_integration:
         grok_config = grok_integration.get("config") or {}
+        handle_inbound = grok_config.get("handle_inbound")
+        # Si handle_inbound es explícitamente False, Grok NO atiende WhatsApp y Asistto responde localmente
+        should_forward_inbound = handle_inbound if handle_inbound is not None else True
         grok_webhook_url = (grok_config.get("webhook_url") or "").strip()
-        if grok_webhook_url:
+        if should_forward_inbound and grok_webhook_url:
             secrets = await db.get_integration_secret_values(int(grok_integration["id"]))
             auth_header = ""
             if secrets.get("auth_header"):
                 auth_header = secure_store.decrypt_secret(secrets["auth_header"]) or ""
+
 
             contact_name = msg.get("name") or ""
             if not contact_name:
