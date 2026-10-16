@@ -443,8 +443,18 @@ async def receive_external_agent_webhook(request: Request, bot_id: int | None = 
     if not wa_id or not reply_text:
         raise HTTPException(status_code=400, detail="Missing recipient ('to'/'from'/'wa_id') or 'text'")
 
-    # Regla: enviar solo como respuesta dentro de las 24 horas. No iniciar conversación ni usar plantilla.
-    if not await db.is_within_24h_window(target_bot_id, wa_id):
+    # Resolver wa_id canónico desde la conversación activa (ej. cuando KiwiPOS envía 10 dígitos '6672013019' para '5216672013019')
+    canonical_wa_id = await db.resolve_active_wa_id_within_24h(target_bot_id, wa_id)
+    if canonical_wa_id:
+        if canonical_wa_id != wa_id:
+            log.info(
+                "wa_id normalizado para Agente Externo (bot %s): '%s' -> '%s'",
+                target_bot_id,
+                wa_id,
+                canonical_wa_id,
+            )
+        wa_id = canonical_wa_id
+    elif not await db.is_within_24h_window(target_bot_id, wa_id):
         log.warning(
             "Respuesta de Agente Externo rechazada para bot %s y %s: ventana de 24h expirada.",
             target_bot_id,
@@ -454,6 +464,8 @@ async def receive_external_agent_webhook(request: Request, bot_id: int | None = 
             "status": "window_expired",
             "detail": "24-hour messaging window expired; cannot reply without template",
         }
+    elif len(wa_id) == 10 and wa_id.isdigit():
+        wa_id = f"521{wa_id}"
 
     bot = await bots.resolve_by_bot_id(target_bot_id)
     if not bot or not bot.whatsapp_phone_number_id or not bot.whatsapp_access_token:

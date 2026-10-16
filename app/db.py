@@ -3619,11 +3619,66 @@ async def get_inactive_conversations_for_trigger(
         return [dict(r) for r in rows]
 
 
+def _conversation_recipient_variants(wa_id: str) -> list[str]:
+    """Genera variantes de números telefónicos (incluyendo nacional de 10 dígitos y prefijos 52 / 521 de México)."""
+    variants = _handoff_recipient_ids(wa_id)
+    raw = (wa_id or "").strip()
+    digits = "".join(filter(str.isdigit, raw))
+    if not digits:
+        return variants
+    if digits not in variants:
+        variants.append(digits)
+    if len(digits) == 10:
+        variants.append("521" + digits)
+        variants.append("52" + digits)
+    elif digits.startswith("521") and len(digits) == 13:
+        variants.append(digits[3:])
+    elif digits.startswith("52") and len(digits) == 12:
+        variants.append(digits[2:])
+    return list(dict.fromkeys(variants))
+
+
+async def resolve_active_wa_id_within_24h(bot_id: int, wa_id: str) -> str | None:
+    """
+    Busca la conversación activa del usuario en las últimas 24 horas (soportando variantes de 10, 12 y 13 dígitos)
+    y devuelve el wa_id canónico registrado por WhatsApp Cloud API (ej. '5216672013019').
+    """
+    if not wa_id or _pool is None:
+        return None
+    variants = _conversation_recipient_variants(wa_id)
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT wa_id, created_at
+            FROM conversations
+            WHERE bot_id = $1 AND wa_id = ANY($2::text[]) AND role = 'user'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            bot_id,
+            variants,
+        )
+        if not row:
+            return None
+        created_at = row["created_at"]
+        if isinstance(created_at, str):
+            try:
+                created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            except Exception:
+                return None
+        if getattr(created_at, "tzinfo", None) is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+        diff = datetime.now(timezone.utc) - created_at.astimezone(timezone.utc)
+        if diff.total_seconds() <= 24 * 3600:
+            return str(row["wa_id"])
+        return None
+
+
 async def is_within_24h_window(bot_id: int, wa_id: str) -> bool:
     """Verifica si el usuario envió un mensaje en las últimas 24 horas para permitir respuestas de sesión de WhatsApp."""
     if not wa_id or _pool is None:
         return False
-    variants = _handoff_recipient_ids(wa_id)
+    variants = _conversation_recipient_variants(wa_id)
     async with _pool.acquire() as conn:
         row = await conn.fetchval(
             """
@@ -3645,4 +3700,5 @@ async def is_within_24h_window(bot_id: int, wa_id: str) -> bool:
             row = row.replace(tzinfo=timezone.utc)
         diff = datetime.now(timezone.utc) - row.astimezone(timezone.utc)
         return diff.total_seconds() <= 24 * 3600
+
 

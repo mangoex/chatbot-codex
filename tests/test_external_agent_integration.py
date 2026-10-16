@@ -743,7 +743,73 @@ class ExternalAgentMetaCompatibilityTests(unittest.IsolatedAsyncioTestCase):
             access_token="wa-token",
         )
 
+    def test_conversation_recipient_variants_10_digit_mx(self):
+        variants_10 = db._conversation_recipient_variants("6672013019")
+        self.assertIn("6672013019", variants_10)
+        self.assertIn("5216672013019", variants_10)
+        self.assertIn("526672013019", variants_10)
+
+        variants_13 = db._conversation_recipient_variants("5216672013019")
+        self.assertIn("5216672013019", variants_13)
+        self.assertIn("526672013019", variants_13)
+        self.assertIn("6672013019", variants_13)
+
+    async def test_return_webhook_resolves_10_digit_mx_to_canonical_wa_id(self):
+        body_dict = {"to": "6672013019", "text": "¡Hola! Bienvenido a mimenu"}
+        body_bytes = json.dumps(body_dict).encode("utf-8")
+        secret = "whsec_return_auth"
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "headers": [
+                (b"authorization", f"Bearer {secret}".encode()),
+                (b"content-type", b"application/json"),
+            ],
+            "query_string": b"",
+        }
+        req = Request(scope)
+        async def _body():
+            return body_bytes
+        req.body = _body
+        req._json = body_dict
+
+        integration = {"id": 101, "enabled": True, "config": {}}
+        bot = MagicMock(
+            id=212,
+            whatsapp_phone_number_id="1337915772739085",
+            whatsapp_access_token="wa-token",
+        )
+
+        with (
+            patch.object(main.db, "get_active_bot_integration", AsyncMock(return_value=integration)),
+            patch.object(main.db, "get_integration_secret_values", AsyncMock(return_value={"webhook_secret": "enc:secret"})),
+            patch.object(main.secure_store, "decrypt_secret", return_value=secret),
+            patch.object(main.db, "resolve_active_wa_id_within_24h", AsyncMock(return_value="5216672013019")) as resolve_mock,
+            patch.object(main.bots, "resolve_by_bot_id", AsyncMock(return_value=bot)),
+            patch.object(main.whatsapp_client, "send_text", AsyncMock(return_value={"messages": [{"id": "wamid.out212"}]})) as send_text_mock,
+            patch.object(main.db, "save_message", AsyncMock()) as save_msg_mock,
+            patch.object(main.db, "record_bot_sent_message", AsyncMock()),
+        ):
+            result = await main.receive_external_agent_webhook(req, 212)
+
+        self.assertEqual(result, {"status": "sent"})
+        resolve_mock.assert_awaited_once_with(212, "6672013019")
+        send_text_mock.assert_awaited_once_with(
+            to_wa_id="5216672013019",
+            body="¡Hola! Bienvenido a mimenu",
+            phone_number_id="1337915772739085",
+            access_token="wa-token",
+        )
+        save_msg_mock.assert_awaited_once_with(
+            "5216672013019",
+            "assistant",
+            "¡Hola! Bienvenido a mimenu",
+            bot_id=212,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
