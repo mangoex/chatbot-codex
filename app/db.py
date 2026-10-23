@@ -1931,6 +1931,94 @@ async def get_active_bot_prompt(bot_id: int) -> dict | None:
     return dict(row) if row else None
 
 
+async def _prompt_patch_context(conn, bot_id: int) -> dict:
+    """Read review evidence on one transaction snapshot; never load credentials."""
+    from app.prompt_patch import fingerprint
+
+    bot = await conn.fetchrow(
+        "SELECT id, client_id, name, description, status FROM bots WHERE id = $1", bot_id,
+    )
+    previous = await conn.fetchrow(
+        "SELECT id, version, content, pbd_constitution, pbd_specs, pbd_test_suite "
+        "FROM bot_prompts WHERE bot_id = $1 AND status = 'active' "
+        "ORDER BY version DESC, published_at DESC NULLS LAST, created_at DESC LIMIT 1", bot_id,
+    )
+    knowledge = await conn.fetch(
+        "SELECT id, title, content, index_status, content_hash FROM bot_knowledge "
+        "WHERE bot_id = $1 AND status = 'active' ORDER BY id", bot_id,
+    )
+
+    def safe_config(value):
+        if isinstance(value, dict):
+            return {k: ("[credencial omitida]" if any(part in k.lower() for part in
+                    ("secret", "token", "password", "api_key", "apikey", "authorization"))
+                    else safe_config(v)) for k, v in value.items()}
+        if isinstance(value, list):
+            return [safe_config(v) for v in value]
+        return value
+
+    async def configuration(table, type_column):
+        # Table and column identifiers are constants from the calls below.
+        rows = await conn.fetch(
+            f"SELECT id, {type_column}, enabled, config FROM {table} WHERE bot_id = $1 ORDER BY id", bot_id,
+        )
+        result = []
+        for row in rows:
+            item = dict(row)
+            cfg = item.get("config") or {}
+            if isinstance(cfg, str):
+                cfg = json.loads(cfg)
+            item["config_digest"] = fingerprint(cfg)
+            item["config"] = safe_config(cfg)
+            result.append(item)
+        return result
+
+    return {"bot": dict(bot) if bot else {}, "previous": dict(previous) if previous else {},
+            "knowledge": [dict(r) for r in knowledge],
+            "integrations": await configuration("bot_integrations", "integration_type"),
+            "skills": await configuration("bot_skills", "skill_type")}
+
+
+async def get_prompt_patch_context(bot_id: int) -> dict:
+    async with _pool.acquire() as conn:
+        async with conn.transaction(isolation="repeatable_read", readonly=True):
+            return await _prompt_patch_context(conn, bot_id)
+
+
+async def publish_bot_prompt_patch(bot_id: int, receipt: dict, submitted: str) -> int:
+    """Recheck evidence and publish atomically, preserving every auxiliary rule."""
+    from app.prompt_patch import PatchError, verify_publication
+
+    try:
+        async with _pool.acquire() as conn:
+            async with conn.transaction(isolation="serializable"):
+                await conn.fetchrow("SELECT id FROM bots WHERE id = $1 FOR UPDATE", bot_id)
+                # Lock existing evidence, including inactive sources that could be
+                # activated. The parent FOR UPDATE also blocks concurrent FK inserts.
+                for table in ("bot_knowledge", "bot_integrations", "bot_skills", "bot_prompts"):
+                    await conn.fetch(f"SELECT id FROM {table} WHERE bot_id = $1 FOR SHARE", bot_id)
+                context = await _prompt_patch_context(conn, bot_id)
+                candidate = verify_publication(context, receipt, submitted)
+                previous = context["previous"]
+                version = await conn.fetchval(
+                    "SELECT COALESCE(MAX(version), 0) + 1 FROM bot_prompts WHERE bot_id = $1", bot_id,
+                )
+                await conn.execute(
+                    "UPDATE bot_prompts SET status = 'archived' WHERE bot_id = $1 AND status = 'active'", bot_id,
+                )
+                row = await conn.fetchrow(
+                    "INSERT INTO bot_prompts(bot_id, version, status, content, pbd_constitution, "
+                    "pbd_specs, pbd_test_suite, published_at) VALUES($1,$2,'active',$3,$4,$5,$6,now()) RETURNING id",
+                    bot_id, int(version), candidate, previous.get("pbd_constitution"),
+                    previous.get("pbd_specs"), previous.get("pbd_test_suite"),
+                )
+                return int(row["id"])
+    except Exception as exc:
+        if getattr(exc, "sqlstate", None) in {"40001", "40P01"}:
+            raise PatchError("Hubo un cambio concurrente. Vuelve a revisar el cambio puntual.") from None
+        raise
+
+
 async def publish_bot_prompt(
     bot_id: int, 
     content: str, 

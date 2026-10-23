@@ -13,10 +13,12 @@ function setup() {
   const elements = Object.fromEntries([
     'behaviorForm', 'aiPromptInstruction', 'activePromptEditor', 'promptAssistError',
     'promptAssistResult', 'aiAssistLoader', 'btnAssistPrompt', 'btnSavePrompt',
+    'promptEditMode', 'promptFormat', 'patchReceipt', 'patchBefore', 'patchAfter', 'patchFields',
   ].map(id => [id, { value: '', style: {}, disabled: false, textContent: '',
     focus() { this.focused = true; }, addEventListener(type, fn) { this[type] = fn; } }]));
   elements.activePromptEditor.value = 'Original';
   elements.aiPromptInstruction.value = 'Ajusta el tono';
+  elements.promptEditMode.value = 'single_prompt';
   const requests = [];
   const sandbox = {
     window: {}, FormData, Blob, URL, console,
@@ -92,5 +94,60 @@ function setup() {
   let prevented = false;
   elements.behaviorForm.submit({ preventDefault() { prevented = true; } });
   assert.equal(prevented, true);
+
+  // A targeted change is never saved without a receipt, even if the editor is valid.
+  ({ sandbox, elements, requests } = setup());
+  elements.promptEditMode.value = 'targeted_patch';
+  elements.patchBefore.value = 'Original';
+  elements.patchAfter.value = 'Nuevo';
+  sandbox.changePromptMode();
+  assert.equal(elements.promptFormat.value, 'targeted_patch');
+  prevented = false;
+  elements.behaviorForm.submit({ preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  sandbox.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return { ok: true, json: async () => ({ ok: true, prompt: 'Nuevo', patch_receipt: 'signed-review',
+      change: { before: 'Original', after: 'Nuevo', occurrences: 1 } }) };
+  };
+  await sandbox.requestAIPrompt();
+  assert.equal(requests[0].options.body.get('mode'), 'targeted_patch');
+  assert.equal(requests[0].options.body.get('patch_before'), 'Original');
+  assert.equal(requests[0].options.body.get('patch_after'), 'Nuevo');
+  assert.equal(elements.patchReceipt.value, 'signed-review');
+  assert.match(elements.promptAssistResult.textContent, /Original.*Nuevo/);
+  prevented = false;
+  elements.behaviorForm.submit({ preventDefault() { prevented = true; } });
+  assert.equal(prevented, false);
+  // Re-review uses the active baseline, never chains model edits as a new source.
+  await sandbox.requestAIPrompt();
+  assert.equal(requests[1].options.body.get('current_prompt'), 'Original');
+  elements.activePromptEditor.value = 'Nuevo con otra regla';
+  elements.behaviorForm.submit({ preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  sandbox.invalidatePatch();
+  assert.equal(elements.patchReceipt.value, '');
+
+  // Incomplete targeted response cannot replace the editor.
+  ({ sandbox, elements } = setup());
+  elements.promptEditMode.value = 'targeted_patch';
+  elements.patchBefore.value = 'Original';
+  elements.patchAfter.value = 'Nuevo';
+  await sandbox.requestAIPrompt();
+  assert.equal(elements.activePromptEditor.value, 'Original');
+  assert.equal(elements.patchReceipt.value, '');
+
+  // Changing requested values while reviewing must not apply the old result.
+  ({ sandbox, elements } = setup());
+  elements.promptEditMode.value = 'targeted_patch';
+  elements.patchBefore.value = 'Original';
+  elements.patchAfter.value = 'Nuevo';
+  sandbox.fetch = () => new Promise(resolve => { complete = resolve; });
+  const reviewing = sandbox.requestAIPrompt();
+  elements.patchAfter.value = 'Otro';
+  complete({ ok: true, json: async () => ({ ok: true, prompt: 'Nuevo', patch_receipt: 'signed', change: {} }) });
+  await reviewing;
+  assert.equal(elements.activePromptEditor.value, 'Original');
+  assert.equal(elements.patchReceipt.value, '');
   console.log('Editor: generación, errores, conflicto, edición concurrente y guardado verificados.');
 })().catch(error => { console.error(error); process.exitCode = 1; });

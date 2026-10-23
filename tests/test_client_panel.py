@@ -329,7 +329,7 @@ class TestClientPanelFeatures:
         assert "Generar o ajustar prompt maestro" in html_body
         assert "Guardar y activar prompt maestro" in html_body
         assert "Publicar automáticamente en producción" not in html_body
-        assert 'name="prompt_format" value="single_prompt"' in html_body
+        assert 'name="prompt_format" value="targeted_patch"' in html_body
         assert "Autorizar cambio constitucional" not in html_body
         assert "activeConstitutionEditor" not in html_body
         assert "Constitucion actual" not in html_body
