@@ -9,6 +9,8 @@ def render_prompt_workspace(bot_id: int, prompt: str, csrf_token: str, *, readon
       <form id="behaviorForm" method="post" action="/client/bots/{bot_id}/prompt/save?csrf_token={html.escape(csrf_token)}">
         <input type="hidden" name="csrf_token" value="{html.escape(csrf_token)}">
         <input type="hidden" name="prompt_format" value="single_prompt">
+        <input type="hidden" id="reviewReceipt" name="review_receipt" value="">
+        <input type="hidden" id="reviewRequired" name="review_required" value="0">
         <div class="prompt-workspace" style="display:block; max-width:960px; margin:0 auto;">
           <div class="card">
             <div class="card-header">
@@ -16,10 +18,11 @@ def render_prompt_workspace(bot_id: int, prompt: str, csrf_token: str, *, readon
               <p>Define el comportamiento de tu bot en un solo documento. El asistente de Asistto te ayuda a integrar objetivos, criterios de respuesta, guardrails, reglas y ejemplos usando tu base de conocimiento y tus integraciones.</p>
             </div>
             <label for="aiPromptInstruction">1. Describe lo que necesitas crear o cambiar</label>
-            <textarea id="aiPromptInstruction" style="min-height:130px;" {read_attr} placeholder="Ej. Atiende dudas sobre nuestros servicios con un tono cercano. Usa solo información oficial, no inventes precios y deriva las quejas a un asesor. Incluye ejemplos de respuestas y conserva las demás reglas actuales."></textarea>
+            <textarea id="aiPromptInstruction" style="min-height:130px;" {read_attr} placeholder="Ej. Los sábados atendemos de 9 a 14. Agrega el servicio de instalación. Nuestra dirección ahora es Avenida Central 20. Conserva las demás reglas."></textarea>
+            <p class="muted-text" style="font-size:13px;">Describe el cambio con tus palabras. Revisaremos las reglas y las fuentes; si falta información o hay un conflicto, te indicaremos qué resolver.</p>
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin:12px 0 24px;">
               <button class="btn primary-btn" type="button" id="btnAssistPrompt" onclick="requestAIPrompt()" {disabled}>Generar o ajustar prompt maestro</button>
-              <span id="aiAssistLoader" role="status" aria-live="polite" style="display:none;">Preparando tu prompt maestro…</span>
+              <span id="aiAssistLoader" role="status" aria-live="polite" style="display:none;">Revisando solicitud, reglas y fuentes…</span>
             </div>
             <div id="promptAssistError" role="alert" style="display:none; margin-bottom:16px; color:var(--red); white-space:pre-wrap;"></div>
             <div id="promptAssistResult" role="status" aria-live="polite" style="display:none; margin-bottom:16px; white-space:pre-wrap;"></div>
@@ -35,12 +38,20 @@ def render_prompt_workspace(bot_id: int, prompt: str, csrf_token: str, *, readon
         </div>
       </form>
       <script>
+        let reviewedPrompt = null;
         function currentMasterPrompt() {{
           return window.promptEditor ? window.promptEditor.value() : document.getElementById("activePromptEditor").value;
         }}
 
         document.getElementById("behaviorForm")?.addEventListener("submit", function(event) {{
           if (window.promptEditor?.codemirror) window.promptEditor.codemirror.save();
+          if (document.getElementById("reviewRequired").value === "1" &&
+              (!document.getElementById("reviewReceipt").value || currentMasterPrompt() !== reviewedPrompt)) {{
+            event.preventDefault();
+            document.getElementById("promptAssistError").textContent = "El borrador cambió después de revisarlo. Recarga el prompt activo y pide los ajustes desde el cuadro superior.";
+            document.getElementById("promptAssistError").style.display = "block";
+            return;
+          }}
           if (!currentMasterPrompt().trim()) {{
             event.preventDefault();
             document.getElementById("promptAssistError").textContent = "Escribe o genera un prompt maestro antes de guardar.";
@@ -82,7 +93,8 @@ def render_prompt_workspace(bot_id: int, prompt: str, csrf_token: str, *, readon
           const formData = new FormData();
           formData.append("instruction", instruction);
           formData.append("current_prompt", current);
-          formData.append("mode", "single_prompt");
+          formData.append("mode", "guarded_prompt");
+          formData.append("review_receipt", document.getElementById("reviewReceipt").value);
           formData.append("csrf_token", csrfToken);
           try {{
             const response = await fetch(`/client/bots/{bot_id}/prompt/assist?csrf_token=${{encodeURIComponent(csrfToken)}}`, {{
@@ -94,8 +106,11 @@ def render_prompt_workspace(bot_id: int, prompt: str, csrf_token: str, *, readon
             if (!response.ok || !data.ok || data.blocked) {{
               throw new Error(data.blocked_reason || data.error || "No fue posible generar el prompt maestro.");
             }}
-            if (currentMasterPrompt() !== current) {{
+            if (currentMasterPrompt() !== current || document.getElementById("aiPromptInstruction").value.trim() !== instruction) {{
               throw new Error("Editaste el prompt mientras se generaba. Conservamos tus cambios; vuelve a solicitar el ajuste con esta versión.");
+            }}
+            if (!data.review_receipt) {{
+              throw new Error("La revisión no terminó. Conservamos el prompt actual; vuelve a solicitar el ajuste.");
             }}
             if (window.promptEditor) {{
               window.promptEditor.value(data.prompt);
@@ -104,7 +119,13 @@ def render_prompt_workspace(bot_id: int, prompt: str, csrf_token: str, *, readon
               document.getElementById("activePromptEditor").value = data.prompt;
             }}
             const warnings = data.validation?.warnings || [];
-            result.textContent = "Prompt preparado. Se revisó que incluya las secciones requeridas. Revisa sus reglas y ejemplos antes de guardarlo." +
+            document.getElementById("reviewReceipt").value = data.review_receipt;
+            document.getElementById("reviewRequired").value = "1";
+            reviewedPrompt = currentMasterPrompt();
+            const changes = (data.changes || []).map(change =>
+              "Antes: " + change.before.slice(0, 300) + " → Después: " + (change.after.slice(0, 300) || "(retirado)")).join("\\n");
+            result.textContent = "Borrador revisado. " + (data.summary || "Revisa el resultado antes de guardarlo.") +
+              (changes ? "\\n" + changes : "") + "\\nTodavía no se ha activado. Puedes pedir otro ajuste arriba o guardar esta versión." +
               (warnings.length ? "\\n" + warnings.join("\\n") : "");
             result.style.display = "block";
           }} catch (e) {{

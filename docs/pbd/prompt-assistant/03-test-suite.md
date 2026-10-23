@@ -35,3 +35,38 @@
 ## Alcance de verificación
 
 Las pruebas usan proveedores simulados y verifican contratos, validación, permisos y flujo del editor. No evalúan semánticamente respuestas de IA real ni garantizan que una consolidación conserve cada regla; el propietario revisa antes de activar. Las suites de relevo y carga por tenant protegen los controles operativos existentes.
+
+## AC-005 / TEST-005: Lenguaje natural sin campos adicionales
+- Trace: US-002, SPEC-005, CON-008
+- DADO un prompt con horarios, dirección, servicios y reglas.
+- CUANDO se piden cambios con lenguaje natural, sin proporcionar el texto anterior.
+- ENTONCES el asistente identifica fragmentos, añade/retira servicios y conserva los demás caracteres.
+- Y NO DEBE añadir selectores ni campos de dato actual/dato nuevo al panel.
+- Cobertura: `tests/test_prompt_changes.py`, `tests/test_prompt_workspace.js`.
+
+## AC-006 / TEST-006: Constitución, fuentes y revisión independiente
+- Trace: SPEC-005, SPEC-006, CON-003, CON-009
+- DADO una propuesta que modifica un guardrail, añade un descuento no solicitado, omite fuentes o contradice horarios de un documento.
+- CUANDO se valida y revisa la propuesta.
+- ENTONCES se bloquea sin sustituir el editor ni publicar.
+- Y NO DEBE aceptar una reescritura, instrucciones incrustadas como autoridad, documentos truncados, solapamientos o aprobaciones parciales.
+- Cobertura: `tests/test_prompt_changes.py`, `tests/test_prompt_change_store.py`.
+
+## AC-007 / TEST-007: Fuentes completas y ambigüedad
+- Trace: SPEC-006, FB-001, CON-004, CON-009
+- DADO información relevante después del documento 30 o del carácter 2500, o falta del dato nuevo.
+- CUANDO se solicita un ajuste.
+- ENTONCES se revisa toda la evidencia o se bloquea por tamaño; las ambigüedades explican qué dato falta.
+- Y NO DEBE pedir al usuario un fragmento de reemplazo ni inventar un dato.
+- Cobertura: `tests/test_prompt_changes.py`, `tests/test_prompt_change_store.py`.
+
+## AC-008 / TEST-008: Publicación, borradores sucesivos y permisos
+- Trace: SPEC-007, FB-002, CON-005, CON-010
+- DADO un borrador revisado con comprobante firmado.
+- CUANDO se pide otro ajuste compatible, se conserva el borrador anterior como base autorizada.
+- CUANDO se intenta guardar con texto adicional, revisión caducada, contexto cambiado, otro usuario/bot o rol de lectura.
+- ENTONCES se rechaza antes de escribir y se conserva la versión activa.
+- Y NO DEBE perder los documentos PBD ni sobrescribir ediciones concurrentes.
+- Cobertura: `tests/test_prompt_changes.py`, `tests/test_prompt_change_store.py`, `tests/test_prompt_workspace.js`.
+
+Estas suites simulan el proveedor y la conexión a PostgreSQL. Verifican construcción exacta de cambios, contratos de revisión y guardado; no certifican la precisión semántica de un modelo real ni un despliegue.

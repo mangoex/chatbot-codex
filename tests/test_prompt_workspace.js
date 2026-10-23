@@ -7,16 +7,22 @@ const render = spawnSync('py', ['-c',
   'from app.prompt_workspace import render_prompt_workspace; print(render_prompt_workspace(7, "Original", "csrf", readonly=False))'
 ], { encoding: 'utf8', env: { ...process.env, PYTHONIOENCODING: 'utf-8' } });
 assert.equal(render.status, 0, render.stderr);
+assert.equal((render.stdout.match(/<textarea/g) || []).length, 2);
+assert.equal(render.stdout.includes('<select'), false);
+assert.equal(render.stdout.includes('patchBefore'), false);
+assert.equal(render.stdout.includes('patchAfter'), false);
 const script = render.stdout.match(/<script>([\s\S]*?)<\/script>/)[1];
 
 function setup() {
   const elements = Object.fromEntries([
     'behaviorForm', 'aiPromptInstruction', 'activePromptEditor', 'promptAssistError',
     'promptAssistResult', 'aiAssistLoader', 'btnAssistPrompt', 'btnSavePrompt',
+    'reviewReceipt', 'reviewRequired',
   ].map(id => [id, { value: '', style: {}, disabled: false, textContent: '',
     focus() { this.focused = true; }, addEventListener(type, fn) { this[type] = fn; } }]));
   elements.activePromptEditor.value = 'Original';
   elements.aiPromptInstruction.value = 'Ajusta el tono';
+  elements.reviewRequired.value = '0';
   const requests = [];
   const sandbox = {
     window: {}, FormData, Blob, URL, console,
@@ -25,7 +31,9 @@ function setup() {
     },
     fetch: async (url, options) => {
       requests.push({ url, options });
-      return { ok: true, json: async () => ({ ok: true, prompt: 'Nuevo', validation: { warnings: [] } }) };
+      return { ok: true, json: async () => ({ ok: true, prompt: 'Nuevo', review_receipt: 'signed-review',
+        changes: [{ before: 'Horario anterior', after: 'Horario nuevo' }],
+        summary: 'Horario actualizado; otras reglas conservadas.', validation: { warnings: [] } }) };
     },
   };
   vm.createContext(sandbox);
@@ -45,7 +53,11 @@ function setup() {
   await sandbox.requestAIPrompt();
   assert.equal(elements.activePromptEditor.value, 'Nuevo');
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].options.body.get('mode'), 'single_prompt');
+  assert.equal(requests[0].options.body.get('mode'), 'guarded_prompt');
+  assert.equal(requests[0].options.body.get('review_receipt'), '');
+  assert.equal(elements.reviewReceipt.value, 'signed-review');
+  assert.equal(elements.reviewRequired.value, '1');
+  assert.match(elements.promptAssistResult.textContent, /Horario anterior.*Horario nuevo/);
   assert.equal(requests[0].options.body.get('current_prompt'), 'Original');
   assert.equal(requests[0].options.body.get('auto_publish'), null);
   assert.equal(requests[0].options.body.get('pbd_constitution'), null);
@@ -92,5 +104,34 @@ function setup() {
   let prevented = false;
   elements.behaviorForm.submit({ preventDefault() { prevented = true; } });
   assert.equal(prevented, true);
+
+  ({ sandbox, elements, requests } = setup());
+  await sandbox.requestAIPrompt();
+  elements.aiPromptInstruction.value = 'Ahora agrega el servicio de instalación';
+  await sandbox.requestAIPrompt();
+  assert.equal(requests[1].options.body.get('current_prompt'), 'Nuevo');
+  assert.equal(requests[1].options.body.get('review_receipt'), 'signed-review');
+  assert.equal(requests[1].options.body.get('patch_before'), null);
+  prevented = false;
+  elements.behaviorForm.submit({ preventDefault() { prevented = true; } });
+  assert.equal(prevented, false);
+  elements.activePromptEditor.value = 'Nuevo con regla adicional';
+  elements.behaviorForm.submit({ preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+
+  ({ sandbox, elements } = setup());
+  sandbox.fetch = async () => ({ ok: true, json: async () => ({ ok: true, prompt: 'Sin revisión' }) });
+  await sandbox.requestAIPrompt();
+  assert.equal(elements.activePromptEditor.value, 'Original');
+  assert.equal(elements.reviewReceipt.value, '');
+
+  ({ sandbox, elements } = setup());
+  sandbox.fetch = () => new Promise(resolve => { complete = resolve; });
+  const reviewing = sandbox.requestAIPrompt();
+  elements.aiPromptInstruction.value = 'Cambia la dirección';
+  complete({ ok: true, json: async () => ({ ok: true, prompt: 'Obsoleto', review_receipt: 'signed' }) });
+  await reviewing;
+  assert.equal(elements.activePromptEditor.value, 'Original');
+  assert.equal(elements.reviewReceipt.value, '');
   console.log('Editor: generación, errores, conflicto, edición concurrente y guardado verificados.');
 })().catch(error => { console.error(error); process.exitCode = 1; });
