@@ -39,6 +39,8 @@ AGENTS.md
 # Directorios de runtime / build
 *.pyc
 __pycache__/
+.mypy_cache/
+.pytest_cache/
 .tmp/
 .venv/
 venv/

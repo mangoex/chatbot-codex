@@ -38,6 +38,7 @@ from app import (
     leads,
     openai_client,
     order_payments,
+    prompt_whatsapp_control,
     public_pages,
     reply_safety,
     secure_store,
@@ -800,6 +801,24 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         if control_command:
             await db.save_message(wa_id, "user", user_text, bot_id=bot.id)
             await bot_control.handle_control_command(bot, wa_id, control_command)
+            return
+
+        # Control del prompt maestro por WhatsApp (#prompt)
+        prompt_control_result = await prompt_whatsapp_control.handle_prompt_whatsapp_message(
+            bot=bot,
+            wa_id=wa_id,
+            text=user_text,
+            metadata_display_phone=msg.get("display_phone_number"),
+        )
+        if prompt_control_result.get("handled"):
+            await db.save_message(wa_id, "user", user_text, bot_id=bot.id)
+            await follow_ups.cancel(wa_id, bot.id)
+            log.info(
+                "Comando/respuesta #prompt procesado para bot=%s wa_id=%s action=%s",
+                bot.id,
+                wa_id,
+                prompt_control_result.get("action"),
+            )
             return
 
     # Check for active routing rules (forward_and_bypass)
