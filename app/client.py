@@ -19,7 +19,6 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from app import bot_control, db, config, auth, secure_store, meta_provider, prompt_assistant, pbd_validation, skill_runtime, calendar_client, file_parser
 from app.knowledge_privacy import is_private_directory_title
 from app.prompt_workspace import render_prompt_workspace
-from app import prompt_patch
 
 log = logging.getLogger("client-panel")
 router = APIRouter(prefix="/client", tags=["client-portal"])
@@ -4690,24 +4689,12 @@ async def client_prompt_save(
     pbd_specs: str | None = Form(None),
     pbd_test_suite: str | None = Form(None),
     prompt_format: str = Form("pbd"),
-    patch_receipt: str = Form(""),
 ):
     session = _require_client_login(request)
     await _require_bot_editor(session, bot_id)
     clean = prompt.strip()
     if not clean:
         raise HTTPException(status_code=400, detail="El prompt no puede estar vacío")
-
-    if prompt_format == "targeted_patch" or (isinstance(patch_receipt, str) and patch_receipt):
-        try:
-            receipt = prompt_patch.verify_receipt(patch_receipt, bot_id, str(session.get("user")))
-            await db.publish_bot_prompt_patch(bot_id, receipt, prompt)
-        except prompt_patch.PatchError as exc:
-            message = quote(str(exc)[:900])
-            return RedirectResponse(
-                f"/client/app?bot_id={bot_id}&tab=prompt&saved=err_{message}", status_code=302,
-            )
-        return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=prompt&saved=1", status_code=302)
 
     if prompt_format == "single_prompt":
         report = pbd_validation.validate_single_prompt(clean, for_publish=True)
@@ -4759,20 +4746,10 @@ async def client_prompt_assist(
     mode: str = Form("auto"),
     auto_publish: str | None = Form(None),
     allow_constitution_change: str | None = Form(None),
-    patch_before: str = Form(""),
-    patch_after: str = Form(""),
 ):
     session = _require_client_login(request)
     bot = await _require_bot_editor(session, bot_id)
     try:
-        if mode == "targeted_patch":
-            context = await db.get_prompt_patch_context(bot_id)
-            result = await prompt_patch.review_patch(
-                context=context, bot_id=bot_id, actor=str(session.get("user")),
-                instruction=instruction, current_prompt=current_prompt,
-                before=patch_before, after=patch_after,
-            )
-            return JSONResponse(result)
         if mode == "single_prompt":
             previous = await db.get_active_bot_prompt(bot_id) or {}
             # Legacy rules come from this bot's stored version, never from a hidden UI editor.
@@ -4802,8 +4779,6 @@ async def client_prompt_assist(
         result["published"] = False
         result["publication_requires_review"] = True
         return JSONResponse(result)
-    except prompt_patch.PatchError as exc:
-        return JSONResponse({"ok": False, "blocked": True, "blocked_reason": str(exc)}, status_code=400)
     except prompt_assistant.PromptAssistantError as exc:
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     except Exception as exc:

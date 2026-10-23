@@ -35,33 +35,3 @@
 ## Alcance de verificación
 
 Las pruebas usan proveedores simulados y verifican contratos, validación, permisos y flujo del editor. No evalúan semánticamente respuestas de IA real ni garantizan que una consolidación conserve cada regla; el propietario revisa antes de activar. Las suites de relevo y carga por tenant protegen los controles operativos existentes.
-
-## AC-005 / TEST-005: Reemplazo exacto (CON-008, SPEC-005)
-- DADO un domicilio en contexto o ejemplos y reglas en el mismo prompt.
-- CUANDO el revisor aprueba un reemplazo compatible.
-- ENTONCES solo cambian sus coincidencias exactas y se muestran valores y cantidad.
-- Y NO DEBE reescribir, reordenar ni eliminar reglas; se conserva XML o Markdown.
-- Cobertura: `tests/test_prompt_patch.py`, `tests/test_prompt_workspace.js`.
-
-## AC-006 / TEST-006: Dependencias y límites (CON-009, SPEC-005)
-- DADO el dato anterior en Constitución, specs, tests, configuración o un documento posterior al número 30 o al carácter 2500.
-- CUANDO se solicita el reemplazo.
-- ENTONCES se bloquea y se identifica la dependencia sin invocar al modelo.
-- Y NO DEBE omitir documentos, recortar evidencia, activar fuentes pendientes de indexación ni modificar conocimiento automáticamente.
-- Cobertura: `tests/test_prompt_patch.py`, `tests/test_prompt_patch_routes.py`.
-
-## AC-007 / TEST-007: Respuesta adversa o incierta (CON-003, CON-008, CON-009)
-- DADO un intento de editar una regla, una coincidencia parcial, una respuesta truncada, un JSON inválido o un conflicto semántico indicado por el revisor.
-- CUANDO se procesa la revisión.
-- ENTONCES se bloquea sin sustituir el prompt.
-- Y NO DEBE aceptar una reescritura enviada por el modelo aunque incluya una aprobación.
-- Cobertura: `tests/test_prompt_patch.py`.
-
-## AC-008 / TEST-008: Publicación protegida (CON-005, CON-008, CON-009, SPEC-006)
-- DADO un comprobante firmado para un usuario, bot y contexto.
-- CUANDO se cambia una regla adicional, vence el comprobante, cambia el contexto o se intenta usar otro usuario/bot.
-- ENTONCES se rechaza antes de escribir y se mantiene la versión activa.
-- Y NO DEBE permitir auto-publicación, sobrescritura obsoleta ni pérdida de documentos PBD.
-- Cobertura: `tests/test_prompt_patch.py`, `tests/test_prompt_patch_routes.py`, `tests/test_prompt_workspace.js`.
-
-Las pruebas puntuales garantizan el alcance textual del reemplazo y el contrato de publicación. Los proveedores y la conexión a PostgreSQL se simulan en estas pruebas; no certifican decisiones semánticas de un modelo real ni una instalación desplegada.
