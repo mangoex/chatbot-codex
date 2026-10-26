@@ -622,7 +622,15 @@ async def _send_and_track(
 async def forward_payload_to_external_webhook(webhook_url: str, payload: dict, auth_token: str) -> None:
     headers = {"Content-Type": "application/json"}
     if auth_token:
-        headers["X-Asistto-Secret-Token"] = auth_token
+        auth_val = auth_token.strip()
+        raw_secret = auth_val[7:].strip() if auth_val.lower().startswith("bearer ") else auth_val
+        headers["X-Asistto-Secret-Token"] = raw_secret
+        headers["X-Webhook-Secret"] = raw_secret
+        headers["X-API-Key"] = raw_secret
+        if auth_val.lower().startswith("bearer ") or auth_val.lower().startswith("basic "):
+            headers["Authorization"] = auth_val
+        else:
+            headers["Authorization"] = f"Bearer {raw_secret}"
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             res = await client.post(webhook_url, json=payload, headers=headers)
@@ -827,6 +835,15 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         if routing_integration:
             config_data = routing_integration.get("config") or {}
             rules = config_data.get("rules") or []
+            if not rules and (config_data.get("webhook_url") or config_data.get("phone_numbers")):
+                rules = [
+                    {
+                        "action": "forward_and_bypass",
+                        "webhook_url": config_data.get("webhook_url", ""),
+                        "phone_numbers": config_data.get("phone_numbers", []),
+                        "save_history": config_data.get("save_history", False),
+                    }
+                ]
             for rule in rules:
                 if rule.get("action") == "forward_and_bypass":
                     whitelisted_phones = rule.get("phone_numbers") or []
@@ -836,7 +853,10 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
                         # Si hay webhook_url configurada, reenviar payload de WhatsApp
                         if webhook_url:
                             secrets = await db.get_integration_secret_values(int(routing_integration["id"]))
-                            auth_token = secrets.get("webhook_auth_token") or ""
+                            raw_auth_token = secrets.get("webhook_auth_token") or ""
+                            auth_token = secure_store.decrypt_secret(raw_auth_token) if raw_auth_token else ""
+                            if not auth_token and raw_auth_token:
+                                auth_token = raw_auth_token
                             asyncio.create_task(
                                 forward_payload_to_external_webhook(
                                     webhook_url,

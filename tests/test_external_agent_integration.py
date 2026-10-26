@@ -597,7 +597,7 @@ class ExternalAgentMetaCompatibilityTests(unittest.IsolatedAsyncioTestCase):
         mock_client_cls = MagicMock()
         mock_client_cls.return_value.__aenter__.return_value = mock_client
 
-        with patch("httpx.AsyncClient", mock_client_cls):
+        with patch("app.external_agent_client.httpx.AsyncClient", mock_client_cls):
             success = await external_agent_client.forward_to_external_agent(
                 webhook_url=webhook_url,
                 payload=payload,

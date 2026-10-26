@@ -54,7 +54,10 @@ class RoutingRulesTests(unittest.TestCase):
             json=payload,
             headers={
                 "Content-Type": "application/json",
-                "X-Asistto-Secret-Token": "secret-token-123"
+                "X-Asistto-Secret-Token": "secret-token-123",
+                "X-Webhook-Secret": "secret-token-123",
+                "X-API-Key": "secret-token-123",
+                "Authorization": "Bearer secret-token-123",
             }
         )
 
@@ -492,6 +495,115 @@ class RoutingRulesTests(unittest.TestCase):
         mock_get_history.assert_called_once()
         mock_openai.assert_called_once()
 
+
+    @patch.object(main.db, "was_processed", return_value=False)
+    @patch.object(main.db, "mark_processed")
+    @patch.object(main.db, "get_active_bot_integration")
+    @patch.object(main.db, "get_integration_secret_values")
+    @patch.object(main.follow_ups, "cancel")
+    @patch.object(main.db, "save_message")
+    @patch.object(main.bots, "resolve_by_phone_number_id")
+    @patch.object(main, "forward_payload_to_external_webhook")
+    @patch.object(main.db, "get_history")
+    def test_process_message_with_encrypted_token_decrypts_before_forward(
+        self,
+        mock_get_history,
+        mock_forward,
+        mock_resolve,
+        mock_save_msg,
+        mock_cancel_follow_ups,
+        mock_secrets,
+        mock_get_integration,
+        mock_mark_processed,
+        mock_was_processed,
+    ):
+        mock_bot = MagicMock()
+        mock_bot.id = 43
+        mock_resolve.return_value = mock_bot
+        
+        mock_get_integration.return_value = {
+            "id": 100,
+            "config": {
+                "rules": [
+                    {
+                        "action": "forward_and_bypass",
+                        "webhook_url": "https://external.webhook/url",
+                        "phone_numbers": ["5216861234567"],
+                        "save_history": False
+                    }
+                ]
+            }
+        }
+        
+        # In DB, the secret is encrypted by secure_store
+        from app import config, secure_store
+        with patch.object(config, "INTEGRATION_SECRET_KEY", "test-secret-key-1234567890"):
+            encrypted = secure_store.encrypt_secret("real-decrypted-secret-42")
+        mock_secrets.return_value = {"webhook_auth_token": encrypted}
+        
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {
+                                    "display_phone_number": "15551234567",
+                                    "phone_number_id": "w1",
+                                },
+                                "messages": [
+                                    {
+                                        "from": "5216861234567",
+                                        "id": "wamid.enc-test",
+                                        "type": "text",
+                                        "text": {"body": "Mensaje prueba"},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        with patch.object(config, "INTEGRATION_SECRET_KEY", "test-secret-key-1234567890"),              patch.object(main.db, "is_chatwoot_handoff_active", new=AsyncMock(return_value=False)):
+            asyncio.run(main._process_message(payload))
+            
+        # Verify forwarded auth token was DECRYPTED
+        mock_forward.assert_called_once_with(
+            "https://external.webhook/url",
+            payload,
+            "real-decrypted-secret-42"
+        )
+
+    def test_routing_config_extraction_handles_nested_rules(self):
+        # Test the extraction logic used in client.py
+        routing_config = {
+            "rules": [
+                {
+                    "name": "Filtro de Omisión y Desvío",
+                    "filter_type": "phone_whitelist",
+                    "phone_numbers": ["5216861234567", "5215559876543"],
+                    "action": "forward_and_bypass",
+                    "webhook_url": "https://mi-sistema.com/webhook",
+                    "save_history": True
+                }
+            ]
+        }
+        routing_rules_list = routing_config.get("rules") or []
+        first_rule = routing_rules_list[0] if (isinstance(routing_rules_list, list) and routing_rules_list) else {}
+        routing_webhook_url = routing_config.get("webhook_url") or first_rule.get("webhook_url") or ""
+        raw_phones = routing_config.get("phone_numbers") or first_rule.get("phone_numbers") or []
+        routing_phone_numbers = ", ".join(raw_phones) if isinstance(raw_phones, list) else str(raw_phones)
+        routing_save_history = (
+            routing_config.get("save_history")
+            if routing_config.get("save_history") is not None
+            else first_rule.get("save_history", False)
+        )
+        
+        self.assertEqual(routing_webhook_url, "https://mi-sistema.com/webhook")
+        self.assertEqual(routing_phone_numbers, "5216861234567, 5215559876543")
+        self.assertTrue(routing_save_history)
     def test_disabled_bot_all_media_preserves_historical_reply_without_payment_effects(self):
         bot = MagicMock()
         bot.id = 23

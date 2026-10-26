@@ -1414,9 +1414,19 @@ async def client_app(
             routing_webhook_auth_token_val = secure_store.decrypt_secret(enc_secrets["webhook_auth_token"]) or "********"
             routing_secrets["webhook_auth_token"] = routing_webhook_auth_token_val
             
-    routing_webhook_url = routing_config.get("webhook_url", "")
-    routing_phone_numbers = ",".join(routing_config.get("phone_numbers", []))
-    routing_save_history = routing_config.get("save_history", False)
+    routing_rules_list = routing_config.get("rules") or []
+    first_rule = routing_rules_list[0] if (isinstance(routing_rules_list, list) and routing_rules_list) else {}
+    routing_webhook_url = routing_config.get("webhook_url") or first_rule.get("webhook_url") or ""
+    raw_phones = routing_config.get("phone_numbers") or first_rule.get("phone_numbers") or []
+    if isinstance(raw_phones, list):
+        routing_phone_numbers = ", ".join(raw_phones)
+    else:
+        routing_phone_numbers = str(raw_phones)
+    routing_save_history = (
+        routing_config.get("save_history")
+        if routing_config.get("save_history") is not None
+        else first_rule.get("save_history", False)
+    )
 
     # Easybroker integration
     easybroker_integration = await db.get_bot_integration_by_type(bot_id, "easybroker")
@@ -5603,16 +5613,19 @@ async def client_routing_rules_save(
     
     # Process and clean phone numbers list
     phones_list = []
-    for p in phone_numbers.split(","):
+    for p in re.split(r"[,\r\n]+", phone_numbers):
         p_clean = re.sub(r"[^\d]", "", p)
         if p_clean:
             phones_list.append(p_clean)
             
-    is_enabled = (enabled == "on")
-    is_save_history = (save_history == "on")
+    is_enabled = (enabled == "on" or enabled == "true")
+    is_save_history = (save_history == "on" or save_history == "true")
     
-    # Structure config data
+    # Structure config data (store at root and in rules for compatibility)
     config_data = {
+        "webhook_url": clean_webhook_url,
+        "phone_numbers": phones_list,
+        "save_history": is_save_history,
         "rules": [
             {
                 "name": "Filtro de Omisión y Desvío",
