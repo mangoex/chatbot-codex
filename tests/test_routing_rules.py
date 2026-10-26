@@ -604,6 +604,84 @@ class RoutingRulesTests(unittest.TestCase):
         self.assertEqual(routing_webhook_url, "https://mi-sistema.com/webhook")
         self.assertEqual(routing_phone_numbers, "5216861234567, 5215559876543")
         self.assertTrue(routing_save_history)
+
+    @patch.object(main.db, "was_processed", return_value=False)
+    @patch.object(main.db, "mark_processed")
+    @patch.object(main.db, "get_active_bot_integration")
+    @patch.object(main.db, "get_integration_secret_values")
+    @patch.object(main.follow_ups, "cancel")
+    @patch.object(main.db, "save_message")
+    @patch.object(main.bots, "resolve_by_phone_number_id")
+    @patch.object(main, "forward_payload_to_external_webhook")
+    @patch.object(main.db, "get_history")
+    @patch.object(main.openai_client, "complete", new_callable=AsyncMock)
+    def test_process_message_forward_all_silences_bot_for_any_sender(
+        self,
+        mock_openai,
+        mock_get_history,
+        mock_forward,
+        mock_resolve,
+        mock_save_msg,
+        mock_cancel_follow_ups,
+        mock_secrets,
+        mock_get_integration,
+        mock_mark_processed,
+        mock_was_processed,
+    ):
+        mock_bot = MagicMock()
+        mock_bot.id = 43
+        mock_bot.status = "active"
+        mock_resolve.return_value = mock_bot
+        
+        # forward_all is True, and incoming number is a regular client not in whitelist
+        mock_get_integration.return_value = {
+            "id": 100,
+            "config": {
+                "forward_all": True,
+                "webhook_url": "https://external.webhook/url",
+                "phone_numbers": ["5211111111111"],
+                "save_history": True,
+            }
+        }
+        mock_secrets.return_value = {"webhook_auth_token": "my-token"}
+        
+        payload = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "metadata": {
+                                    "display_phone_number": "15551234567",
+                                    "phone_number_id": "w1",
+                                },
+                                "messages": [
+                                    {
+                                        "from": "5219998887766",
+                                        "id": "wamid.fwd-all",
+                                        "type": "text",
+                                        "text": {"body": "Hola quiero comprar"},
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        
+        with patch.object(main.db, "is_chatwoot_handoff_active", new=AsyncMock(return_value=False)):
+            asyncio.run(main._process_message(payload))
+            
+        # Must forward to webhook
+        mock_forward.assert_called_once_with(
+            "https://external.webhook/url",
+            payload,
+            "my-token"
+        )
+        # OpenAI/Master prompt must NOT be called (bot is silenced)
+        mock_openai.assert_not_called()
+        mock_get_history.assert_not_called()
     def test_disabled_bot_all_media_preserves_historical_reply_without_payment_effects(self):
         bot = MagicMock()
         bot.id = 23

@@ -415,12 +415,15 @@ async def receive_external_agent_webhook(request: Request, bot_id: int | None = 
 
     integration = await db.get_active_bot_integration(target_bot_id, "external_agent")
     if not integration:
-        raise HTTPException(status_code=404, detail="External Agent integration not active")
+        integration = await db.get_active_bot_integration(target_bot_id, "routing_rules")
+    if not integration:
+        raise HTTPException(status_code=404, detail="External Agent or Routing integration not active")
 
     enc_secrets = await db.get_integration_secret_values(int(integration["id"]))
     stored_secret = (
         secure_store.decrypt_secret(enc_secrets.get("webhook_secret", ""))
         or secure_store.decrypt_secret(enc_secrets.get("auth_header", ""))
+        or secure_store.decrypt_secret(enc_secrets.get("webhook_auth_token", ""))
     )
     if not stored_secret:
         raise HTTPException(status_code=503, detail="External agent webhook secret not configured")
@@ -834,6 +837,8 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         routing_integration = await db.get_active_bot_integration(bot.id, "routing_rules")
         if routing_integration:
             config_data = routing_integration.get("config") or {}
+            forward_all = bool(config_data.get("forward_all"))
+            webhook_url = (config_data.get("webhook_url") or "").strip()
             rules = config_data.get("rules") or []
             if not rules and (config_data.get("webhook_url") or config_data.get("phone_numbers")):
                 rules = [
@@ -844,6 +849,28 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
                         "save_history": config_data.get("save_history", False),
                     }
                 ]
+
+            # Si forward_all está activo, delegar TODOS los mensajes entrantes al webhook y silenciar la IA
+            if forward_all and webhook_url:
+                secrets = await db.get_integration_secret_values(int(routing_integration["id"]))
+                raw_auth_token = secrets.get("webhook_auth_token") or ""
+                auth_token = secure_store.decrypt_secret(raw_auth_token) if raw_auth_token else ""
+                if not auth_token and raw_auth_token:
+                    auth_token = raw_auth_token
+                asyncio.create_task(
+                    forward_payload_to_external_webhook(
+                        webhook_url,
+                        payload,
+                        auth_token,
+                    )
+                )
+                await follow_ups.cancel(wa_id, bot.id)
+                if config_data.get("save_history") or (rules and rules[0].get("save_history")):
+                    saved_user_msg = user_text or f"[envió un archivo de tipo {media_type}]" if media_type else user_text
+                    await db.save_message(wa_id, "user", saved_user_msg, bot_id=bot.id)
+                log.info(f"Mensaje de {wa_id} interceptado y delegado totalmente a {webhook_url}. IA de Asistto silenciada.")
+                return
+
             for rule in rules:
                 if rule.get("action") == "forward_and_bypass":
                     whitelisted_phones = rule.get("phone_numbers") or []

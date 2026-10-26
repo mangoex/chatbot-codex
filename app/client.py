@@ -1416,6 +1416,7 @@ async def client_app(
             
     routing_rules_list = routing_config.get("rules") or []
     first_rule = routing_rules_list[0] if (isinstance(routing_rules_list, list) and routing_rules_list) else {}
+    routing_forward_all = bool(routing_config.get("forward_all", first_rule.get("forward_all", False)))
     routing_webhook_url = routing_config.get("webhook_url") or first_rule.get("webhook_url") or ""
     raw_phones = routing_config.get("phone_numbers") or first_rule.get("phone_numbers") or []
     if isinstance(raw_phones, list):
@@ -4278,9 +4279,20 @@ async def client_app(
           </div>
           
           <form method="post" action="/client/bots/{bot_id}/integrations/routing">
-            <div class="checkbox-group">
+            <div class="checkbox-group" style="margin-bottom:12px;">
               <input type="checkbox" name="enabled" id="routingEnabledToggle" {"checked" if routing_enabled else ""}>
               <label for="routingEnabledToggle" style="margin:0; font-weight:600; cursor:pointer;">Habilitar enrutamiento externo</label>
+            </div>
+            
+            <div style="margin: 0 0 16px 0; padding: 12px; background: var(--bg-card-subtle, #f8fafc); border-radius: 8px; border: 1px solid var(--border-color, #e2e8f0);">
+              <span style="display:block; font-size:12px; font-weight:600; color:var(--text-main, #0f172a); margin-bottom:8px;">Control de la IA y Delegación Total:</span>
+              <div class="checkbox-group" style="margin-bottom:0;">
+                <input type="checkbox" name="forward_all" id="routingForwardAllToggle" {"checked" if routing_forward_all else ""}>
+                <label for="routingForwardAllToggle" style="margin:0; font-size:13px; cursor:pointer;">
+                  <strong>Silenciar Bot de Asistto y desviar TODOS los mensajes al Webhook</strong>
+                  <span style="display:block; font-size:11px; color:var(--muted, #64748b); font-weight:normal;">Al activar esta opción, Asistto no responderá con su prompt maestro y delegará todos los mensajes entrantes de WhatsApp a tu Webhook (app externa / wa-reader). Si está desactivado, solo se desviarán y omitirán los números listados abajo.</span>
+                </label>
+              </div>
             </div>
             
             <label>URL del Webhook de Destino</label>
@@ -4302,7 +4314,14 @@ async def client_app(
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width: 18px; height: 18px;"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>
               </button>
             </div>
-            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Se enviará en la cabecera <code>X-Asistto-Secret-Token</code> para validar la llamada.</span>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Se enviará en la cabecera <code>X-Asistto-Secret-Token</code> y <code>Authorization: Bearer</code> para validar la llamada.</span>
+
+            <label>Return URL de Asistto (URL para enviar respuestas a WhatsApp desde tu app)</label>
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+              <input id="routingReturnUrl" readonly style="background:var(--bg-card-subtle, #f8fafc); cursor:text; font-family:monospace; font-size:12px;" value="{html.escape(effective_base_url.rstrip("/") + f"/webhooks/external-agent/{bot_id}")}">
+              <button type="button" class="btn secondary-btn" style="white-space:nowrap; padding:8px 14px;" onclick="navigator.clipboard.writeText(document.getElementById('routingReturnUrl').value); this.innerText='¡Copiado!'; setTimeout(()=>this.innerText='Copiar', 2000);">Copiar</button>
+            </div>
+            <span class="muted-text" style="font-size:11px; display:block; margin-top:-6px; margin-bottom:12px;">Tu app externa puede hacer POST a esta URL con <code>{{"to": "telefono", "text": "mensaje"}}</code> y el token configurado arriba para enviar respuestas al cliente por WhatsApp.</span>
             
             <div style="margin-top:20px; display:flex; gap:10px;">
               <button class="btn primary-btn" type="submit" {"disabled" if session["role"] == "client_viewer" else ""}>Guardar Enrutamiento</button>
@@ -5601,6 +5620,7 @@ async def client_routing_rules_save(
     request: Request,
     bot_id: int,
     enabled: str | None = Form(None),
+    forward_all: str | None = Form(None),
     webhook_url: str = Form(""),
     phone_numbers: str = Form(""),
     save_history: str | None = Form(None),
@@ -5619,10 +5639,12 @@ async def client_routing_rules_save(
             phones_list.append(p_clean)
             
     is_enabled = (enabled == "on" or enabled == "true")
+    is_forward_all = (forward_all == "on" or forward_all == "true")
     is_save_history = (save_history == "on" or save_history == "true")
     
     # Structure config data (store at root and in rules for compatibility)
     config_data = {
+        "forward_all": is_forward_all,
         "webhook_url": clean_webhook_url,
         "phone_numbers": phones_list,
         "save_history": is_save_history,
@@ -5633,7 +5655,8 @@ async def client_routing_rules_save(
                 "phone_numbers": phones_list,
                 "action": "forward_and_bypass",
                 "webhook_url": clean_webhook_url,
-                "save_history": is_save_history
+                "save_history": is_save_history,
+                "forward_all": is_forward_all
             }
         ]
     }
