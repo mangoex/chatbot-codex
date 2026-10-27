@@ -19,7 +19,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from app import bot_control, db, config, auth, secure_store, meta_provider, prompt_assistant, pbd_validation, skill_runtime, calendar_client, file_parser
 from app.knowledge_privacy import is_private_directory_title
 from app.prompt_workspace import render_prompt_workspace
-from app import prompt_changes, prompt_change_store
+from app import prompt_changes, prompt_change_store, attention_routing
 
 log = logging.getLogger("client-panel")
 router = APIRouter(prefix="/client", tags=["client-portal"])
@@ -1429,6 +1429,43 @@ async def client_app(
         else first_rule.get("save_history", False)
     )
 
+    attention_integration = await db.get_bot_integration_by_type(bot_id, "attention_policy")
+    attention_policy = attention_routing.policy_config(attention_integration) if attention_integration and attention_integration.get("enabled") else None
+    attention_default = (attention_policy or {}).get("default_handler") or attention_routing.inferred_default(
+        grok_integration, external_agent_integration, routing_integration
+    )
+    attention_admin_enabled = bool((attention_policy or {}).get("admin_grok_enabled"))
+    attention_admin_phones = ", ".join((attention_policy or {}).get("admin_phone_numbers") or [])
+    attention_options = "".join(
+        f'<option value="{key}" {"selected" if key == attention_default else ""}>{html.escape(label)}</option>'
+        for key, label in attention_routing.HANDLERS.items()
+    )
+    attention_card_html = f"""
+        <div class="card" id="attention-policy" style="grid-column:1 / -1;">
+          <div class="card-header">
+            <h2>Quién atiende WhatsApp</h2>
+            <p>Elige quién atiende a los clientes y envía las consultas de tus administradores a Grok Bot. El permiso de campañas se configura por separado.</p>
+          </div>
+          <p class="muted-text">{"Configuración central activa. Las antiguas opciones de delegación ya no cambian quién atiende." if attention_policy is not None else "Se muestra el responsable actual. Guarda esta configuración para activar la selección central sin cambiar el permiso de campañas."}</p>
+          <form method="post" action="/client/bots/{bot_id}/integrations/attention">
+            <fieldset style="border:0; padding:0; margin:0; min-width:0;" {"disabled" if session["role"] == "client_viewer" else ""}>
+              <label for="attentionDefaultHandler">Responsable predeterminado de atención</label>
+              <select id="attentionDefaultHandler" name="default_handler">{attention_options}</select>
+              <p class="muted-text">También atenderá las respuestas de clientes a las campañas. Configura y habilita la integración elegida antes de guardar.</p>
+              <div class="checkbox-group">
+                <input type="checkbox" id="attentionAdminGrok" name="admin_grok_enabled" {"checked" if attention_admin_enabled else ""}>
+                <label for="attentionAdminGrok">Enviar administradores a Grok Bot con contexto administrativo</label>
+              </div>
+              <label for="attentionAdminPhones">Números de administradores de este bot</label>
+              <textarea id="attentionAdminPhones" name="admin_phone_numbers" placeholder="Ej. +52 667 123 4567, +52 667 765 4321">{html.escape(attention_admin_phones)}</textarea>
+              <p class="muted-text">Incluye el código de país y separa los números con comas o saltos de línea. Esta lista dirige la atención administrativa; no otorga permisos para editar prompts ni controlar otros bots.</p>
+              <p class="muted-text">Orden de atención: administradores → reglas específicas por teléfono → responsable predeterminado. La pausa y el relevo humano mantienen el silencio. Si un destino falla, no se cambia automáticamente de agente.</p>
+              <button class="btn primary-btn" type="submit">Guardar atención</button>
+            </fieldset>
+          </form>
+        </div>
+    """
+
     # Easybroker integration
     easybroker_integration = await db.get_bot_integration_by_type(bot_id, "easybroker")
     easybroker_config = {}
@@ -2334,7 +2371,9 @@ async def client_app(
         grok_camp_badge_class = "success" if grok_allow_campaigns else "secondary"
         grok_camp_badge_text = "Habilitado para Campañas" if grok_allow_campaigns else "Inactivo para Campañas"
         bot_display_name = (selected_bot.get("name") if selected_bot else None) or "Asistto"
-        responder_text = "Grok Bot" if grok_handle_inbound else f"Bot nativo de Asistto ({html.escape(bot_display_name)})"
+        responder_text = html.escape(attention_routing.HANDLERS.get(attention_default, "Asistto"))
+        if attention_admin_enabled:
+            responder_text += " · Administradores: Grok Bot"
 
         
         grok_action_btn = f"""
@@ -4021,6 +4060,7 @@ async def client_app(
           </form>
         </div>
 
+        {attention_card_html}
         <div class="card">
           <div class="card-header">
             <h2>Grok Bot</h2>
@@ -4052,14 +4092,15 @@ async def client_app(
                 </label>
               </div>
               
-              <div class="checkbox-group" style="margin-bottom:0;">
+              <div class="checkbox-group" style="margin-bottom:0; {"display:none;" if attention_policy is not None else ""}">
                 <input type="checkbox" name="handle_inbound" id="grokHandleInbound" {"checked" if grok_handle_inbound else ""}>
                 <label for="grokHandleInbound" style="margin:0; font-size:13px; cursor:pointer;">
-                  <strong>Delegar atención de WhatsApp a Grok Bot</strong>
-                  <span style="display:block; font-size:11px; color:var(--muted, #64748b); font-weight:normal;">Si está <u>desmarcado</u>, el bot nativo de Asistto ({html.escape((selected_bot.get("name") if selected_bot else None) or "Asistto")}) responderá a los clientes cuando contesten a las campañas.</span>
+                  <strong>Delegar atención a Grok Bot (configuración anterior)</strong>
+                  <span style="display:block; font-size:11px; color:var(--muted, #64748b); font-weight:normal;">Se aplica mientras no guardes la selección central. Las reglas de enrutamiento y el agente externo tienen prioridad.</span>
                 </label>
 
               </div>
+              <p class="muted-text">El responsable de atención y los administradores se eligen en <a href="#attention-policy">Quién atiende WhatsApp</a>. Permitir campañas no cambia quién responde.</p>
             </div>
             
             <label>URL del Webhook (Grok Bot)</label>
@@ -4127,13 +4168,14 @@ async def client_app(
             <div style="margin: 0 0 16px 0; padding: 12px; background: var(--bg-card-subtle, #f8fafc); border-radius: 8px; border: 1px solid var(--border-color, #e2e8f0);">
               <span style="display:block; font-size:12px; font-weight:600; color:var(--text-main, #0f172a); margin-bottom:10px;">Control Conversacional y Coexistencia:</span>
               
-              <div class="checkbox-group" style="margin-bottom:0;">
+              <div class="checkbox-group" style="margin-bottom:0; {"display:none;" if attention_policy is not None else ""}">
                 <input type="checkbox" name="handle_inbound" id="externalAgentHandleInbound" {"checked" if external_agent_handle_inbound else ""}>
                 <label for="externalAgentHandleInbound" style="margin:0; font-size:13px; cursor:pointer;">
-                  <strong>Delegar atención total de WhatsApp al Agente Externo</strong>
+                  <strong>Delegar atención al Agente Externo (configuración anterior)</strong>
                   <span style="display:block; font-size:11px; color:var(--muted, #64748b); font-weight:normal;">Al marcar esta casilla, Asistto silencia su IA nativa y no responde por su cuenta, permitiendo que tu bot externo (ej. KiwiPOS) atienda al cliente y registre comandas directamente en la POS.</span>
                 </label>
               </div>
+              <p class="muted-text">Elige este agente como responsable en <a href="#attention-policy">Quién atiende WhatsApp</a>. Los administradores pueden atenderse por separado en Grok Bot.</p>
             </div>
             
             <label>URL del Webhook de Entrada (Tu Sistema / KiwiPOS)</label>
@@ -4286,13 +4328,14 @@ async def client_app(
             
             <div style="margin: 0 0 16px 0; padding: 12px; background: var(--bg-card-subtle, #f8fafc); border-radius: 8px; border: 1px solid var(--border-color, #e2e8f0);">
               <span style="display:block; font-size:12px; font-weight:600; color:var(--text-main, #0f172a); margin-bottom:8px;">Control de la IA y Delegación Total:</span>
-              <div class="checkbox-group" style="margin-bottom:0;">
+              <div class="checkbox-group" style="margin-bottom:0; {"display:none;" if attention_policy is not None else ""}">
                 <input type="checkbox" name="forward_all" id="routingForwardAllToggle" {"checked" if routing_forward_all else ""}>
                 <label for="routingForwardAllToggle" style="margin:0; font-size:13px; cursor:pointer;">
                   <strong>Silenciar Bot de Asistto y desviar TODOS los mensajes al Webhook</strong>
                   <span style="display:block; font-size:11px; color:var(--muted, #64748b); font-weight:normal;">Al activar esta opción, Asistto no responderá con su prompt maestro y delegará todos los mensajes entrantes de WhatsApp a tu Webhook (app externa / wa-reader). Si está desactivado, solo se desviarán y omitirán los números listados abajo.</span>
                 </label>
               </div>
+              <p class="muted-text">Para enviar la atención general a esta aplicación, selecciónala en <a href="#attention-policy">Quién atiende WhatsApp</a>. Al guardar esa selección, la opción anterior de desviar todos deja de aplicarse; las reglas específicas por teléfono siguen activas.</p>
             </div>
             
             <label>URL del Webhook de Destino</label>
@@ -5363,6 +5406,52 @@ async def client_chatwoot_save(
         f"/client/app?bot_id={bot_id}&tab=integrations&saved={saved_param}",
         status_code=302,
     )
+
+
+@router.post("/bots/{bot_id}/integrations/attention")
+async def client_attention_save(
+    request: Request,
+    bot_id: int,
+    default_handler: str = Form("asistto"),
+    admin_grok_enabled: str | None = Form(None),
+    admin_phone_numbers: str = Form(""),
+):
+    session = _require_client_login(request)
+    await _require_bot_editor(session, bot_id)
+    if default_handler not in attention_routing.HANDLERS:
+        raise HTTPException(status_code=400, detail="Selecciona un responsable de atención válido.")
+    try:
+        phones = attention_routing.parse_admin_phones(admin_phone_numbers)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    admin_enabled = admin_grok_enabled in ("on", "true", "1")
+    if admin_enabled and not phones:
+        raise HTTPException(status_code=400, detail="Agrega al menos un número de administrador.")
+    required = set()
+    if default_handler != "asistto":
+        required.add("routing_rules" if default_handler == "routing_webhook" else default_handler)
+    if admin_enabled:
+        required.add("grok_bot")
+    for kind in sorted(required):
+        integration = await db.get_active_bot_integration(bot_id, kind)
+        cfg = (integration or {}).get("config") or {}
+        if not integration or not (cfg.get("webhook_url") or "").strip():
+            raise HTTPException(status_code=400, detail=f"Configura y habilita la integración {kind} antes de seleccionarla.")
+        secrets = await db.get_integration_secret_values(int(integration["id"]))
+        return_key = "webhook_auth_token" if kind == "routing_rules" else "webhook_secret"
+        if not secure_store.decrypt_secret(secrets.get(return_key) or ""):
+            raise HTTPException(status_code=400, detail=f"Configura el secreto de retorno de {kind} para recibir sus respuestas.")
+        if admin_enabled and kind == "grok_bot" and not secure_store.decrypt_secret(secrets.get("auth_header") or ""):
+            raise HTTPException(status_code=400, detail="Configura Authorization de Grok Bot para enviar el contexto administrativo de forma autenticada.")
+    config_data = {"version": 1, "default_handler": default_handler,
+                   "admin_grok_enabled": admin_enabled, "admin_phone_numbers": phones}
+    existing = await db.get_bot_integration_by_type(bot_id, "attention_policy")
+    kwargs = dict(bot_id=bot_id, integration_type="attention_policy", name="Responsable de atención", config_data=config_data, enabled=True)
+    if existing:
+        await db.update_bot_integration(integration_id=int(existing["id"]), **kwargs)
+    else:
+        await db.create_bot_integration(**kwargs)
+    return RedirectResponse(f"/client/app?bot_id={bot_id}&tab=integrations&saved=1", status_code=302)
 
 
 @router.post("/bots/{bot_id}/integrations/grok")

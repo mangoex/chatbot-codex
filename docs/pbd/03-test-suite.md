@@ -254,3 +254,19 @@ Estado de ejecución de las pruebas: `DEFINED` / `STATICALLY REVIEWED`.
 - THEN informar que falta `smb_message_echoes`; al existir y estar activa, informar `verified`.
 - AND MUST NOT asumir que `subscribed_apps` de WABA demuestra recepción de ecos.
 - Cobertura: `tests/test_handoff_regressions.py`.
+
+## TEST-023 / AC-023: Atención por defecto y administradores (SPEC-009, CON-018)
+
+- GIVEN un agente externo predeterminado y administradores de este bot configurados para Grok.
+- WHEN llega una consulta administrativa o la respuesta de un cliente a una campaña.
+- THEN solo Grok recibe la primera con contexto administrativo y el agente externo recibe la segunda.
+- AND MUST NOT cambiar el permiso de campañas, inferir roles desde el texto ni compartir números administrativos entre bots.
+- Happy path, negativos y regresión: `tests/test_attention_routing.py`, `tests/test_api_v1.py` y suites de Grok/agente externo/routing.
+
+## TEST-024 / AC-024: Entrega, retorno y silencio (SPEC-009, CON-012, CON-018)
+
+- GIVEN mensajes agrupados, archivos, un destino deshabilitado o un relevo humano iniciado después de delegar.
+- WHEN se selecciona el destino o regresa una respuesta.
+- THEN entregar solo el mensaje del contacto seleccionado, guardar la entrada y revisar responsable, pausa y relevo en el retorno.
+- AND MUST NOT derivar una consulta administrativa al POS, responder con la IA local ante un fallo ni enviar una respuesta de otro agente.
+- Cobertura: `tests/test_attention_routing.py`; regresiones de controles y relevo humano existentes.

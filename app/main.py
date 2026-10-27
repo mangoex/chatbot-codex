@@ -20,6 +20,7 @@ from app import (
     agenda_guard,
     api,
     audio_transcriber,
+    attention_routing,
     automations,
     bot_content,
     bot_control,
@@ -354,6 +355,10 @@ async def receive_grok_webhook(request: Request, bot_id: int | None = None):
     if not wa_id or not reply_text:
         raise HTTPException(status_code=400, detail="Invalid recipient or text")
 
+    reply_owner = await attention_routing.reply_owner(target_bot_id, wa_id)
+    if reply_owner is not None and reply_owner != "grok_bot":
+        raise HTTPException(status_code=403, detail="Grok Bot is not the attention owner for this contact")
+
     # Regla: enviar solo como respuesta dentro de las 24 horas. No iniciar conversación ni usar plantilla.
     if not await db.is_within_24h_window(target_bot_id, wa_id):
         log.warning(
@@ -370,6 +375,9 @@ async def receive_grok_webhook(request: Request, bot_id: int | None = None):
     if not bot or not bot.whatsapp_phone_number_id or not bot.whatsapp_access_token:
         log.error("Grok webhook blocked for bot %s: missing WhatsApp credentials", target_bot_id)
         raise HTTPException(status_code=502, detail="Bot missing WhatsApp credentials")
+
+    if reply_owner is not None and (bot.status == "paused" or not await _automatic_reply_allowed(target_bot_id, wa_id)):
+        return {"status": "suppressed"}
 
     try:
         res = await whatsapp_client.send_text(
@@ -413,9 +421,16 @@ async def receive_external_agent_webhook(request: Request, bot_id: int | None = 
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid bot_id")
 
-    integration = await db.get_active_bot_integration(target_bot_id, "external_agent")
-    if not integration:
-        integration = await db.get_active_bot_integration(target_bot_id, "routing_rules")
+    reply_recipient, _ = external_agent_client.normalize_external_reply_payload(payload)
+    reply_owner = await attention_routing.reply_owner(target_bot_id, reply_recipient) if reply_recipient else None
+    if reply_owner is not None:
+        if reply_owner not in ("external_agent", "routing_webhook"):
+            raise HTTPException(status_code=403, detail="External agent is not the attention owner for this contact")
+        integration = await db.get_active_bot_integration(target_bot_id, "routing_rules" if reply_owner == "routing_webhook" else "external_agent")
+    else:
+        integration = await db.get_active_bot_integration(target_bot_id, "external_agent")
+        if not integration:
+            integration = await db.get_active_bot_integration(target_bot_id, "routing_rules")
     if not integration:
         raise HTTPException(status_code=404, detail="External Agent or Routing integration not active")
 
@@ -475,6 +490,9 @@ async def receive_external_agent_webhook(request: Request, bot_id: int | None = 
     if not bot or not bot.whatsapp_phone_number_id or not bot.whatsapp_access_token:
         log.error("External Agent webhook blocked for bot %s: missing WhatsApp credentials", target_bot_id)
         raise HTTPException(status_code=502, detail="Bot missing WhatsApp credentials")
+
+    if reply_owner is not None and (bot.status == "paused" or not await _automatic_reply_allowed(target_bot_id, wa_id)):
+        return {"status": "suppressed"}
 
     try:
         res = await whatsapp_client.send_text(
@@ -622,7 +640,7 @@ async def _send_and_track(
     return True
 
 
-async def forward_payload_to_external_webhook(webhook_url: str, payload: dict, auth_token: str) -> None:
+async def forward_payload_to_external_webhook(webhook_url: str, payload: dict, auth_token: str) -> bool:
     headers = {"Content-Type": "application/json"}
     if auth_token:
         auth_val = auth_token.strip()
@@ -637,9 +655,14 @@ async def forward_payload_to_external_webhook(webhook_url: str, payload: dict, a
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             res = await client.post(webhook_url, json=payload, headers=headers)
+            if res.status_code >= 400:
+                log.error("Webhook de enrutamiento rechazado: status=%s", res.status_code)
+                return False
             log.info(f"Webhook de enrutamiento enviado a {webhook_url}. Respuesta: {res.status_code}")
+            return True
     except Exception as exc:
         log.error(f"Error al enviar webhook de enrutamiento a {webhook_url}: {exc}")
+        return False
 
 
 _processing_message_ids = set()
@@ -832,9 +855,26 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             )
             return
 
-    # Check for active routing rules (forward_and_bypass)
+    attention_policy = attention_routing.policy_config(
+        await db.get_active_bot_integration(bot.id, "attention_policy")
+    )
+    if attention_policy is not None:
+        await follow_ups.cancel(wa_id, bot.id)
+        timeout_hours = await _get_handoff_expiration_hours(bot.id)
+        if bot.status == "paused" or await db.is_chatwoot_handoff_active(bot.id, wa_id, timeout_hours=timeout_hours):
+            await db.save_message(wa_id, "user", user_text or f"[Archivo: {mtype}]", bot_id=bot.id)
+            return
+        control_cmd = bot_control.detect_control_command(user_text) if not media_type else None
+        if control_cmd and bot_control.is_authorized_admin(wa_id, bot, extra_phone=msg.get("display_phone_number")):
+            await db.save_message(wa_id, "user", user_text, bot_id=bot.id)
+            await bot_control.handle_control_command(bot, wa_id, control_cmd)
+            return
+        if await attention_routing.dispatch(bot, msg, payload, attention_policy, forward_payload_to_external_webhook):
+            return
+
+    # Legacy routing remains unchanged until an explicit attention policy is saved.
     try:
-        routing_integration = await db.get_active_bot_integration(bot.id, "routing_rules")
+        routing_integration = await db.get_active_bot_integration(bot.id, "routing_rules") if attention_policy is None else None
         if routing_integration:
             config_data = routing_integration.get("config") or {}
             forward_all = bool(config_data.get("forward_all"))
@@ -1034,7 +1074,7 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         return
 
     # 1. Prioridad Máxima: Agente Externo / POS (ej. KiwiPOS / RestaurantOS)
-    external_agent_integration = await db.get_active_bot_integration(bot.id, "external_agent")
+    external_agent_integration = await db.get_active_bot_integration(bot.id, "external_agent") if attention_policy is None else None
     if external_agent_integration:
         agent_config = external_agent_integration.get("config") or {}
         handle_inbound = agent_config.get("handle_inbound")
@@ -1074,7 +1114,7 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             return
 
     # 2. Delegación alternativa a Grok Bot (si está activo para este bot)
-    grok_integration = await db.get_active_bot_integration(bot.id, "grok_bot")
+    grok_integration = await db.get_active_bot_integration(bot.id, "grok_bot") if attention_policy is None else None
     if grok_integration:
         grok_config = grok_integration.get("config") or {}
         handle_inbound = grok_config.get("handle_inbound")

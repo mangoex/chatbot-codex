@@ -2,6 +2,8 @@
 
 Esta documentación describe la API REST de **Asistto by Humanio** (`/api/v1`) diseñada para integrar sistemas externos, bots autónomos (como **Grok Bot**), pipelines de prospección automatizada, scrapers, CRMs y agentes de ventas.
 
+> Para bots que guardan **Quién atiende WhatsApp**, la atención se determina por la política central y sus excepciones administrativas; `handle_inbound` queda como compatibilidad anterior. Las campañas siguen usando `allow_campaigns` independientemente. Consulta [Atención predeterminada y administradores](ATTENTION_ROUTING.md) para el contrato `routing_context` que debe interpretar Grok.
+
 ---
 
 ## 1. Arquitectura General y Flujo de Prospección

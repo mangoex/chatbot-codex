@@ -139,3 +139,13 @@ Automatizar la atención de primer contacto, consulta de propiedades vía Easybr
 - Consultar el vencimiento sin borrar registros: un eco concurrente no debe perderse durante la comprobación. La resolución manual elimina las variantes del mismo contacto.
 - Un evento saliente nunca ingresa como mensaje de cliente, incluso con la regla deshabilitada.
 - Verificar `smb_message_echoes` en la suscripción de la app de Meta; la suscripción WABA y el campo `messages` por sí solos no prueban disponibilidad del relevo desde el celular.
+
+## SPEC-009: Responsable de atención y contexto administrativo (CON-018)
+
+- US-009: Como propietario elijo el responsable predeterminado, mantengo las campañas independientes y envío mis administradores a Grok Bot.
+- FLOW-009: controles autorizados existentes → silencio por pausa/relevo → excepción administrativa → reglas específicas por teléfono → responsable predeterminado.
+- FB-009: ante destino ausente, credenciales administrativas ausentes o entrega fallida, conservar el mensaje y registrar el fallo sin responder desde otro agente.
+- Guardar esta política no cambia `allow_campaigns`. La configuración anterior se conserva hasta activar la política por bot.
+- El modelo nativo no interpreta ni ejecuta la delegación. El rol administrativo proviene de la política autenticada, nunca de declaraciones del usuario.
+- Los retornos deben corresponder al responsable del contacto; pausa/relevo se revisan nuevamente antes de enviar a WhatsApp.
+- Contrato detallado y criterios: `06-attention-routing-specs.md`. Integración de Grok: `../api/ATTENTION_ROUTING.md`.

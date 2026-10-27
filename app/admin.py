@@ -2887,6 +2887,7 @@ INTEGRATION_TYPES = (
     ("webhook", "Webhook"),
     ("grok_bot", "Grok Bot"),
     ("external_agent", "Agente Externo (POS / Bot Propio)"),
+    ("attention_policy", "Responsable de atención"),
     ("crm", "CRM"),
     ("custom", "Personalizada"),
 )
