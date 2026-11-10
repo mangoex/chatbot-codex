@@ -1,0 +1,22 @@
+title = "Asistto"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholders de prueba y líneas base de hallazgos ya conocidos"
+paths = [
+  '''docs/seguridad/pip-audit-baseline.json''',
+  '''docs/seguridad/hallazgos-conocidos.md''',
+]
+regexes = [
+  '''asistto_test_only''',
+  '''token-ficticio''',
+  '''secreto-ficticio''',
+  '''clave-ficticia''',
+  '''whsec_kiwi_inbound_secret_123''',
+  '''sec_bearer_kiwi_to_asistto''',
+  '''test-secret-key-1234567890''',
+  '''real-decrypted-secret-42''',
+  '''tu-secreto-de-validacion''',
+]
