@@ -30,7 +30,6 @@ id_rsa*
 .mcp.json
 .mcp.local.json
 .codex/
-AGENTS.md
 
 # Assistant-local caches and generated skills
 .agents/
@@ -41,6 +40,9 @@ AGENTS.md
 __pycache__/
 .mypy_cache/
 .pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
 .tmp/
 .venv/
 venv/

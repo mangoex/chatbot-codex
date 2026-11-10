@@ -1,0 +1,81 @@
+{
+  "generated": "2026-11-10",
+  "requirements": "requirements.txt",
+  "note": "Hallazgos ya conocidos. El CI falla solo si aparece un id nuevo. No se actualizan estas dependencias en el arnés porque un bump puede cambiar el runtime de los bots en producción.",
+  "packages": {
+    "python-dotenv": [
+      "PYSEC-2026-2270"
+    ],
+    "python-multipart": [
+      "PYSEC-2026-1851",
+      "PYSEC-2026-1852",
+      "PYSEC-2026-3036",
+      "PYSEC-2026-3037",
+      "PYSEC-2026-3038",
+      "PYSEC-2026-3039",
+      "PYSEC-2026-3040"
+    ],
+    "cryptography": [
+      "GHSA-537c-gmf6-5ccf",
+      "GHSA-h4gh-qq45-vh27",
+      "PYSEC-2026-1284",
+      "PYSEC-2026-2141",
+      "PYSEC-2026-35",
+      "PYSEC-2026-3553",
+      "PYSEC-2026-3554"
+    ],
+    "pypdf": [
+      "CVE-2026-113786",
+      "CVE-2026-113789",
+      "CVE-2026-113790",
+      "CVE-2026-113791",
+      "CVE-2026-113792",
+      "CVE-2026-113793",
+      "CVE-2026-113794",
+      "CVE-2026-113795",
+      "CVE-2026-115572",
+      "CVE-2026-115580",
+      "CVE-2026-115585",
+      "CVE-2026-119203",
+      "CVE-2026-119204",
+      "CVE-2026-119205",
+      "CVE-2026-119206",
+      "CVE-2026-119207",
+      "CVE-2026-119208",
+      "CVE-2026-119209",
+      "CVE-2026-57204",
+      "PYSEC-2026-3009",
+      "PYSEC-2026-3010",
+      "PYSEC-2026-3018",
+      "PYSEC-2026-3020",
+      "PYSEC-2026-3022",
+      "PYSEC-2026-3610",
+      "PYSEC-2026-3611",
+      "PYSEC-2026-3612",
+      "PYSEC-2026-3613",
+      "PYSEC-2026-3655",
+      "PYSEC-2026-3656",
+      "PYSEC-2026-3910",
+      "PYSEC-2026-3911",
+      "PYSEC-2026-3912",
+      "PYSEC-2026-3913",
+      "PYSEC-2026-4153",
+      "PYSEC-2026-4154",
+      "PYSEC-2026-4155",
+      "PYSEC-2026-4156",
+      "PYSEC-2026-4157",
+      "PYSEC-2026-4158",
+      "PYSEC-2026-4159",
+      "PYSEC-2026-4160"
+    ],
+    "starlette": [
+      "PYSEC-2026-161",
+      "PYSEC-2026-1941",
+      "PYSEC-2026-1943",
+      "PYSEC-2026-2280",
+      "PYSEC-2026-2281",
+      "PYSEC-2026-248",
+      "PYSEC-2026-249"
+    ]
+  }
+}

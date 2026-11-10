@@ -1,0 +1,10 @@
+[run]
+source = app
+branch = false
+
+[report]
+show_missing = false
+skip_covered = false
+# Medición del 2026-11-10 sobre la suite existente: 64%.
+# El piso queda un poco abajo para no romper CI por ruido, no para dejar de cubrir.
+fail_under = 58
