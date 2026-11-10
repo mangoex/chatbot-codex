@@ -11,14 +11,19 @@ RAIZ = Path(__file__).resolve().parents[2]
 LINEA_BASE = RAIZ / "docs" / "seguridad" / "pip-audit-baseline.json"
 
 
-def _ids(documento: dict) -> set[tuple[str, str]]:
-    encontrados = set()
+def _identidades(vuln: dict) -> set[str]:
+    ids = {vuln.get("id")} | set(vuln.get("aliases") or [])
+    return {ident for ident in ids if ident}
+
+
+def _hallazgos(documento: dict) -> list[tuple[str, set[str]]]:
+    encontrados = []
     for dependencia in documento.get("dependencies") or []:
         paquete = dependencia.get("name") or ""
         for vuln in dependencia.get("vulns") or []:
-            ident = vuln.get("id")
-            if paquete and ident:
-                encontrados.add((paquete, ident))
+            ids = _identidades(vuln)
+            if paquete and ids:
+                encontrados.append((paquete, ids))
     return encontrados
 
 
@@ -59,13 +64,16 @@ def main() -> int:
         print(proceso.stderr, file=sys.stderr)
         return 1
 
-    nuevos = sorted(_ids(documento) - permitidos)
+    nuevos = []
+    for paquete, ids in _hallazgos(documento):
+        if not any((paquete, ident) in permitidos for ident in ids):
+            nuevos.append((paquete, sorted(ids)[0]))
     if nuevos:
         print("Vulnerabilidades nuevas, fuera de la línea base:", file=sys.stderr)
         for paquete, ident in nuevos:
             print(f"  {paquete} {ident}", file=sys.stderr)
         return 1
-    print(f"pip-audit: {len(_ids(documento))} hallazgos conocidos, ninguno nuevo.")
+    print(f"pip-audit: {len(_hallazgos(documento))} hallazgos conocidos, ninguno nuevo.")
     return 0
 
 

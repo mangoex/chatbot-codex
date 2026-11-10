@@ -14,7 +14,7 @@ Medición: 2026-11-10, `pip-audit -r requirements.txt`.
 | cryptography | 42.0.8 | 7 | Cifrado de secretos de integración. |
 | python-dotenv | 1.0.1 | 1 | Lectura de entorno local. |
 
-La lista exacta está en [`pip-audit-baseline.json`](pip-audit-baseline.json). Gitleaks corre con `.gitleaks.toml` y sí bloquea un secreto nuevo.
+La lista exacta está en [`pip-audit-baseline.json`](pip-audit-baseline.json), con el id principal y sus alias (GHSA, CVE o PYSEC). Dos versiones de pip-audit pueden nombrar el mismo hallazgo distinto; si cualquiera de esos ids ya está, no bloquea. Un id que no esté en la lista sí rompe el workflow. Gitleaks corre con `.gitleaks.toml` y sí bloquea un secreto nuevo.
 
 Gitleaks también marca placeholders que ya estaban en pruebas y en el manual de la API (`tests/test_external_agent_integration.py`, `tests/test_routing_rules.py`, `docs/api/GROK_EXTERNAL_API.md`). Son cadenas de ejemplo, no llaves de producción, y están permitidas por regex. Un secreto distinto sí falla el workflow.
 
