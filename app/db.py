@@ -1,10 +1,14 @@
 from __future__ import annotations
 """Acceso a Postgres: pool, schema idempotente, lectura/escritura de historial."""
 import json
+import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import asyncpg
 from app import config
+
+log = logging.getLogger("whatsapp-bot")
 
 _pool: asyncpg.Pool | None = None
 
@@ -418,6 +422,14 @@ async def close_pool() -> None:
         await _pool.close()
 
 
+@asynccontextmanager
+async def acquire():
+    if _pool is None:
+        raise RuntimeError("La base no está inicializada")
+    async with _pool.acquire() as conn:
+        yield conn
+
+
 async def check_health() -> bool:
     if not _pool:
         return False
@@ -667,6 +679,9 @@ async def run_migrations() -> None:
             )
         await _migrate_bot_foreign_keys_to_cascade(conn)
         await _migrate_tenant_scoped_contact_state(conn)
+        await conn.execute(
+            "ALTER TABLE bots ADD COLUMN IF NOT EXISTS routing_v2_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+        )
         # Setup RAG tables and extension
         from app import rag
         await rag.setup_rag_tables(conn)
@@ -1757,6 +1772,22 @@ async def list_bots(client_id: int | None = None, limit: int = 200) -> list[dict
                 limit,
             )
     return [dict(r) for r in rows]
+
+
+async def is_routing_v2_enabled(bot_id: int) -> bool:
+    """False si no hay pool, falta la columna o el bot no encendió el flag."""
+    if not bot_id or bot_id < 1 or _pool is None:
+        return False
+    try:
+        async with _pool.acquire() as conn:
+            value = await conn.fetchval(
+                "SELECT routing_v2_enabled FROM bots WHERE id = $1",
+                bot_id,
+            )
+    except Exception:
+        log.warning("routing_v2_flag_unavailable bot_id=%s", bot_id)
+        return False
+    return bool(value)
 
 
 async def get_bot(bot_id: int) -> dict | None:

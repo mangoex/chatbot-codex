@@ -1,0 +1,60 @@
+openapi: 3.1.0
+info:
+  title: Fragmento CHG-012 retorno único
+  version: 0.1.0
+paths:
+  /api/v1/bots/{bot_id}/reply:
+    post:
+      summary: Respuesta, toma o devolución de una conversación
+      description: >
+        Llave de la conexión por Authorization Bearer o X-API-Key.
+        Si la URL trae secret, token, api_key o key, se rechaza.
+      parameters:
+        - name: bot_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                to:
+                  type: string
+                text:
+                  type: string
+                action:
+                  type: string
+                  enum: [reply, takeover, return]
+      responses:
+        "200":
+          description: Enviado, tomado, devuelto o ventana vencida
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+        "400":
+          description: Secreto en la URL o cuerpo inválido
+        "401":
+          description: Llave de conexión inválida
+        "403":
+          description: Esta conexión no atiende a este contacto
+        "409":
+          description: ROUTING_V2 está apagado en este bot
+components:
+  headers:
+    X-Asistto-Timestamp:
+      description: Segundos Unix. Entra a la firma como prefijo del cuerpo.
+      schema:
+        type: string
+    X-Asistto-Signature:
+      description: sha256=HMAC(secreto, timestamp + "." + cuerpo). Igual para todos los presets.
+      schema:
+        type: string
