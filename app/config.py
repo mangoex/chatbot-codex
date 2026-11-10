@@ -42,6 +42,13 @@ WHATSAPP_API_TOKEN = _env("WHATSAPP_API_TOKEN", "WHATSAPP_ACCESS_TOKEN")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 VERIFY_TOKEN = _env("VERIFY_TOKEN", "WHATSAPP_VERIFY_TOKEN")
 META_APP_SECRET = os.getenv("META_APP_SECRET", "")
+# false conserva el fallo abierto actual. true rechaza el webhook si falta el secreto o la firma.
+WHATSAPP_SIGNATURE_STRICT = _bool("WHATSAPP_SIGNATURE_STRICT", "false")
+# La documentación HTTP solo se publica cuando el valor es true.
+ENABLE_API_DOCS = _bool("ENABLE_API_DOCS", "false")
+RATE_LIMIT_ENABLED = _bool("RATE_LIMIT_ENABLED", "true")
+RATE_LIMIT_IP_PER_MINUTE = _int("RATE_LIMIT_IP_PER_MINUTE", "1200")
+RATE_LIMIT_KEY_PER_MINUTE = _int("RATE_LIMIT_KEY_PER_MINUTE", "600")
 META_APP_ID = os.getenv("META_APP_ID", "")
 META_CONFIG_ID = os.getenv("META_CONFIG_ID", "")
 META_GRAPH_API_VERSION = os.getenv("META_GRAPH_API_VERSION", "v21.0").strip().lstrip("/")

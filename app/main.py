@@ -9,7 +9,7 @@ import secrets as py_secrets
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header, Query
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 import httpx
@@ -41,6 +41,7 @@ from app import (
     order_payments,
     prompt_whatsapp_control,
     public_pages,
+    rate_limit,
     reply_safety,
     secure_store,
     signature,
@@ -59,6 +60,13 @@ async def lifespan(_app: FastAPI):
     missing = config.validate()
     if missing:
         log.warning("Config incompleta, faltan: %s", ", ".join(missing))
+    if not config.META_APP_SECRET:
+        log.warning(
+            "META_APP_SECRET no está configurado. WHATSAPP_SIGNATURE_STRICT=%s. "
+            "Sin secreto, la firma %s.",
+            config.WHATSAPP_SIGNATURE_STRICT,
+            "rechaza el webhook" if config.WHATSAPP_SIGNATURE_STRICT else "se acepta para no cortar a los bots actuales",
+        )
     await db.init_pool()
     await db.run_migrations()
     deleted = await db.purge_old(config.HISTORY_TTL_DAYS)
@@ -90,6 +98,31 @@ app = FastAPI(lifespan=lifespan, title="Asistto by Humanio")
 
 if config.APP_ENV in {"production", "prod"} and not config.SESSION_SECRET:
     raise RuntimeError("SESSION_SECRET is required for admin/client sessions.")
+
+def _is_docs_path(path: str) -> bool:
+    return path in {"/docs", "/redoc", "/openapi.json"} or path.startswith("/docs/") or path.startswith("/redoc/")
+
+
+@app.middleware("http")
+async def hide_api_docs(request: Request, call_next):
+    if _is_docs_path(request.url.path) and not config.ENABLE_API_DOCS:
+        return PlainTextResponse("Not Found", status_code=404)
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def limit_public_api(request: Request, call_next):
+    if rate_limit.applies(request.url.path):
+        peer = request.client.host if request.client else "desconocido"
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or None
+        if not rate_limit.allow(peer, forwarded, rate_limit.api_key(request.headers)):
+            return JSONResponse(
+                {"detail": "Demasiadas solicitudes"},
+                status_code=429,
+                headers={"Retry-After": "60"},
+            )
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def csrf_protection(request: Request, call_next):
