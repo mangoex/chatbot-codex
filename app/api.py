@@ -8,7 +8,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
-from app import bots, client, config, db, external_agent_client, grok_client, meta_provider, secure_store
+from app import bots, client, config, db, external_agent_client, grok_client, meta_provider, routing_v2, secure_store
 
 log = logging.getLogger("api-v1")
 router = APIRouter(prefix="/api/v1", tags=["External Integration API"])
@@ -88,6 +88,12 @@ class VariableMappingInput(BaseModel):
         description="Valor fijo cuando type es 'fixed'",
         examples=["20% de descuento"],
     )
+
+
+class ReplyInput(BaseModel):
+    to: str = Field(..., description="WhatsApp del contacto, sin secreto en la URL")
+    text: str = Field("", description="Texto a enviar. Puede ir vacío en takeover o return.")
+    action: Literal["reply", "takeover", "return"] = "reply"
 
 
 class CampaignCreateInput(BaseModel):
@@ -234,6 +240,19 @@ async def verify_bot_auth(
 
 
 # --- ENDPOINTS ---
+
+@router.post(
+    "/bots/{bot_id}/reply",
+    summary="Responder, tomar o devolver una conversación",
+)
+async def api_connection_reply(
+    bot_id: int,
+    payload: ReplyInput,
+    request: Request,
+):
+    """Retorno único. La llave va en Bearer o X-API-Key, nunca en la query."""
+    return await routing_v2.handle_public_reply(bot_id, payload, request)
+
 
 @router.get(
     "/bots/{bot_id}/ping",
@@ -424,8 +443,14 @@ async def api_create_campaign(
     Crea y lanza (o programa) una campaña masiva de WhatsApp utilizando una plantilla aprobada por Meta.
     Grok Bot puede especificar la audiencia por tag, por lista directa o a todos los contactos.
     """
+    if await db.is_routing_v2_enabled(bot_id):
+        if not await routing_v2.campaigns_allowed(bot_id, request):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Esta conexión no tiene permiso para crear campañas",
+            )
     # Validar permisos específicos de Grok Bot si la petición proviene de dicha integración
-    if getattr(request.state, "auth_source", None) == "grok_bot":
+    elif getattr(request.state, "auth_source", None) == "grok_bot":
         grok_integ = getattr(request.state, "grok_integration", None) or {}
         grok_cfg = grok_integ.get("config") or {}
         allow_campaigns = grok_cfg.get("allow_campaigns")
