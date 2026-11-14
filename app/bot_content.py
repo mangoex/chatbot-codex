@@ -6,7 +6,7 @@ import logging
 import re
 import unicodedata
 
-from app import config, db
+from app import config, db, phones
 from app.knowledge_privacy import is_private_directory_title
 
 log = logging.getLogger("whatsapp-bot")
@@ -100,8 +100,7 @@ def _normalized_header(value: str | None) -> str:
 
 
 def _phone10(value: str | None) -> str:
-    digits = re.sub(r"\D", "", value or "")
-    return digits[-10:] if len(digits) >= 10 else digits
+    return phones.last10(value)
 
 
 def _identity_from_directory(content: str, wa_id: str) -> dict | None:

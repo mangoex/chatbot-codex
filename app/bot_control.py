@@ -4,7 +4,7 @@ import logging
 import re
 import unicodedata
 
-from app import bots, config, db, follow_ups, whatsapp_client
+from app import bots, config, db, follow_ups, phones, whatsapp_client
 
 log = logging.getLogger("whatsapp-bot")
 
@@ -94,12 +94,7 @@ RESUME_CONFIRMATION_TEXT = (
 
 
 def _clean_phone(phone: str | None) -> str:
-    if not phone:
-        return ""
-    digits = re.sub(r"[^\d]", "", str(phone))
-    if digits.startswith("521") and len(digits) == 13:
-        digits = "52" + digits[3:]
-    return digits
+    return phones.canonical(phone)
 
 
 def normalize_admin_phone(phone: str | None) -> str:
@@ -109,10 +104,7 @@ def normalize_admin_phone(phone: str | None) -> str:
 
 def extract_10_digits(phone: str | None) -> str:
     """Extrae los últimos 10 dígitos numéricos para comparación libre de prefijos (52, 521, 1, etc.)."""
-    if not phone:
-        return ""
-    digits = re.sub(r"[^\d]", "", str(phone))
-    return digits[-10:] if len(digits) >= 10 else digits
+    return phones.last10(phone)
 
 
 def normalize_command(text: str) -> str:
