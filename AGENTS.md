@@ -107,5 +107,5 @@ pip install -r requirements.txt -r requirements-dev.txt
 | El directorio no duplica el mismo `wa_id` y sí actualiza el nombre | `tests/integration/test_contact_upsert.py` y `UNIQUE (bot_id, wa_id)` |
 | El alias `521` y los últimos 10 dígitos se calculan en un solo módulo | `app/phones.py` y `python scripts/ci/check_phone_normalization.py` |
 | Una prueba nueva no sustituye `fastapi`, `asyncpg` ni `httpx` en `sys.modules` | `python scripts/ci/check_sys_modules_stubs.py`. La lista de archivos viejos está en `scripts/ci/sys_modules_allowlist.txt` |
-| La integración solo borra la base `asistto_test` en localhost | `tests/db_guard.py`, usado por `tests/integration/conftest.py`, y `tests/test_db_guard.py` |
+| La integración solo borra la instancia desechable (`asistto` / `asistto_test_only` / `asistto_test` / puerto 5432 / localhost) | `tests/db_guard.py`, usado por `tests/integration/conftest.py`, y `tests/test_db_guard.py` |
 | Merge, deploy y reescritura de historia | Juicio del dueño. No hay un check que lo impida |

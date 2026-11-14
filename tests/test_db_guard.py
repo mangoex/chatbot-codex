@@ -23,3 +23,10 @@ def test_un_nombre_de_base_de_cliente_en_la_query_no_pasa():
 def test_el_mismo_nombre_en_otro_host_no_pasa():
     with pytest.raises(ValueError):
         destino_de_prueba("postgresql://asistto:asistto_test_only@db.cliente.ejemplo:5432/asistto_test")
+
+
+def test_un_reenvio_local_hacia_otra_instancia_no_pasa():
+    with pytest.raises(ValueError):
+        destino_de_prueba("postgresql://cliente:clave-ficticia@127.0.0.1:5432/asistto_test")
+    with pytest.raises(ValueError):
+        destino_de_prueba("postgresql://asistto:asistto_test_only@127.0.0.1:5433/asistto_test")
