@@ -5,7 +5,7 @@ from copy import deepcopy
 import logging
 import re
 
-from app import audio_transcriber, bot_control, config, db, external_agent_client, grok_client, secure_store, whatsapp_client
+from app import audio_transcriber, bot_control, config, db, external_agent_client, grok_client, phones, secure_store, whatsapp_client
 
 log = logging.getLogger("whatsapp-bot")
 HANDLERS = {
@@ -18,10 +18,7 @@ HANDLERS = {
 
 def canonical_phone(value: str) -> str:
     """Exact international identity, allowing only the known Mexican 52/521 alias."""
-    digits = re.sub(r"\D", "", str(value or ""))
-    if len(digits) == 13 and digits.startswith("521"):
-        return "52" + digits[3:]
-    return digits
+    return phones.canonical(value)
 
 
 def parse_admin_phones(value: str) -> list[str]:

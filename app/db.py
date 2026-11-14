@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import asyncpg
-from app import config
+from app import config, phones
 
 log = logging.getLogger("whatsapp-bot")
 
@@ -2912,7 +2912,7 @@ async def get_contact_by_wa_id(bot_id: int, wa_id: str) -> dict | None:
     """Busca un contacto por su número exacto o coincidencia de los últimos 10 dígitos."""
 
     clean = re.sub(r"[^\d]", "", str(wa_id or ""))
-    d10 = clean[-10:] if len(clean) >= 10 else clean
+    d10 = phones.last10(clean)
     async with _pool.acquire() as conn:
         row = await conn.fetchrow(
             """

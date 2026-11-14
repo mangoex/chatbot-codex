@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 
 import tiktoken
 from openai import AsyncOpenAI
-from app import bot_content, config, db, external_actions, order_payments, reply_safety
+from app import bot_content, config, db, external_actions, order_payments, phones, reply_safety
 
 _client: AsyncOpenAI | None = None
 
@@ -88,8 +88,7 @@ async def _runtime_context(bot_id: int | None = None, lead_info: dict | None = N
     
     user_phone_line = ""
     if wa_id:
-        from app.bot_control import extract_10_digits
-        digits10 = extract_10_digits(wa_id)
+        digits10 = phones.last10(wa_id)
         if digits10:
             user_phone_line = f"- Teléfono/WhatsApp del usuario: {digits10} (ID: {wa_id})\n"
         else:

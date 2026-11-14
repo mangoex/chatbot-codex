@@ -1,0 +1,23 @@
+# Pruebas que ya sustituyen librerías al importarse. No añadas archivos.
+# El siguiente agente importa la librería real o usa monkeypatch.
+tests/test_admin_app.py
+tests/test_agenda_guard.py
+tests/test_automations.py
+tests/test_bot_content.py
+tests/test_bots.py
+tests/test_broadcasts.py
+tests/test_calendar_diagnostics.py
+tests/test_calendar_format.py
+tests/test_calendar_reschedule.py
+tests/test_client_panel.py
+tests/test_config.py
+tests/test_db_multibot_schema.py
+tests/test_external_actions.py
+tests/test_memory.py
+tests/test_meta_provider.py
+tests/test_prompt_assistant.py
+tests/test_public_pages.py
+tests/test_rag.py
+tests/test_rag_knowledge_reliability.py
+tests/test_routing_rules.py
+tests/test_z_chatwoot_integration.py
