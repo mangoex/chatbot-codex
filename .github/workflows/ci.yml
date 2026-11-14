@@ -45,8 +45,10 @@ jobs:
 
       - name: Lint ligero
         run: |
-          ruff check --select E9,F63,F7 app tests
-          python -m compileall -q app tests
+          ruff check --select E9,F63,F7 app tests scripts/ci
+          python -m compileall -q app tests scripts/ci
+          python scripts/ci/check_phone_normalization.py
+          python scripts/ci/check_sys_modules_stubs.py
 
       - name: Suite completa
         run: pytest tests --ignore=tests/bdd --ignore=tests/integration -q

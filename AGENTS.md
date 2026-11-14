@@ -67,8 +67,10 @@ pytest tests --ignore=tests/bdd --ignore=tests/integration -q --cov=app --cov-re
 Lint ligero. No reformatea el repositorio. Revisa sintaxis (`E9`, `F63`, `F7`). No incluye nombres indefinidos: en el árbol ya hay cuatro (`Any` en `app/client.py` y `re` en `app/db.py`) y corregirlos no es parte del arnés.
 
 ```bash
-ruff check --select E9,F63,F7 app tests
-python -m compileall -q app tests
+ruff check --select E9,F63,F7 app tests scripts/ci
+python -m compileall -q app tests scripts/ci
+python scripts/ci/check_phone_normalization.py
+python scripts/ci/check_sys_modules_stubs.py
 ```
 
 Instalación de herramientas de desarrollo:
@@ -88,3 +90,22 @@ pip install -r requirements.txt -r requirements-dev.txt
 - Los retornos viejos siguen aceptando a los clientes ya conectados. Un endpoint nuevo no les quita la query de un día para otro.
 - No agregar integraciones de agenda, correo o CRM al template público salvo que el dueño pida una variante privada.
 - Merge, push a `main`, deploy, force-push y reescritura de historia quedan fuera de este flujo hasta el OK explícito del dueño.
+
+## Qué hace cumplir cada regla
+
+| Regla | Qué la hace cumplir |
+| --- | --- |
+| No commitear `.env`, `.mcp.json`, `META_SETUP.md` ni `execution/` | `.gitignore` y gitleaks en `.github/workflows/ci.yml` |
+| Secretos reales no entran al árbol | `gitleaks detect --source . --config .gitleaks.toml` en el mismo workflow |
+| Vulnerabilidades nuevas de dependencias | `python scripts/ci/check_pip_audit.py` |
+| Sintaxis rota | `ruff check --select E9,F63,F7 app tests scripts/ci` y `python -m compileall -q app tests scripts/ci` |
+| Un mensaje de WhatsApp nuevo guarda la conversación y WhatsApp recibe una respuesta | `tests/test_behavior_pilot.py` |
+| El mismo `message_id` no se responde dos veces | `tests/test_behavior_pilot.py` |
+| Con `WHATSAPP_SIGNATURE_STRICT` y sin secreto, una firma inválida responde 403 y no se procesa | `tests/test_behavior_pilot.py` |
+| Con `ROUTING_V2` apagado, `forward_all` sigue reenviando el payload de Meta | `tests/test_behavior_pilot.py`. La columna nace en `FALSE` (`app/db.py`) y `is_routing_v2_enabled` regresa false sin pool |
+| `GET /api/v1/bots/{id}/ping` sin `X-API-Key` válida responde 401 | `tests/test_behavior_pilot.py` |
+| El directorio no duplica el mismo `wa_id` y sí actualiza el nombre | `tests/integration/test_contact_upsert.py` y `UNIQUE (bot_id, wa_id)` |
+| El alias `521` y los últimos 10 dígitos se calculan en un solo módulo | `app/phones.py` y `python scripts/ci/check_phone_normalization.py` |
+| Una prueba nueva no sustituye `fastapi`, `asyncpg` ni `httpx` en `sys.modules` | `python scripts/ci/check_sys_modules_stubs.py`. La lista de archivos viejos está en `scripts/ci/sys_modules_allowlist.txt` |
+| La integración solo borra la base `asistto_test` en localhost | `tests/db_guard.py`, usado por `tests/integration/conftest.py`, y `tests/test_db_guard.py` |
+| Merge, deploy y reescritura de historia | Juicio del dueño. No hay un check que lo impida |

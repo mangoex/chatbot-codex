@@ -7,16 +7,17 @@ import asyncpg
 import pytest
 
 from app import config, db
+from tests.db_guard import destino_de_prueba
 
 URL_LOCAL = "postgresql://asistto:asistto_test_only@127.0.0.1:5432/asistto_test"
 
 
 def _url_de_prueba() -> str:
     url = os.getenv("TEST_DATABASE_URL", URL_LOCAL)
-    destino = url.split("@")[-1]
-    if not url.startswith("postgres") or "asistto_test" not in destino:
-        pytest.fail("TEST_DATABASE_URL debe apuntar a una base llamada asistto_test")
-    return url
+    try:
+        return destino_de_prueba(url)
+    except ValueError as exc:
+        pytest.fail(str(exc))
 
 
 @pytest.fixture
