@@ -38,6 +38,16 @@ CREATE TABLE IF NOT EXISTS client_users (
     PRIMARY KEY (client_id, user_id)
 );
 
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT UNIQUE NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id ON password_reset_tokens(user_id);
+
 CREATE TABLE IF NOT EXISTS bots (
     id BIGSERIAL PRIMARY KEY,
     client_id BIGINT REFERENCES clients(id) ON DELETE CASCADE,
@@ -1896,6 +1906,21 @@ async def update_bot_status(bot_id: int, status: str) -> None:
         )
 
 
+async def update_bot_model(bot_id: int, openai_model: str | None) -> None:
+    clean_model = (openai_model or "").strip() or None
+    async with _pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE bots
+            SET openai_model = $2,
+                updated_at = now()
+            WHERE id = $1
+            """,
+            bot_id,
+            clean_model,
+        )
+
+
 async def update_bot_whatsapp_sync_status(
     bot_id: int,
     phone_number_id: str,
@@ -2795,6 +2820,110 @@ async def get_user_login(email: str) -> dict | None:
             email.lower().strip(),
         )
     return dict(row) if row else None
+
+
+async def get_active_user_by_email(email: str) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT id AS user_id, email, name
+            FROM users
+            WHERE email = $1
+              AND status = 'active'
+            LIMIT 1
+            """,
+            email.lower().strip(),
+        )
+    return dict(row) if row else None
+
+
+async def create_password_reset_token(
+    user_id: int,
+    token_hash: str,
+    ttl_minutes: int = 30,
+) -> None:
+    ttl = max(5, int(ttl_minutes))
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(
+                """
+                UPDATE password_reset_tokens
+                SET used_at = now()
+                WHERE user_id = $1 AND used_at IS NULL
+                """,
+                user_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO password_reset_tokens(user_id, token_hash, expires_at)
+                VALUES($1, $2, now() + ($3 * INTERVAL '1 minute'))
+                """,
+                user_id,
+                token_hash,
+                ttl,
+            )
+
+
+async def get_valid_password_reset_token(token_hash: str) -> dict | None:
+    async with _pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT
+                t.id,
+                t.user_id,
+                t.expires_at,
+                u.email,
+                u.name
+            FROM password_reset_tokens t
+            JOIN users u ON u.id = t.user_id
+            WHERE t.token_hash = $1
+              AND t.used_at IS NULL
+              AND t.expires_at > now()
+              AND u.status = 'active'
+            LIMIT 1
+            """,
+            token_hash,
+        )
+    return dict(row) if row else None
+
+
+async def consume_password_reset_token(token_hash: str, new_password_hash: str) -> bool:
+    async with _pool.acquire() as conn:
+        async with conn.transaction():
+            row = await conn.fetchrow(
+                """
+                UPDATE password_reset_tokens t
+                SET used_at = now()
+                FROM users u
+                WHERE t.user_id = u.id
+                  AND t.token_hash = $1
+                  AND t.used_at IS NULL
+                  AND t.expires_at > now()
+                  AND u.status = 'active'
+                RETURNING t.user_id
+                """,
+                token_hash,
+            )
+            if not row:
+                return False
+            await conn.execute(
+                """
+                UPDATE users
+                SET password_hash = $1, updated_at = now()
+                WHERE id = $2
+                """,
+                new_password_hash,
+                row["user_id"],
+            )
+            await conn.execute(
+                """
+                UPDATE password_reset_tokens
+                SET used_at = now()
+                WHERE user_id = $1 AND used_at IS NULL
+                """,
+                row["user_id"],
+            )
+            return True
 
 
 async def delete_user(user_id: int, client_id: int | None = None) -> bool:

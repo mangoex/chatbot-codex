@@ -2,15 +2,19 @@ from __future__ import annotations
 """Admin frontend: login, dashboard, conversations, CRM and escalations."""
 import html
 import json
+import logging
 import re
 import secrets
 from contextvars import ContextVar
 from datetime import datetime
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from app import auth, config, db, meta_provider, pbd_validation, secure_store
+from app import auth, config, db, mailer, meta_provider, pbd_validation, secure_store
+
+logger = logging.getLogger("asistto.admin")
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 _current_session: ContextVar[dict | None] = ContextVar("admin_session", default=None)
@@ -750,6 +754,26 @@ BASE_CSS = """
     box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.15);
   }
   .err { background: #ffe4e6; color: #9f1239; border: 1px solid #fecdd3; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin: 14px 0; font-weight: 500; }
+  .ok { background: #d1fae5; color: #065f46; border: 1px solid #a7f3d0; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin: 14px 0; font-weight: 500; }
+  .warn { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; padding: 10px 12px; border-radius: 8px; font-size: 13px; margin: 14px 0; font-weight: 500; }
+  .password-wrap { position: relative; display: flex; align-items: center; }
+  .password-wrap input { padding-right: 42px; }
+  .password-toggle {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    width: 32px; height: 32px; border: 0; background: transparent;
+    color: var(--muted); border-radius: 6px; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    padding: 0; transition: var(--transition);
+  }
+  .password-toggle:hover { color: var(--ink); background: rgba(15, 23, 42, 0.06); }
+  .password-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+  .password-toggle svg { width: 18px; height: 18px; pointer-events: none; }
+  .login-actions {
+    margin-top: 18px; display: flex; align-items: center;
+    justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  }
+  .login-link { color: var(--primary-dark); font-size: 13px; font-weight: 600; }
+  .login-link:hover { color: var(--primary); text-decoration: underline; }
   form.inline { display: inline; }
   
   /* Chatwoot Layout */
@@ -1023,23 +1047,96 @@ def _layout(title: str, active: str, body: str, session: dict | None = None) -> 
 </head><body><div class="shell">{_nav(active, session)}<main class="main">{body}</main></div></body></html>"""
 
 
+_EYE_OPEN_SVG = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>'
+    '<circle cx="12" cy="12" r="3"/></svg>'
+)
+_EYE_OFF_SVG = (
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+    'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-6.5 0-10-7-10-7a21.8 21.8 0 0 1 5.06-5.94"/>'
+    '<path d="M9.9 4.24A10.94 10.94 0 0 1 12 4c6.5 0 10 7 10 7a21.8 21.8 0 0 1-2.16 3.19"/>'
+    '<path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/>'
+    '<line x1="1" y1="1" x2="23" y2="23"/></svg>'
+)
+
+
+def _password_input(
+    name: str,
+    autocomplete: str = "current-password",
+    *,
+    input_id: str | None = None,
+    minlength: int | None = None,
+    required: bool = True,
+) -> str:
+    safe_id = html.escape(input_id or f"pw-{name}")
+    attrs = [
+        f'id="{safe_id}"',
+        'type="password"',
+        f'name="{html.escape(name)}"',
+        f'autocomplete="{html.escape(autocomplete)}"',
+    ]
+    if minlength is not None:
+        attrs.append(f'minlength="{int(minlength)}"')
+    if required:
+        attrs.append("required")
+    return (
+        '<div class="password-wrap">'
+        f'<input {" ".join(attrs)}>'
+        f'<button type="button" class="password-toggle" data-password-toggle="{safe_id}" '
+        'aria-label="Mostrar contrasena" aria-pressed="false" title="Mostrar contrasena">'
+        f'<span data-eye-open>{_EYE_OPEN_SVG}</span>'
+        f'<span data-eye-off style="display:none">{_EYE_OFF_SVG}</span>'
+        "</button>"
+        "</div>"
+    )
+
+
+def _public_base_url(request: Request) -> str:
+    configured = (config.WEBHOOK_DOMAIN or "").strip().rstrip("/")
+    if configured:
+        return configured
+    return str(request.base_url).rstrip("/")
+
+
 def _login_layout(title: str, body: str) -> str:
     return f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{html.escape(title)} - Asistto by Humanio</title>
 {BASE_CSS}
-</head><body><div class="login">{body}</div></body></html>"""
+</head><body><div class="login">{body}</div>
+<script>
+  document.addEventListener("click", (event) => {{
+    const btn = event.target.closest("[data-password-toggle]");
+    if (!btn) return;
+    const input = document.getElementById(btn.getAttribute("data-password-toggle"));
+    if (!input) return;
+    const show = input.type === "password";
+    input.type = show ? "text" : "password";
+    btn.setAttribute("aria-pressed", show ? "true" : "false");
+    btn.setAttribute("aria-label", show ? "Ocultar contrasena" : "Mostrar contrasena");
+    btn.setAttribute("title", show ? "Ocultar contrasena" : "Mostrar contrasena");
+    const eyeOpen = btn.querySelector("[data-eye-open]");
+    const eyeOff = btn.querySelector("[data-eye-off]");
+    if (eyeOpen) eyeOpen.style.display = show ? "none" : "";
+    if (eyeOff) eyeOff.style.display = show ? "" : "none";
+  }});
+</script>
+</body></html>"""
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page(request: Request, error: str = ""):
+async def login_page(request: Request, error: str = "", ok: str = ""):
     if request.session.get("user"):
         if request.session.get("role") == "agency_admin":
             return RedirectResponse("/admin/app", status_code=302)
         else:
             return RedirectResponse("/client/app", status_code=302)
     err_html = f'<div class="err">{html.escape(error)}</div>' if error else ""
+    ok_html = f'<div class="ok">{html.escape(ok)}</div>' if ok else ""
     body = f"""
     <section class="card login-card">
       <div class="brand" style="margin-bottom:18px">
@@ -1049,15 +1146,195 @@ async def login_page(request: Request, error: str = ""):
       <h1>Entrar al panel</h1>
       <div class="sub">Conversaciones, CRM y diagnostico comercial.</div>
       {err_html}
+      {ok_html}
       <form method="post" action="/admin/login">
         <label>Usuario</label>
         <input name="username" autocomplete="username" autofocus required>
         <label>Contrasena</label>
-        <input type="password" name="password" autocomplete="current-password" required>
-        <div style="margin-top:18px"><button class="btn" type="submit">Entrar</button></div>
+        {_password_input("password", autocomplete="current-password")}
+        <div class="login-actions">
+          <button class="btn" type="submit">Entrar</button>
+          <a class="login-link" href="/admin/forgot-password">Recuperar contrasena</a>
+        </div>
       </form>
     </section>"""
     return HTMLResponse(_login_layout("Login", body))
+
+
+@router.get("/forgot-password", response_class=HTMLResponse)
+async def forgot_password_page(request: Request, error: str = "", ok: str = ""):
+    err_html = f'<div class="err">{html.escape(error)}</div>' if error else ""
+    ok_html = f'<div class="ok">{html.escape(ok)}</div>' if ok else ""
+    warn_html = (
+        '<div class="warn">El envio de correo aun no esta configurado en el servidor '
+        '(configura RESEND_API_KEY + EMAIL_FROM o SMTP_HOST + EMAIL_FROM).</div>'
+        if not mailer.is_configured()
+        else ""
+    )
+    body = f"""
+    <section class="card login-card">
+      <div class="brand" style="margin-bottom:18px">
+        <div class="mark">AH</div>
+        <div><strong>Asistto</strong><span>by Humanio</span></div>
+      </div>
+      <h1>Recuperar contrasena</h1>
+      <div class="sub">Ingresa tu correo registrado y te enviaremos un enlace para crear una nueva contrasena.</div>
+      {warn_html}
+      {err_html}
+      {ok_html}
+      <form method="post" action="/admin/forgot-password">
+        <label>Correo electronico</label>
+        <input name="email" type="email" autocomplete="email" autofocus required>
+        <div class="login-actions">
+          <button class="btn" type="submit">Enviar enlace</button>
+          <a class="login-link" href="/admin/login">Volver a iniciar sesion</a>
+        </div>
+      </form>
+    </section>"""
+    return HTMLResponse(_login_layout("Recuperar contrasena", body))
+
+
+@router.post("/forgot-password")
+async def forgot_password_submit(
+    request: Request,
+    email: str = Form(...),
+):
+    clean_email = (email or "").strip().lower()
+    if not clean_email or "@" not in clean_email:
+        return RedirectResponse(
+            "/admin/forgot-password?error=" + quote_plus("Ingresa un correo electronico valido."),
+            status_code=302,
+        )
+    if not mailer.is_configured():
+        return RedirectResponse(
+            "/admin/forgot-password?error="
+            + quote_plus("El envio de correo no esta configurado en el servidor. Contacta a un administrador."),
+            status_code=302,
+        )
+    user = await db.get_active_user_by_email(clean_email)
+    if user:
+        raw_token = auth.generate_reset_token()
+        token_hash = auth.hash_reset_token(raw_token)
+        ttl = config.PASSWORD_RESET_TTL_MINUTES
+        await db.create_password_reset_token(int(user["user_id"]), token_hash, ttl_minutes=ttl)
+        reset_url = f"{_public_base_url(request)}/admin/reset-password?token={quote_plus(raw_token)}"
+        display_name = user.get("name") or user["email"]
+        subject = "Recuperar contrasena - Asistto"
+        text_body = (
+            f"Hola {display_name},\n\n"
+            "Recibimos una solicitud para restablecer tu contrasena en Asistto.\n"
+            f"Abre este enlace para definir una nueva contrasena (valido por {ttl} minutos):\n\n"
+            f"{reset_url}\n\n"
+            "Si no solicitaste este cambio, puedes ignorar este mensaje."
+        )
+        html_body = (
+            f"<p>Hola {html.escape(display_name)},</p>"
+            "<p>Recibimos una solicitud para restablecer tu contrasena en <strong>Asistto</strong>.</p>"
+            f'<p><a href="{html.escape(reset_url)}" style="display:inline-block;padding:10px 18px;'
+            'background:#0f172a;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;">'
+            "Restablecer contrasena</a></p>"
+            f"<p style=\"color:#64748b;font-size:13px;\">Este enlace expira en {ttl} minutos. "
+            "Si no solicitaste este cambio, puedes ignorar este correo.</p>"
+        )
+        try:
+            await mailer.send_email(user["email"], subject, text_body, html_body)
+        except Exception:
+            logger.exception("Error enviando correo de recuperacion a %s", user["email"])
+            return RedirectResponse(
+                "/admin/forgot-password?error="
+                + quote_plus("No se pudo enviar el correo en este momento. Intenta de nuevo mas tarde."),
+                status_code=302,
+            )
+    return RedirectResponse(
+        "/admin/forgot-password?ok="
+        + quote_plus("Si el correo esta registrado, recibiras un enlace para restablecer tu contrasena."),
+        status_code=302,
+    )
+
+
+@router.get("/reset-password", response_class=HTMLResponse)
+async def reset_password_page(request: Request, token: str = "", error: str = ""):
+    clean_token = (token or "").strip()
+    record = (
+        await db.get_valid_password_reset_token(auth.hash_reset_token(clean_token))
+        if clean_token
+        else None
+    )
+    err_html = f'<div class="err">{html.escape(error)}</div>' if error else ""
+    if not record:
+        body = f"""
+        <section class="card login-card">
+          <div class="brand" style="margin-bottom:18px">
+            <div class="mark">AH</div>
+            <div><strong>Asistto</strong><span>by Humanio</span></div>
+          </div>
+          <h1>Enlace no valido</h1>
+          <div class="sub">El enlace de recuperacion es invalido o ya expiro.</div>
+          {err_html}
+          <div class="login-actions">
+            <a class="btn" href="/admin/forgot-password">Solicitar nuevo enlace</a>
+            <a class="login-link" href="/admin/login">Volver al login</a>
+          </div>
+        </section>"""
+        return HTMLResponse(_login_layout("Restablecer contrasena", body), status_code=400)
+
+    body = f"""
+    <section class="card login-card">
+      <div class="brand" style="margin-bottom:18px">
+        <div class="mark">AH</div>
+        <div><strong>Asistto</strong><span>by Humanio</span></div>
+      </div>
+      <h1>Nueva contrasena</h1>
+      <div class="sub">Define una nueva contrasena para <strong>{html.escape(record["email"])}</strong>.</div>
+      {err_html}
+      <form method="post" action="/admin/reset-password">
+        <input type="hidden" name="token" value="{html.escape(clean_token)}">
+        <label>Nueva contrasena</label>
+        {_password_input("password", autocomplete="new-password", minlength=8)}
+        <label>Confirmar contrasena</label>
+        {_password_input("confirm_password", autocomplete="new-password", minlength=8)}
+        <div class="login-actions">
+          <button class="btn" type="submit">Guardar contrasena</button>
+          <a class="login-link" href="/admin/login">Cancelar</a>
+        </div>
+      </form>
+    </section>"""
+    return HTMLResponse(_login_layout("Restablecer contrasena", body))
+
+
+@router.post("/reset-password")
+async def reset_password_submit(
+    token: str = Form(...),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+):
+    clean_token = (token or "").strip()
+    if len(password or "") < 8:
+        return RedirectResponse(
+            f"/admin/reset-password?token={quote_plus(clean_token)}&error="
+            + quote_plus("La contrasena debe tener al menos 8 caracteres."),
+            status_code=302,
+        )
+    if password != confirm_password:
+        return RedirectResponse(
+            f"/admin/reset-password?token={quote_plus(clean_token)}&error="
+            + quote_plus("Las contrasenas no coinciden."),
+            status_code=302,
+        )
+    updated = await db.consume_password_reset_token(
+        auth.hash_reset_token(clean_token),
+        auth.hash_password(password),
+    )
+    if not updated:
+        return RedirectResponse(
+            "/admin/forgot-password?error="
+            + quote_plus("El enlace es invalido o ya expiro. Solicita uno nuevo."),
+            status_code=302,
+        )
+    return RedirectResponse(
+        "/admin/login?ok=" + quote_plus("Contrasena actualizada. Ya puedes iniciar sesion."),
+        status_code=302,
+    )
 
 
 @router.post("/login")
@@ -1667,13 +1944,100 @@ async def create_bot_page(
     return RedirectResponse(f"/admin/bots/{bot_id}", status_code=302)
 
 
+OPENROUTER_MODEL_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("openai/gpt-4.1-mini", "OpenAI GPT-4.1 mini (Recomendado: calidad y precio)"),
+    ("openai/gpt-4o-mini", "OpenAI GPT-4o mini (Economico y estable)"),
+    ("google/gemini-2.5-flash", "Google Gemini 2.5 Flash (Rapido y gran cache RAG)"),
+    ("openai/gpt-5-mini", "OpenAI GPT-5 mini (Razonamiento avanzado)"),
+    ("openai/gpt-5.4-mini", "OpenAI GPT-5.4 mini (Alta precision)"),
+    ("anthropic/claude-haiku-4.5", "Anthropic Claude Haiku 4.5 (Tono natural)"),
+)
+
+
+def _render_bot_model_panel(bot: dict, can_edit: bool) -> str:
+    bot_id = int(bot["id"])
+    saved_model = (bot.get("openai_model") or "").strip()
+    env_model = (config.OPENAI_MODEL or "").strip() or "sin definir"
+    effective_model = saved_model or env_model
+    source_badge = "Personalizado en bot" if saved_model else "Default del entorno"
+    known_slugs = {slug for slug, _ in OPENROUTER_MODEL_OPTIONS}
+    is_custom = bool(saved_model and saved_model not in known_slugs)
+
+    if not can_edit:
+        return f"""
+        <section class="panel" style="margin-top:16px">
+          <div class="section-title" style="margin-bottom:6px">
+            <span>Modelo de IA (OpenRouter)</span>
+            <span class="badge">{html.escape(source_badge)}</span>
+          </div>
+          <div class="sub">Modelo activo: <code>{html.escape(effective_model)}</code></div>
+        </section>"""
+
+    options_html = [
+        f'<option value="" {"selected" if not saved_model else ""}>'
+        f"Usar default del entorno ({html.escape(env_model)})</option>"
+    ]
+    for slug, label in OPENROUTER_MODEL_OPTIONS:
+        selected = "selected" if saved_model == slug else ""
+        options_html.append(
+            f'<option value="{html.escape(slug)}" {selected}>{html.escape(label)} — {html.escape(slug)}</option>'
+        )
+    options_html.append(
+        f'<option value="__custom__" {"selected" if is_custom else ""}>'
+        "Otro modelo (slug personalizado de OpenRouter)</option>"
+    )
+    custom_style = "" if is_custom else "display:none;"
+    custom_value = saved_model if is_custom else ""
+    return f"""
+    <section class="panel" style="margin-top:16px">
+      <div class="section-title" style="margin-bottom:8px">
+        <span>Modelo de IA (OpenRouter)</span>
+        <span class="badge">{html.escape(source_badge)}</span>
+      </div>
+      <div class="sub" style="margin-bottom:12px">
+        Modelo activo para responder WhatsApp: <code>{html.escape(effective_model)}</code>
+      </div>
+      <form method="post" action="/admin/bots/{bot_id}/model" style="display:grid;gap:10px;max-width:620px">
+        <div>
+          <label style="margin-top:0">Seleccionar modelo</label>
+          <select id="bot-model-select-{bot_id}" name="model_preset">
+            {"".join(options_html)}
+          </select>
+        </div>
+        <div id="bot-model-custom-wrap-{bot_id}" style="{custom_style}">
+          <label style="margin-top:0">Slug personalizado en OpenRouter</label>
+          <input name="custom_model" value="{html.escape(custom_value)}" placeholder="ej. openai/gpt-4.1-mini o google/gemini-2.5-flash">
+        </div>
+        <div>
+          <button class="btn" type="submit">Guardar modelo</button>
+        </div>
+      </form>
+      <script>
+        (() => {{
+          const sel = document.getElementById("bot-model-select-{bot_id}");
+          const wrap = document.getElementById("bot-model-custom-wrap-{bot_id}");
+          if (!sel || !wrap) return;
+          const sync = () => {{ wrap.style.display = sel.value === "__custom__" ? "" : "none"; }};
+          sel.addEventListener("change", sync);
+          sync();
+        }})();
+      </script>
+    </section>"""
+
+
 @router.get("/bots/{bot_id}", response_class=HTMLResponse)
-async def bot_detail(request: Request, bot_id: int):
+async def bot_detail(request: Request, bot_id: int, ok: str = "", error: str = ""):
     session = _require_login(request)
     bot = await _require_bot_access(session, bot_id)
     metrics = await db.admin_metrics(bot_id=bot_id)
     threads = await db.list_conversation_threads(limit=8, bot_id=bot_id)
     lead_rows = await db.list_leads(limit=8, bot_id=bot_id)
+    can_edit = _is_agency(session) or session.get("role") == "client_admin"
+    notice_html = (
+        (f'<div class="ok">{html.escape(ok)}</div>' if ok else "")
+        + (f'<div class="err">{html.escape(error)}</div>' if error else "")
+    )
+    model_panel_html = _render_bot_model_panel(bot, can_edit=can_edit)
     thread_html = "".join(
         f"<tr><td><strong>{html.escape(t['wa_id'])}</strong><br><span class='muted'>{html.escape(_clip(t.get('last_content'), 80))}</span></td><td>{_fmt_dt(t.get('last_message_at'))}</td><td><a class='btn secondary' href='/admin/conversations?bot_id={bot_id}&wa_id={html.escape(t['wa_id'])}'>Ver</a></td></tr>"
         for t in threads
@@ -1687,6 +2051,8 @@ async def bot_detail(request: Request, bot_id: int):
       <div><a class="sub" href="/admin/bots">Volver</a><h1>{html.escape(bot["name"])}</h1><div class="sub">{html.escape(bot.get("client_name") or "-")} - {html.escape(bot.get("phone_number_id") or "sin phone_number_id")}</div></div>
       <span class="badge">{html.escape(bot.get("status") or "active")}</span>
     </div>
+    {notice_html}
+    {model_panel_html}
     
     <div class="builder-grid">
       <a href="/admin/bots/{bot_id}/prompt" class="builder-card">
@@ -1780,6 +2146,36 @@ async def bot_detail(request: Request, bot_id: int):
     </section>
     """
     return HTMLResponse(_layout("Bot", "bots", body))
+
+
+@router.post("/bots/{bot_id}/model")
+async def update_bot_model_route(
+    request: Request,
+    bot_id: int,
+    model_preset: str = Form(""),
+    custom_model: str = Form(""),
+):
+    session = _require_login(request)
+    await _require_bot_editor(session, bot_id)
+    preset = (model_preset or "").strip()
+    if preset == "__custom__":
+        selected = (custom_model or "").strip()
+        if not selected:
+            return RedirectResponse(
+                f"/admin/bots/{bot_id}?error=" + quote_plus("Ingresa un slug de modelo personalizado valido."),
+                status_code=302,
+            )
+    elif preset:
+        selected = preset
+    else:
+        selected = None
+    await db.update_bot_model(bot_id, selected)
+    msg = (
+        f"Modelo actualizado a {selected}."
+        if selected
+        else "Modelo configurado para usar el default del entorno."
+    )
+    return RedirectResponse(f"/admin/bots/{bot_id}?ok=" + quote_plus(msg), status_code=302)
 
 
 @router.get("/meta/oauth/callback", response_class=HTMLResponse)

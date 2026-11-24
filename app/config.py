@@ -109,6 +109,16 @@ ADMIN_PHONE_NUMBERS = [
 ]
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 INTEGRATION_SECRET_KEY = os.getenv("INTEGRATION_SECRET_KEY", "")
+PASSWORD_RESET_TTL_MINUTES = _int("PASSWORD_RESET_TTL_MINUTES", "30")
+
+# Envio de correo opcional para recuperacion de contrasena (Resend o SMTP)
+EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip()
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "").strip()
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = _int("SMTP_PORT", "587")
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+SMTP_USE_TLS = _bool("SMTP_USE_TLS", "true")
 KNOWLEDGE_UPLOAD_MAX_BYTES = _int("KNOWLEDGE_UPLOAD_MAX_BYTES", str(10 * 1024 * 1024))
 CONTACTS_UPLOAD_MAX_BYTES = _int("CONTACTS_UPLOAD_MAX_BYTES", str(5 * 1024 * 1024))
 MAX_MEDIA_BYTES = _int("MAX_MEDIA_BYTES", str(16 * 1024 * 1024))

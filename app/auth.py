@@ -37,3 +37,11 @@ def verify_password(password: str, password_hash: str | None) -> bool:
         return hmac.compare_digest(digest, expected)
     except (TypeError, ValueError):
         return False
+
+
+def generate_reset_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def hash_reset_token(token: str) -> str:
+    return hashlib.sha256((token or "").strip().encode("utf-8")).hexdigest()
