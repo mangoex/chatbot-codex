@@ -1,0 +1,17 @@
+# Fragmento OpenAPI 3.1. No reemplaza el esquema generado por FastAPI;
+# describe solo las rutas de este cambio.
+openapi: 3.1.0
+info:
+  title: Fragmento CHG-XXX
+  version: 0.0.0
+paths:
+  /ruta/de/ejemplo:
+    post:
+      summary: [qué hace]
+      responses:
+        "200":
+          description: [respuesta]
+          content:
+            application/json:
+              schema:
+                type: object

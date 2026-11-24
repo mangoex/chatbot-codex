@@ -9,7 +9,7 @@ import secrets as py_secrets
 import time
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, Header, Query
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from starlette.middleware.sessions import SessionMiddleware
 
 import httpx
@@ -41,7 +41,10 @@ from app import (
     order_payments,
     prompt_whatsapp_control,
     public_pages,
+    rate_limit,
     reply_safety,
+    routing_migrate,
+    routing_v2,
     secure_store,
     signature,
     whatsapp_client,
@@ -59,8 +62,19 @@ async def lifespan(_app: FastAPI):
     missing = config.validate()
     if missing:
         log.warning("Config incompleta, faltan: %s", ", ".join(missing))
+    if not config.META_APP_SECRET:
+        log.warning(
+            "META_APP_SECRET no está configurado. WHATSAPP_SIGNATURE_STRICT=%s. "
+            "Sin secreto, la firma %s.",
+            config.WHATSAPP_SIGNATURE_STRICT,
+            "rechaza el webhook" if config.WHATSAPP_SIGNATURE_STRICT else "se acepta para no cortar a los bots actuales",
+        )
     await db.init_pool()
     await db.run_migrations()
+    try:
+        await routing_migrate.reconcile_all()
+    except Exception:
+        log.exception("No se pudo reconciliar el ruteo v2. Los bots siguen por el camino actual.")
     deleted = await db.purge_old(config.HISTORY_TTL_DAYS)
     if deleted:
         log.info("Purgados %d mensajes viejos (>%dd)", deleted, config.HISTORY_TTL_DAYS)
@@ -90,6 +104,31 @@ app = FastAPI(lifespan=lifespan, title="Asistto by Humanio")
 
 if config.APP_ENV in {"production", "prod"} and not config.SESSION_SECRET:
     raise RuntimeError("SESSION_SECRET is required for admin/client sessions.")
+
+def _is_docs_path(path: str) -> bool:
+    return path in {"/docs", "/redoc", "/openapi.json"} or path.startswith("/docs/") or path.startswith("/redoc/")
+
+
+@app.middleware("http")
+async def hide_api_docs(request: Request, call_next):
+    if _is_docs_path(request.url.path) and not config.ENABLE_API_DOCS:
+        return PlainTextResponse("Not Found", status_code=404)
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def limit_public_api(request: Request, call_next):
+    if rate_limit.applies(request.url.path):
+        peer = request.client.host if request.client else "desconocido"
+        forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or None
+        if not rate_limit.allow(peer, forwarded, rate_limit.api_key(request.headers)):
+            return JSONResponse(
+                {"detail": "Demasiadas solicitudes"},
+                status_code=429,
+                headers={"Retry-After": "60"},
+            )
+    return await call_next(request)
+
 
 @app.middleware("http")
 async def csrf_protection(request: Request, call_next):
@@ -314,6 +353,9 @@ async def receive_grok_webhook(request: Request, bot_id: int | None = None):
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid bot_id")
 
+    if await routing_v2.is_enabled(target_bot_id):
+        return await routing_v2.delegate_legacy_reply(request, target_bot_id, payload, raw_body, source="grok_bot")
+
     integration = await db.get_active_bot_integration(target_bot_id, "grok_bot")
     if not integration:
         raise HTTPException(status_code=404, detail="Grok Bot integration not active")
@@ -420,6 +462,11 @@ async def receive_external_agent_webhook(request: Request, bot_id: int | None = 
         target_bot_id = int(target_bot_id)
     except (ValueError, TypeError):
         raise HTTPException(status_code=400, detail="Invalid bot_id")
+
+    if await routing_v2.is_enabled(target_bot_id):
+        return await routing_v2.delegate_legacy_reply(
+            request, target_bot_id, payload, raw_body, source="external_agent"
+        )
 
     reply_recipient, _ = external_agent_client.normalize_external_reply_payload(payload)
     reply_owner = await attention_routing.reply_owner(target_bot_id, reply_recipient) if reply_recipient else None
@@ -855,10 +902,14 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             )
             return
 
-    attention_policy = attention_routing.policy_config(
+    use_v2 = await routing_v2.is_enabled(bot.id)
+    attention_policy = None if use_v2 else attention_routing.policy_config(
         await db.get_active_bot_integration(bot.id, "attention_policy")
     )
-    if attention_policy is not None:
+    if use_v2:
+        if await routing_v2.dispatch_inbound(bot, msg, payload):
+            return
+    elif attention_policy is not None:
         await follow_ups.cancel(wa_id, bot.id)
         timeout_hours = await _get_handoff_expiration_hours(bot.id)
         if bot.status == "paused" or await db.is_chatwoot_handoff_active(bot.id, wa_id, timeout_hours=timeout_hours):
@@ -874,7 +925,7 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
 
     # Legacy routing remains unchanged until an explicit attention policy is saved.
     try:
-        routing_integration = await db.get_active_bot_integration(bot.id, "routing_rules") if attention_policy is None else None
+        routing_integration = await db.get_active_bot_integration(bot.id, "routing_rules") if (not use_v2 and attention_policy is None) else None
         if routing_integration:
             config_data = routing_integration.get("config") or {}
             forward_all = bool(config_data.get("forward_all"))
@@ -1074,7 +1125,7 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
         return
 
     # 1. Prioridad Máxima: Agente Externo / POS (ej. KiwiPOS / RestaurantOS)
-    external_agent_integration = await db.get_active_bot_integration(bot.id, "external_agent") if attention_policy is None else None
+    external_agent_integration = await db.get_active_bot_integration(bot.id, "external_agent") if (not use_v2 and attention_policy is None) else None
     if external_agent_integration:
         agent_config = external_agent_integration.get("config") or {}
         handle_inbound = agent_config.get("handle_inbound")
@@ -1114,7 +1165,7 @@ async def _process_message_impl(msg: dict, payload: dict) -> None:
             return
 
     # 2. Delegación alternativa a Grok Bot (si está activo para este bot)
-    grok_integration = await db.get_active_bot_integration(bot.id, "grok_bot") if attention_policy is None else None
+    grok_integration = await db.get_active_bot_integration(bot.id, "grok_bot") if (not use_v2 and attention_policy is None) else None
     if grok_integration:
         grok_config = grok_integration.get("config") or {}
         handle_inbound = grok_config.get("handle_inbound")
