@@ -299,6 +299,39 @@ class ChatwootWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(caught.exception.status_code, 502)
         release.assert_awaited_once_with(8, "delivery-1")
 
+    async def test_conversation_status_changed_resolved_with_root_ids_clears_handoff(self):
+        payload = {
+            "event": "conversation_status_changed",
+            "id": 4,
+            "account_id": 5,
+            "inbox_id": 9,
+            "status": "resolved",
+            "meta": {
+                "sender": {
+                    "phone_number": "+5216672013019",
+                }
+            },
+        }
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        request = _WebhookRequest(body, "hook-secret")
+        integration = {
+            "id": 22,
+            "config": {"account_id": "5", "inbox_id": "9"},
+        }
+        with (
+            patch.object(main.db, "get_active_bot_integration", AsyncMock(return_value=integration)),
+            patch.object(main.db, "get_integration_secret_values", AsyncMock(return_value={"webhook_secret": "encrypted"})),
+            patch.object(main.secure_store, "decrypt_secret", return_value="hook-secret"),
+            patch.object(main.db, "claim_chatwoot_webhook_event", AsyncMock(return_value=True)),
+            patch.object(main.db, "clear_conversation_history", AsyncMock()) as clear_history,
+            patch.object(main.db, "clear_chatwoot_handoff", AsyncMock()) as clear_handoff,
+        ):
+            result = await main.receive_chatwoot_webhook(request, 206)
+
+        self.assertEqual(result, {"status": "resolved"})
+        clear_history.assert_awaited_once_with("5216672013019", 206)
+        clear_handoff.assert_awaited_once_with(206, "5216672013019")
+
 
 class ChatwootFormTests(unittest.IsolatedAsyncioTestCase):
     async def test_save_redirects_instead_of_returning_null_and_masks_secrets(self):

@@ -237,8 +237,16 @@ async def receive_chatwoot_webhook(request: Request, bot_id: int):
 
     integration_config = integration.get("config") or {}
     conversation = payload.get("conversation") or {}
-    payload_account = (payload.get("account") or {}).get("id") or conversation.get("account_id")
-    payload_inbox = (payload.get("inbox") or {}).get("id") or conversation.get("inbox_id")
+    payload_account = (
+        (payload.get("account") or {}).get("id")
+        or payload.get("account_id")
+        or conversation.get("account_id")
+    )
+    payload_inbox = (
+        (payload.get("inbox") or {}).get("id")
+        or payload.get("inbox_id")
+        or conversation.get("inbox_id")
+    )
     if str(payload_account) != str(integration_config.get("account_id")):
         raise HTTPException(status_code=403, detail="Chatwoot account mismatch")
     if str(payload_inbox) != str(integration_config.get("inbox_id")):
@@ -247,7 +255,8 @@ async def receive_chatwoot_webhook(request: Request, bot_id: int):
     event = payload.get("event")
     event_object_id = payload.get("id") or conversation.get("id")
     delivery_id = request.headers.get("X-Chatwoot-Delivery")
-    event_key = delivery_id or f"{event}:{event_object_id}"
+    status_suffix = f":{payload.get('status')}" if event == "conversation_status_changed" and payload.get("status") else ""
+    event_key = delivery_id or f"{event}:{event_object_id}{status_suffix}"
     if not event or not event_object_id:
         return {"status": "ignored"}
     claimed = await db.claim_chatwoot_webhook_event(
