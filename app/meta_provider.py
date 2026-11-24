@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import time
 from typing import Any
 
 import httpx
@@ -14,6 +15,24 @@ log = logging.getLogger(__name__)
 
 
 GRAPH_ROOT = "https://graph.facebook.com"
+TEMPLATES_CACHE_TTL_SECONDS = 300.0
+TEMPLATES_RATE_LIMIT_COOLDOWN_SECONDS = 120.0
+_TEMPLATES_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
+_TEMPLATES_COOLDOWN: dict[int, tuple[float, str]] = {}
+
+
+def invalidate_templates_cache(bot_id: int | None = None) -> None:
+    if bot_id is None:
+        _TEMPLATES_CACHE.clear()
+        _TEMPLATES_COOLDOWN.clear()
+        return
+    _TEMPLATES_CACHE.pop(int(bot_id), None)
+    _TEMPLATES_COOLDOWN.pop(int(bot_id), None)
+
+
+def _is_meta_rate_limit_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "80008" in text or "too many calls" in text or "rate limit" in text
 
 
 @dataclass(frozen=True)
@@ -589,7 +608,18 @@ async def diagnose_bot_connection(bot_id: int) -> dict[str, Any]:
     return result
 
 
-async def list_message_templates(bot_id: int) -> dict[str, Any]:
+async def list_message_templates(bot_id: int, *, force_refresh: bool = False) -> dict[str, Any]:
+    now = time.monotonic()
+    cached = _TEMPLATES_CACHE.get(bot_id)
+    if not force_refresh and cached and now < cached[0]:
+        return cached[1]
+
+    cooldown = _TEMPLATES_COOLDOWN.get(bot_id)
+    if not force_refresh and cooldown and now < cooldown[0]:
+        if cached:
+            return cached[1]
+        raise RuntimeError(cooldown[1])
+
     runtime = await get_bot_whatsapp_runtime(bot_id)
     bot = runtime["bot"]
     integration = runtime["integration"]
@@ -600,11 +630,30 @@ async def list_message_templates(bot_id: int) -> dict[str, Any]:
         raise ValueError("Falta WABA ID para listar plantillas.")
     if not token:
         raise ValueError("Falta access_token cifrado para WhatsApp Cloud.")
-    return await graph_get(
-        f"{waba_id}/message_templates",
-        token,
-        params={"fields": "name,status,category,language,components"},
-    )
+    try:
+        payload = await graph_get(
+            f"{waba_id}/message_templates",
+            token,
+            params={"fields": "name,status,category,language,components"},
+        )
+    except Exception as exc:
+        if _is_meta_rate_limit_error(exc):
+            _TEMPLATES_COOLDOWN[bot_id] = (
+                time.monotonic() + TEMPLATES_RATE_LIMIT_COOLDOWN_SECONDS,
+                str(exc),
+            )
+            if cached:
+                log.warning(
+                    "Meta rate limit (#80008) al listar plantillas de bot %s; usando cache previo durante %ss.",
+                    bot_id,
+                    int(TEMPLATES_RATE_LIMIT_COOLDOWN_SECONDS),
+                )
+                return cached[1]
+        raise
+
+    _TEMPLATES_CACHE[bot_id] = (time.monotonic() + TEMPLATES_CACHE_TTL_SECONDS, payload)
+    _TEMPLATES_COOLDOWN.pop(bot_id, None)
+    return payload
 
 
 async def create_message_template(
@@ -672,7 +721,9 @@ async def create_message_template(
         "category": (_clean(category) or "UTILITY").upper(),
         "components": components,
     }
-    return await graph_post(f"{waba_id}/message_templates", token, payload)
+    result = await graph_post(f"{waba_id}/message_templates", token, payload)
+    invalidate_templates_cache(bot_id)
+    return result
 
 
 async def subscribe_app_to_waba(bot_id: int) -> dict[str, Any]:

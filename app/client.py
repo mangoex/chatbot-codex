@@ -1064,7 +1064,9 @@ def _layout(title: str, body: str, session: dict, active_tab: str = "inicio", no
       if (!chatLayout || chatLayout.offsetParent === null) return;
       
       try {{
-        const response = await fetch(window.location.href);
+        const response = await fetch(window.location.href, {{
+          headers: {{ "X-Asistto-Poll": "1" }}
+        }});
         if (response.ok) {{
           const html = await response.text();
           const parser = new DOMParser();
@@ -1554,15 +1556,18 @@ async def client_app(
     # Recent conversation threads
     recent_threads = await db.list_conversation_threads(limit=5, bot_id=bot_id)
     
-    # Fetch Meta templates
+    # Fetch Meta templates (skip during background conversation polling to avoid Meta #80008 rate limits)
     templates = []
     templates_error = ""
-    try:
-        payload = await meta_provider.list_message_templates(bot_id)
-        templates = payload.get("data") or []
-    except Exception as exc:
-        log.error(f"Error al listar plantillas para bot {bot_id}: {exc}")
-        templates_error = str(exc)
+    req_headers = getattr(request, "headers", None) or {}
+    is_background_poll = req_headers.get("X-Asistto-Poll") == "1"
+    if not is_background_poll:
+        try:
+            payload = await meta_provider.list_message_templates(bot_id)
+            templates = payload.get("data") or []
+        except Exception as exc:
+            log.error(f"Error al listar plantillas para bot {bot_id}: {exc}")
+            templates_error = str(exc)
 
     # Fetch Contacts and Campaigns
     search_contacts = search_q.strip() if search_q else None

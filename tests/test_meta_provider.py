@@ -305,6 +305,53 @@ class MetaProviderTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_list_message_templates_caches_results_and_respects_rate_limit_cooldown(self):
+        async def run():
+            meta_provider.invalidate_templates_cache()
+            calls = []
+
+            async def fake_graph_get(path, token, params=None):
+                calls.append(path)
+                return {"data": [{"name": "bienvenida", "status": "APPROVED"}]}
+
+            runtime_mock = AsyncMock(
+                return_value={
+                    "bot": {"id": 206, "waba_id": "waba-206"},
+                    "integration": {"id": 9, "config": {}},
+                    "access_token": "tok-206",
+                }
+            )
+            with (
+                patch("app.meta_provider.get_bot_whatsapp_runtime", runtime_mock),
+                patch("app.meta_provider.graph_get", fake_graph_get),
+            ):
+                first = await meta_provider.list_message_templates(206)
+                second = await meta_provider.list_message_templates(206)
+                self.assertEqual(first, second)
+                self.assertEqual(len(calls), 1)
+
+            # Rate limit (#80008) should enter cooldown and avoid hammering Meta Graph API
+            meta_provider.invalidate_templates_cache(206)
+            fail_calls = []
+
+            async def failing_graph_get(path, token, params=None):
+                fail_calls.append(path)
+                raise RuntimeError("Error de Meta API [código 80008, OAuthException]: (#80008) There have been too many calls")
+
+            with (
+                patch("app.meta_provider.get_bot_whatsapp_runtime", runtime_mock),
+                patch("app.meta_provider.graph_get", failing_graph_get),
+            ):
+                with self.assertRaises(RuntimeError):
+                    await meta_provider.list_message_templates(206)
+                with self.assertRaises(RuntimeError):
+                    await meta_provider.list_message_templates(206)
+                self.assertEqual(len(fail_calls), 1)
+
+            meta_provider.invalidate_templates_cache()
+
+        asyncio.run(run())
+
 
 if __name__ == "__main__":
     unittest.main()
